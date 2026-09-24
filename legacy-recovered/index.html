@@ -1,0 +1,70 @@
+
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Angermund Transport ERP</title>
+<link rel="manifest" href="manifest.json">
+<style>
+body{margin:0;font-family:Arial;background:#08111d;color:#fff;background-image:linear-gradient(rgba(0,0,0,.75),rgba(0,0,0,.8)),url('https://images.unsplash.com/photo-1501706362039-c6e13b4f69ff?q=80&w=1600&auto=format&fit=crop');background-size:cover}
+.sidebar{position:fixed;left:0;top:0;bottom:0;width:240px;background:#0b1422;padding:20px}
+.sidebar h1{font-size:28px;margin:0}
+.sidebar h2{color:#2d8cff;margin:0 0 30px}
+.sidebar div{padding:12px;background:#1768d8;margin:8px 0;border-radius:10px}
+.main{margin-left:260px;padding:20px}
+.cards{display:grid;grid-template-columns:repeat(4,1fr);gap:15px}
+.card{background:rgba(20,20,20,.8);padding:20px;border-radius:14px}
+.big{grid-column:span 3;height:300px}
+table{width:100%;border-collapse:collapse}
+th,td{padding:10px;border-bottom:1px solid #333}
+button{background:#1877f2;color:#fff;border:0;padding:12px 16px;border-radius:10px}
+@media(max-width:900px){.sidebar{position:relative;width:auto}.main{margin-left:0}.cards{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="sidebar">
+<h1>ANGERMUND</h1>
+<h2>TRANSPORT</h2>
+<div>Dashboard</div>
+<div>Trips</div>
+<div>Fleet / Trucks</div>
+<div>Drivers</div>
+<div>Fuel / Diesel</div>
+<div>Expenses</div>
+<div>Maintenance</div>
+<div>Permits</div>
+<div>Invoices</div>
+</div>
+
+<div class="main">
+<h1>Transport Company ERP Dashboard</h1>
+<div class="cards">
+<div class="card"><h3>Total Revenue</h3><h1>N$ 1,248,760</h1></div>
+<div class="card"><h3>Total Expenses</h3><h1>N$ 842,560</h1></div>
+<div class="card"><h3>Net Profit</h3><h1>N$ 406,200</h1></div>
+<div class="card"><h3>Total KM</h3><h1>76,540</h1></div>
+
+<div class="card big">
+<h2>Recent Trips</h2>
+<table>
+<tr><th>Trip</th><th>Driver</th><th>Truck</th><th>KM</th><th>Rate/KM</th><th>Profit</th></tr>
+<tr><td>Windhoek → Cape Town</td><td>Johannes</td><td>N134</td><td>1423</td><td>N$25.50</td><td style="color:#49ff66">N$7,746</td></tr>
+<tr><td>Windhoek → Gauteng</td><td>Peter</td><td>N127</td><td>1312</td><td>N$24.00</td><td style="color:#49ff66">N$4,708</td></tr>
+</table>
+<br>
+<button>Add New Trip</button>
+<button>Add Truck</button>
+<button>Fuel Entry</button>
+</div>
+
+<div class="card">
+<h2>Alerts</h2>
+<p>⚠ License Expiring</p>
+<p>⚠ Roadworthy Due</p>
+<p>⚠ Permit Renewal</p>
+</div>
+</div>
+</div>
+</body>
+</html>

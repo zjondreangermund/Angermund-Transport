@@ -1,0 +1,11 @@
+{
+  "name": "angermund-transport-erp",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Angermund Transport fleet, trip, diesel and finance management system",
+  "scripts": {
+    "start": "node server.js",
+    "check": "node --check server.js && node --check public/app.js"
+  },
+  "engines": { "node": ">=18" }
+}
