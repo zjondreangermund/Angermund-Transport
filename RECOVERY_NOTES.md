@@ -16,3 +16,7 @@ The original later source archive was not available byte-for-byte. This is a cle
 ## Next production upgrade
 
 The present build is deliberately dependency-free and stores data per browser. Before granting access to multiple simultaneous users, add authentication and a PostgreSQL persistence layer, then migrate the existing JSON backup structure into database tables.
+
+## Professional V2 upgrade — 24 September 2026
+
+The recovered shell was upgraded into a role-based transport operations suite. The shared data model links trips to drivers, trucks, trailers, routes, clients, diesel, inspections, advances, PODs and invoices. Driver-facing screens intentionally exclude company profit and finance controls. Operational rules recovered from prior Angermund Transport work were added to the role centre, compliance workflow, driver incentive engine and cross-border checklist.

@@ -1,6 +1,6 @@
 {
-  "name": "Angermund Transport ERP",
-  "short_name": "Angermund ERP",
+  "name": "Angermund Transport Operations",
+  "short_name": "Angermund Ops",
   "start_url": "/",
   "display": "standalone",
   "background_color": "#07111f",
