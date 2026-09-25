@@ -7,7 +7,7 @@ Professional, role-based transport operations system for Angermund Transport CC.
 - Secure JWT sign-in and server-enforced roles for Admin, Manager, Dispatch, Driver, Warehouse, Workshop and Finance
 - PostgreSQL central database with real-time multi-device synchronization
 - Live driver GPS and third-party telematics webhook ingestion
-- Fleet map, 24-hour route-history API, geofences and automatic entry/exit alerts
+- Production-safe OpenFreeMap vector fleet map, 24-hour route-history API, geofences and automatic entry/exit alerts
 - In-app, browser push, WhatsApp Cloud API and email alert adapters
 - Linked dispatch lifecycle: planned → loading → in transit → delivered/POD → invoiced
 - Driver workspace with assignments, GPS check-ins, inspections, diesel and POD actions
@@ -49,7 +49,7 @@ Required for shared multi-device operation:
 - `JWT_SECRET`: long random signing secret
 - `INITIAL_ADMIN_EMAIL` and `INITIAL_ADMIN_PASSWORD`: first administrator
 
-Optional integrations are configured in `.env.example`: Meta WhatsApp Cloud API, Resend email, Web Push VAPID keys and a telematics webhook token. The webhook accepts normalized GPS payloads at `POST /api/integrations/telematics/webhook` using the `X-Telematics-Token` header.
+Optional integrations are configured in `.env.example`: Meta WhatsApp Cloud API, Resend email, Web Push VAPID keys, a telematics webhook token and an optional custom MapLibre style URL. The webhook accepts normalized GPS payloads at `POST /api/integrations/telematics/webhook` using the `X-Telematics-Token` header.
 
 ## Railway
 
