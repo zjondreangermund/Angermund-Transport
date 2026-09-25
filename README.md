@@ -22,11 +22,12 @@ Professional, role-based transport operations system for Angermund Transport CC.
 - Driver, vehicle and cross-border document compliance
 - Incident, damage and progressive-discipline workflow
 - Clients, routes, rate calculator, standing fees, invoices and debtors
+- Linked invoice payment ledger with partial payments, proof references, balances and automatic paid/overdue status
 - Payroll preparation, driver advances, tasks and manager approvals
 - P&L, vehicle/driver performance and audit history
 - OCR-powered, human-reviewed smart document scanning; unclear amounts are never auto-posted
 - REST API for users, shared state, GPS, route history, geofences, alerts, push subscriptions and scans
-- CSV exports and complete JSON backup/restore
+- Formatted native Excel `.xlsx` exports and complete JSON backup/restore
 - Responsive installable PWA with Railway-ready Node.js server
 
 ## Run locally
