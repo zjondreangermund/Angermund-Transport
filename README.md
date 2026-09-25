@@ -16,6 +16,7 @@ Professional, role-based transport operations system for Angermund Transport CC.
 - Pre/post-trip inspections and defect escalation
 - Diesel control linked to trip, vehicle and driver
 - Auditable driver fuel incentives with km/L, L/km and L/100 km conversions, explicit rate calculations, South Africa override, and no payout until distance and diesel are captured
+- Return-load routes use the complete round-trip distance for fuel performance and driver incentive calculations
 - Trip-by-trip driver settlements combining diesel incentive, approved receipted expenses and advance reconciliation
 - Route expense receipts and trip problem logs for delays, breakdowns, tyres, route deviations, cargo and customer issues
 - Workshop, maintenance and tyre lifecycle registers
