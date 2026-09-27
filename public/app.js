@@ -603,7 +603,7 @@ function driverUploadsPage(){
     +kpi('Receipts',receipts,'Diesel & route expenses')
     +kpi('PODs',pods,'Proof of delivery')
     +kpi('Problem photos',problems,'Trip issues & defects')
-    +'</section><section class="panel"><div class="toolbar"><div><h2>Driver Uploads</h2><p class="muted-copy">Original files uploaded from Driver Easy Mode, linked to the driver and trip.</p></div><div><input id="driverUploadSearch" placeholder="Search driver, trip, file or type"> <button class="ghost" id="refreshDriverUploads">Refresh</button></div></div><div id="driverUploadResults">'+driverUploadRows(driverUploads)+'</div></section>';
+    +'</section><section class="panel"><div class="toolbar"><div><h2>Driver Uploads</h2><p class="muted-copy">Driver captures are compressed and archived as compact PDFs where possible, linked to the driver and journey.</p></div><div><input id="driverUploadSearch" placeholder="Search driver, trip, file or type"> <button class="ghost" id="refreshDriverUploads">Refresh</button></div></div><div id="driverUploadResults">'+driverUploadRows(driverUploads)+'</div></section>';
 }
 async function loadDriverUploads(force=false){
   if(driverUploadsLoaded&&!force)return;
