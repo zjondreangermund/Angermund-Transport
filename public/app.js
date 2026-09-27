@@ -58,7 +58,46 @@ async function driverUpload(tripId,kind,file){const fd=new FormData();fd.append(
 async function queueDriverJob(job){await driverQueuePut(job);notify('✅ Saved on this phone — will send when signal returns')}
 async function sendDriverAction(tripId,action,data={},success='Saved'){const job={id:driverJobId('job'),type:'action',tripId,action,data,clientActionId:driverJobId(action),createdAt:new Date().toISOString()};if(!navigator.onLine){await queueDriverJob(job);return{queued:true}}try{const r=await driverApiAction(job);await refreshDriverState();notify(success);return r}catch(e){if(/fetch|network|offline|load failed/i.test(String(e.message||''))){await queueDriverJob(job);return{queued:true}}notify(e.message);throw e}}
 async function sendDriverPhotoAction(tripId,kind,file,action,data={},success='Saved'){const job={id:driverJobId('job'),type:'photo-action',tripId,kind,file,action,data,clientActionId:driverJobId(action),createdAt:new Date().toISOString()};if(!navigator.onLine){await queueDriverJob(job);return{queued:true}}try{const up=await driverUpload(tripId,kind,file);job.data={...data,uploadId:up.id};const r=await driverApiAction(job);await refreshDriverState();notify(success);return r}catch(e){if(/fetch|network|offline|load failed/i.test(String(e.message||''))){await queueDriverJob(job);return{queued:true}}notify(e.message);throw e}}
-async function flushDriverJobs(){if(!navigator.onLine||!authToken||role!=='driver')return;let jobs=[];try{jobs=await driverQueueList()}catch{return}for(const job of jobs.sort((a,b)=>String(a.createdAt).localeCompare(String(b.createdAt)))){try{if(job.type==='photo-action'){const up=await driverUpload(job.tripId,job.kind,job.file);job.data={...(job.data||{}),uploadId:up.id}}await driverApiAction(job);await driverQueueDelete(job.id)}catch(e){if(/401|403|invalid|not assigned|not found/i.test(String(e.message||'')))await driverQueueDelete(job.id);else break}}if(jobs.length)try{await refreshDriverState();notify('✅ Saved driver updates sent')}catch{}}
+async function sendDriverMultiPhotoAction(tripId,kind,files,action,data={},success='Saved'){
+  const clean=(files||[]).filter(Boolean).slice(0,2);
+  if(!clean.length)throw new Error('At least one receipt photo is required');
+  const job={id:driverJobId('job'),type:'multi-photo-action',tripId,kind,files:clean,action,data,clientActionId:driverJobId(action),createdAt:new Date().toISOString()};
+  if(!navigator.onLine){await queueDriverJob(job);return{queued:true}}
+  try{
+    const uploads=[];
+    for(let i=0;i<clean.length;i++)uploads.push(await driverUpload(tripId,i===0?kind:kind+'-supporting',clean[i]));
+    job.data={...data,uploadId:uploads[0]?.id||'',receiptUploadIds:uploads.map(x=>x.id),supportingUploadId:uploads[1]?.id||''};
+    const r=await driverApiAction(job);
+    await refreshDriverState();
+    notify(success);
+    return r;
+  }catch(e){
+    if(/fetch|network|offline|load failed/i.test(String(e.message||''))){await queueDriverJob(job);return{queued:true}}
+    notify(e.message);throw e
+  }
+}
+
+async function flushDriverJobs(){
+  if(!navigator.onLine||!authToken||role!=='driver')return;
+  let jobs=[];try{jobs=await driverQueueList()}catch{return}
+  for(const job of jobs.sort((a,b)=>String(a.createdAt).localeCompare(String(b.createdAt)))){
+    try{
+      if(job.type==='photo-action'){
+        const up=await driverUpload(job.tripId,job.kind,job.file);
+        job.data={...(job.data||{}),uploadId:up.id,receiptUploadIds:[up.id]};
+      }else if(job.type==='multi-photo-action'){
+        const uploads=[];
+        for(let i=0;i<(job.files||[]).length;i++)uploads.push(await driverUpload(job.tripId,i===0?job.kind:job.kind+'-supporting',job.files[i]));
+        job.data={...(job.data||{}),uploadId:uploads[0]?.id||'',receiptUploadIds:uploads.map(x=>x.id),supportingUploadId:uploads[1]?.id||''};
+      }
+      await driverApiAction(job);
+      await driverQueueDelete(job.id);
+    }catch(e){
+      if(/401|403|invalid|not assigned|not found/i.test(String(e.message||'')))await driverQueueDelete(job.id);else break
+    }
+  }
+  if(jobs.length)try{await refreshDriverState();notify('✅ Saved driver updates sent')}catch{}
+}
 function driverCapture(kind,callback){const input=document.createElement('input');input.type='file';input.accept='image/*';input.capture='environment';input.style.display='none';document.body.appendChild(input);input.onchange=()=>{const file=input.files&&input.files[0];input.remove();if(file)callback(file)};input.click()}
 function driverPassedInspection(tripId){return db.inspections.some(x=>x.tripId===tripId&&x.type==='Pre-trip'&&x.status==='Passed')}
 function driverNextStep(t){
@@ -190,6 +229,26 @@ function mergeClientReceiptResults(...items){
   out.categoryConfidence=Math.max(num(out.categoryConfidence),...valid.filter(x=>x.category===out.category).map(x=>num(x.categoryConfidence)));
   return out;
 }
+function mergeSupportingReceipt(primary,supporting){
+  if(!supporting)return JSON.parse(JSON.stringify(primary||{}));
+  const p=primary||{},out=mergeClientReceiptResults(p,supporting);
+  const primaryFuel=Array.isArray(p.fuelTransactions)&&p.fuelTransactions.length>0;
+  if(primaryFuel){
+    for(const key of ['fuelTransactions','fuelTransactionCount','fuelLineAmount','litres','pricePerLitre','printedTotal','suggestedAmount','adjustment','totalsReconcile','totalDifference','needsReview']){
+      if(p[key]!==undefined&&p[key]!==null)out[key]=JSON.parse(JSON.stringify(p[key]));
+    }
+    if(p.category&&p.category!=='Other'){out.category=p.category;out.categoryConfidence=p.categoryConfidence;out.categoryReason=p.categoryReason;out.categorySource=p.categorySource}
+    if(p.supplier)out.supplier=p.supplier;
+  }
+  if(num(supporting.odometer)>0)out.odometer=supporting.odometer;
+  if(supporting.registration)out.registration=supporting.registration;
+  if(!out.documentNumber&&supporting.documentNumber)out.documentNumber=supporting.documentNumber;
+  out.supportingReceiptUsed=true;
+  out.supportingReceiptCategory=supporting.category||'';
+  out.supportingReceiptOdometer=num(supporting.odometer)||null;
+  return out;
+}
+
 async function scanDriverReceipt(file){
   try{
     const enhanced=await prepareReceiptForOcr(file);
@@ -208,14 +267,28 @@ async function scanDriverReceipt(file){
     return merged||{};
   }catch{return{}}
 }
+
 async function openDriverSmartSlip(t,file){
   $('modalTitle').textContent='📷 Scan slip';
-  $('entryForm').innerHTML='<div class="driver-scan-loading"><div class="driver-scan-camera">📷</div><h2>Reading slip…</h2><p>Finding the supplier, amount and expense type.</p></div>';
+  $('entryForm').innerHTML='<div class="driver-scan-loading"><div class="driver-scan-camera">📷</div><h2>Reading main slip…</h2><p>Finding supplier, amount, litres and expense type.</p></div>';
   $('modal').classList.remove('hidden');
-
-  const x=await scanDriverReceipt(file);
+  const primary=await scanDriverReceipt(file);
   if($('modal').classList.contains('hidden'))return;
-
+  renderDriverSmartSlip(t,file,null,primary,null,{});
+}
+function smartSlipDraft(){
+  return{
+    category:$('smartSlipCategory')?.value||'',
+    amount:$('smartSlipAmount')?.value||'',
+    supplier:$('smartSlipSupplier')?.value||'',
+    receiptNo:$('smartSlipNumber')?.value||'',
+    litres:$('smartSlipLitres')?.value||'',
+    price:$('smartSlipPrice')?.value||'',
+    odometer:$('smartSlipOdo')?.value||''
+  };
+}
+function renderDriverSmartSlip(t,mainFile,supportFile,primary,supporting,draft={}){
+  const x=mergeSupportingReceipt(primary,supporting);
   const categories=['Diesel','Toll','Meals','Accommodation','Parking','Border permit','Loading / offloading','Emergency repair','Other'];
   const fuelStructure=num(x.litres)>0||num(x.pricePerLitre)>0||(Array.isArray(x.fuelTransactions)&&x.fuelTransactions.length>0);
   const detected=fuelStructure&&(!x.category||x.category==='Other')?'Diesel':(categories.includes(x.category)?x.category:'Other');
@@ -225,37 +298,41 @@ async function openDriverSmartSlip(t,file){
   const high=confidence>=85,medium=confidence>=65;
   const confidenceText=confidence?confidence+'% confidence':'Needs confirmation';
   const detectionClass=high?'high':medium?'medium':'low';
-  const options=categories.map(c=>'<option value="'+esc(c)+'" '+(c===detected?'selected':'')+'>'+esc(c)+'</option>').join('');
+  const selectedCategory=draft.category||detected;
+  const options=categories.map(c=>'<option value="'+esc(c)+'" '+(c===selectedCategory?'selected':'')+'>'+esc(c)+'</option>').join('');
+  const val=(draftKey,scanValue)=>draft[draftKey]!==undefined&&draft[draftKey]!==''?draft[draftKey]:(scanValue??'');
 
   let fuelBreakdown='';
   if(detected==='Diesel'&&Array.isArray(x.fuelTransactions)&&x.fuelTransactions.length){
     fuelBreakdown='<div class="fuel-breakdown">'
-      +'<div class="fuel-breakdown-head"><b>⛽ '+x.fuelTransactions.length+' fuel transaction'+(x.fuelTransactions.length===1?'':'s')+' on this slip</b><span>'+num(x.litres).toFixed(2)+' L total</span></div>'
+      +'<div class="fuel-breakdown-head"><b>⛽ '+x.fuelTransactions.length+' fuel transaction'+(x.fuelTransactions.length===1?'':'s')+' on main slip</b><span>'+num(x.litres).toFixed(2)+' L total</span></div>'
       +x.fuelTransactions.map((it,i)=>'<div class="fuel-fill-row"><span>Fill '+(i+1)+'</span><b>'+num(it.litres).toFixed(2)+' L × N$'+num(it.pricePerLitre).toFixed(2)+'</b><strong>'+money(it.amount)+'</strong></div>').join('')
       +'<div class="fuel-total-row"><span>Receipt total</span><b>'+money(x.printedTotal||x.suggestedAmount)+'</b></div>'
-      +(x.adjustment!==null&&x.adjustment!==undefined&&Math.abs(num(x.adjustment))>=.005
-        ?'<div class="fuel-adjustment-row"><span>Receipt adjustment</span><b>'+money(x.adjustment)+'</b></div>'
-        :'')
-      +(x.needsReview
-        ?'<div class="fuel-review-warning">⚠ Numbers do not fully reconcile. Check litres, prices and receipt total before saving.</div>'
-        :'<div class="fuel-math-ok">✓ Fill amounts and receipt total reconcile</div>')
+      +(x.adjustment!==null&&x.adjustment!==undefined&&Math.abs(num(x.adjustment))>=.005?'<div class="fuel-adjustment-row"><span>Receipt adjustment</span><b>'+money(x.adjustment)+'</b></div>':'')
+      +(x.needsReview?'<div class="fuel-review-warning">⚠ Numbers do not fully reconcile. Check litres, prices and receipt total before saving.</div>':'<div class="fuel-math-ok">✓ Fill amounts and receipt total reconcile</div>')
       +'</div>';
   }
+
+  const supportInfo=supportFile
+    ?'<div class="receipt-slot attached"><div><b>📎 Photo 2 · Supporting slip</b><small>'+((num(supporting?.odometer)>0)?'Odometer read: '+num(supporting.odometer).toFixed(0):'Scanned and merged with main slip')+'</small></div><div class="receipt-slot-actions"><button type="button" class="ghost small" id="retakeSupportReceipt">Retake</button><button type="button" class="ghost small" id="removeSupportReceipt">Remove</button></div></div>'
+    :'<button type="button" class="receipt-slot add" id="addSupportReceipt"><span>＋</span><div><b>Add 2nd photo</b><small>Optional · odometer, payment receipt or attached supporting slip</small></div></button>';
 
   $('modalTitle').textContent='📷 Check slip';
   $('entryForm').innerHTML='<div class="driver-smart-slip">'
     +'<div class="driver-detection '+detectionClass+'" id="smartSlipDetection"><span>'+(high?'✨':medium?'🔎':'⚠️')+'</span><div><strong>Looks like: '+esc(detected)+'</strong><small>'+esc(confidenceText)+(x.categoryReason?' · '+esc(x.categoryReason):'')+'</small></div></div>'
+    +'<div class="receipt-photo-slots"><div class="receipt-slot attached main"><div><b>📷 Photo 1 · Main slip</b><small>Required · fuel/expense details</small></div><span class="receipt-check">✓</span></div>'+supportInfo+'</div>'
+    +(supportFile&&num(x.odometer)>0?'<div class="support-merge-note">✓ Odometer/details from Photo 2 merged into this record.</div>':'')
     +fuelBreakdown
     +'<label>What is this slip for?<select id="smartSlipCategory">'+options+'</select></label>'
     +'<div class="smart-slip-grid">'
-      +'<label>'+(detected==='Diesel'?'Receipt total':'Amount')+'<input id="smartSlipAmount" type="number" inputmode="decimal" step="0.01" placeholder="N$ total" value="'+(x.suggestedAmount||'')+'"></label>'
-      +'<label>Supplier / place<input id="smartSlipSupplier" value="'+esc(x.supplier||'')+'" placeholder="Where did you pay?"></label>'
-      +'<label>Slip / receipt no.<input id="smartSlipNumber" value="'+esc(x.documentNumber||'')+'" placeholder="Optional"></label>'
+      +'<label>'+(detected==='Diesel'?'Receipt total':'Amount')+'<input id="smartSlipAmount" type="number" inputmode="decimal" step="0.01" placeholder="N$ total" value="'+esc(String(val('amount',x.suggestedAmount)))+'"></label>'
+      +'<label>Supplier / place<input id="smartSlipSupplier" value="'+esc(String(val('supplier',x.supplier)))+'" placeholder="Where did you pay?"></label>'
+      +'<label>Slip / receipt no.<input id="smartSlipNumber" value="'+esc(String(val('receiptNo',x.documentNumber)))+'" placeholder="Optional"></label>'
     +'</div>'
     +'<div id="smartDieselFields" class="smart-diesel-fields">'
-      +'<label>Total litres<input id="smartSlipLitres" type="number" inputmode="decimal" step="0.001" value="'+(x.litres||'')+'" placeholder="Litres"></label>'
-      +'<label>Combined price / litre<input id="smartSlipPrice" type="number" inputmode="decimal" step="0.0001" value="'+(x.pricePerLitre||'')+'" placeholder="N$ / L"></label>'
-      +'<label>Odometer <small>(optional)</small><input id="smartSlipOdo" type="number" inputmode="numeric" value="'+(x.odometer||'')+'" placeholder="km"></label>'
+      +'<label>Total litres<input id="smartSlipLitres" type="number" inputmode="decimal" step="0.001" value="'+esc(String(val('litres',x.litres)))+'" placeholder="Litres"></label>'
+      +'<label>Combined price / litre<input id="smartSlipPrice" type="number" inputmode="decimal" step="0.0001" value="'+esc(String(val('price',x.pricePerLitre)))+'" placeholder="N$ / L"></label>'
+      +'<label>Odometer <small>(optional)</small><input id="smartSlipOdo" type="number" inputmode="numeric" value="'+esc(String(val('odometer',x.odometer)))+'" placeholder="km"></label>'
     +'</div>'
     +'<div class="driver-slip-note" id="smartSlipNote">'+(x.needsReview?'Please verify the highlighted receipt numbers before saving.':(high?'If this is correct, just press the green button.':'Please check the type and amount before saving.'))+'</div>'
     +'<div class="driver-modal-actions"><button type="button" class="ghost" id="cancelForm">Cancel</button><button class="driver-save" id="saveSmartSlip">✓ CORRECT & SAVE</button></div>'
@@ -269,41 +346,45 @@ async function openDriverSmartSlip(t,file){
       $('smartSlipDetection').innerHTML='<span>✓</span><div><strong>Changed to: '+esc($('smartSlipCategory').value)+'</strong><small>The app will remember this supplier after you save.</small></div>';
     }
   };
-
   $('smartSlipCategory').onchange=updateFields;
   updateFields();
   $('cancelForm').onclick=()=>$('modal').classList.add('hidden');
 
+  const captureSupport=()=>driverCapture('receipt-supporting',async second=>{
+    const keep=smartSlipDraft();
+    $('entryForm').innerHTML='<div class="driver-scan-loading"><div class="driver-scan-camera">📎</div><h2>Reading 2nd slip…</h2><p>Looking for odometer, plate, references and missing receipt details.</p></div>';
+    const secondResult=await scanDriverReceipt(second);
+    renderDriverSmartSlip(t,mainFile,second,primary,secondResult,keep);
+  });
+  if($('addSupportReceipt'))$('addSupportReceipt').onclick=captureSupport;
+  if($('retakeSupportReceipt'))$('retakeSupportReceipt').onclick=captureSupport;
+  if($('removeSupportReceipt'))$('removeSupportReceipt').onclick=()=>renderDriverSmartSlip(t,mainFile,null,primary,null,smartSlipDraft());
+
   $('entryForm').onsubmit=async e=>{
     e.preventDefault();
-    const category=$('smartSlipCategory').value;
-    const supplier=$('smartSlipSupplier').value.trim();
-    const amount=num($('smartSlipAmount').value);
-    const receiptNo=$('smartSlipNumber').value.trim();
-
+    const category=$('smartSlipCategory').value,supplier=$('smartSlipSupplier').value.trim(),amount=num($('smartSlipAmount').value),receiptNo=$('smartSlipNumber').value.trim();
+    const files=supportFile?[mainFile,supportFile]:[mainFile];
     if(category==='Diesel'){
-      const litres=num($('smartSlipLitres').value);
-      const price=num($('smartSlipPrice').value)||(litres>0&&amount>0?amount/litres:0);
+      const litres=num($('smartSlipLitres').value),price=num($('smartSlipPrice').value)||(litres>0&&amount>0?amount/litres:0);
       if(litres<=0)return notify('Please enter diesel litres');
       if(amount<=0&&price<=0)return notify('Please enter the receipt total or price per litre');
       $('modal').classList.add('hidden');
-      await sendDriverPhotoAction(t.id,'diesel',file,'diesel',{
-        litres,total:amount,price,
-        odometer:num($('smartSlipOdo').value),
-        supplier,slip:receiptNo,
+      await sendDriverMultiPhotoAction(t.id,'diesel',files,'diesel',{
+        litres,total:amount,price,odometer:num($('smartSlipOdo').value),supplier,slip:receiptNo,
         detectedCategory:detected,categoryConfidence:confidence,
         fuelTransactions:Array.isArray(x.fuelTransactions)?x.fuelTransactions:[],
         fuelTransactionCount:num(x.fuelTransactionCount)||1,
         printedTotal:num(x.printedTotal)||null,
         adjustment:x.adjustment===null||x.adjustment===undefined?null:num(x.adjustment)
-      },'⛽ Diesel slip saved');
+      },'⛽ Diesel slip saved'+(supportFile?' · 2 photos attached':''));
     }else{
       if(amount<=0)return notify('Please enter the amount');
       $('modal').classList.add('hidden');
-      await sendDriverPhotoAction(t.id,'expense',file,'expense',{category,amount,supplier,receiptNo,detectedCategory:detected,categoryConfidence:confidence},'✓ '+category+' slip saved');
+      await sendDriverMultiPhotoAction(t.id,'expense',files,'expense',{category,amount,supplier,receiptNo,detectedCategory:detected,categoryConfidence:confidence},'✓ '+category+' slip saved'+(supportFile?' · 2 photos attached':''));
     }
   };
 }
+
 function openDriverDiesel(t,file){$('modalTitle').textContent='⛽ Diesel slip';$('entryForm').innerHTML='<div class="driver-simple-form"><div class="driver-photo-ok" id="driverScanStatus">📷 Slip photo ready · reading details…</div><label>Litres<input id="drvLitres" type="number" inputmode="decimal" step="0.01" placeholder="e.g. 450"></label><label>Total amount<input id="drvTotal" type="number" inputmode="decimal" step="0.01" placeholder="N$ total"></label><label>Odometer <small>(optional)</small><input id="drvOdo" type="number" inputmode="numeric" placeholder="km"></label><label>Fuel station <small>(optional)</small><input id="drvSupplier" placeholder="Puma / Shell / Engen"></label><label>Slip number <small>(auto if readable)</small><input id="drvSlip" placeholder="Slip / invoice number"></label><div class="driver-modal-actions"><button type="button" class="ghost" id="cancelForm">Cancel</button><button class="driver-save">✓ SAVE DIESEL</button></div></div>';$('modal').classList.remove('hidden');scanDriverReceipt(file).then(x=>{if(!$('drvLitres'))return;if(!$('drvLitres').value&&x.litres)$('drvLitres').value=x.litres;if(!$('drvTotal').value&&x.suggestedAmount)$('drvTotal').value=x.suggestedAmount;if(!$('drvSupplier').value&&x.supplier)$('drvSupplier').value=x.supplier;if(!$('drvSlip').value&&x.documentNumber)$('drvSlip').value=x.documentNumber;if($('driverScanStatus'))$('driverScanStatus').textContent=(x.litres||x.suggestedAmount||x.documentNumber)?'✨ Slip read — just check the details':'📷 Photo saved — enter anything the slip could not read'});$('cancelForm').onclick=()=>$('modal').classList.add('hidden');$('entryForm').onsubmit=async e=>{e.preventDefault();const litres=num($('drvLitres').value),total=num($('drvTotal').value);if(litres<=0)return notify('Enter litres');$('modal').classList.add('hidden');await sendDriverPhotoAction(t.id,'diesel',file,'diesel',{litres,total,odometer:num($('drvOdo').value),supplier:$('drvSupplier').value,slip:$('drvSlip').value},'Diesel saved')}}
 function openDriverExpense(t,file){$('modalTitle').textContent='💵 Route expense';$('entryForm').innerHTML='<div class="driver-simple-form"><div class="driver-photo-ok" id="driverScanStatus">📷 Receipt photo ready · reading amount…</div><label>What was it for?<select id="drvExpenseType"><option>Toll</option><option>Border permit</option><option>Parking</option><option>Loading / offloading</option><option>Accommodation</option><option>Meals</option><option>Emergency repair</option><option>Other</option></select></label><label>Amount<input id="drvExpenseAmount" type="number" inputmode="decimal" step="0.01" placeholder="N$ amount"></label><label>Place <small>(optional)</small><input id="drvExpensePlace" placeholder="Where did you pay?"></label><label>Receipt number <small>(auto if readable)</small><input id="drvReceiptNo" placeholder="Receipt / invoice number"></label><div class="driver-modal-actions"><button type="button" class="ghost" id="cancelForm">Cancel</button><button class="driver-save">✓ SAVE EXPENSE</button></div></div>';$('modal').classList.remove('hidden');scanDriverReceipt(file).then(x=>{if(!$('drvExpenseAmount'))return;if(!$('drvExpenseAmount').value&&x.suggestedAmount)$('drvExpenseAmount').value=x.suggestedAmount;if(!$('drvReceiptNo').value&&x.documentNumber)$('drvReceiptNo').value=x.documentNumber;if($('driverScanStatus'))$('driverScanStatus').textContent=(x.suggestedAmount||x.documentNumber)?'✨ Receipt read — just check the details':'📷 Photo saved — enter anything the receipt could not read'});$('cancelForm').onclick=()=>$('modal').classList.add('hidden');$('entryForm').onsubmit=async e=>{e.preventDefault();const amount=num($('drvExpenseAmount').value);if(amount<=0)return notify('Enter the amount');$('modal').classList.add('hidden');await sendDriverPhotoAction(t.id,'expense',file,'expense',{category:$('drvExpenseType').value,amount,supplier:$('drvExpensePlace').value,receiptNo:$('drvReceiptNo').value},'Expense saved')}}
 function driverSpeechTo(target){const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR)return notify('Voice typing is not supported on this phone');const r=new SR();r.lang='en-ZA';r.interimResults=false;r.onresult=e=>{target.value=(target.value+' '+e.results[0][0].transcript).trim()};r.onerror=()=>notify('Could not hear you. Please try again.');r.start()}
