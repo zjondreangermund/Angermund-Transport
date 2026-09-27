@@ -1289,7 +1289,7 @@ function clientGeoDistanceM(a,b){
   return 2*R*Math.atan2(Math.sqrt(q),Math.sqrt(1-q));
 }
 async function postDriverGpsPosition(position){
-  const t=db.trips.find(x=>x.driverId===currentDriver()&&!x.driverComplete&&!['Closed','Invoiced'].includes(x.status));
+  const t=db.trips.filter(x=>x.driverId===currentDriver()&&!x.driverComplete&&!['Closed','Invoiced'].includes(x.status)).sort(driverTripSort)[0];
   if(!t?.id)return;
   const now=Date.now(),pt={latitude:position.coords.latitude,longitude:position.coords.longitude};
   const moved=lastDriverGpsPoint?clientGeoDistanceM(lastDriverGpsPoint,pt):Infinity;
