@@ -1009,40 +1009,139 @@ function options(type){return {truck:db.trucks.map(x=>[x.id,x.registration]),tra
 function openForm(type,prefill={}){formType=type;const list=forms[type];if(!list)return notify(`Open ${type} from its linked workflow`);$('modalTitle').textContent=`Add ${type}`;$('entryForm').innerHTML=`<div class="form-grid">${list.map(([key,label,kind,def,vals])=>{const value=prefill[key]??def??'',opts=kind==='select'?(vals||[]).map(v=>[String(v),String(v)]):options(kind);if(opts.length)return `<div class="field"><label>${label}</label><select name="${key}"><option value="">Select…</option>${opts.map(([v,l])=>`<option value="${esc(v)}" ${String(v)===String(value)?'selected':''}>${esc(l)}</option>`).join('')}</select></div>`;if(kind==='textarea')return `<div class="field full"><label>${label}</label><textarea name="${key}" rows="3">${esc(value)}</textarea></div>`;return `<div class="field"><label>${label}</label><input name="${key}" type="${kind}" step="any" value="${esc(value)}"></div>`}).join('')}<div class="form-actions"><button type="button" class="ghost" id="cancelForm">Cancel</button><button class="primary">Save & link record</button></div></div>`;$('modal').classList.remove('hidden');$('cancelForm').onclick=()=>$('modal').classList.add('hidden')}
 async function saveForm(e){e.preventDefault();const o={id:uid(formType)};new FormData($('entryForm')).forEach((v,k)=>o[k]=v);['tons','pallets','startKm','income','litres','price','odometer','cost','nextService','fittedKm','currentKm','amount','days','overtime','base','incentive','deductions','distance','rate','terms','unitRate','loadLat','loadLon','offloadLat','offloadLon','approachKm','arrivalKm','namibiaKm'].forEach(k=>{if(k in o)o[k]=num(o[k])});if(o.crossBorder)o.crossBorder=o.crossBorder==='true';if('roundTrip' in o)o.roundTrip=o.roundTrip==='true';const map={trip:'trips',diesel:'diesel',expense:'expenses',tripIssue:'tripIssues',payment:'payments',inspection:'inspections',incident:'incidents',permit:'permits',maintenance:'maintenance',tyre:'tyres',invoice:'invoices',advance:'advances',payroll:'payroll',client:'clients',route:'routes'},key=map[formType];if(formType==='trip'){try{const result=await api('/api/admin/trips',{method:'POST',body:o});const state=await api('/api/state');if(state.payload&&Object.keys(state.payload).length){db=merge(state.payload);localStorage.setItem(STORE,JSON.stringify(db))}$('modal').classList.add('hidden');render();notify((result.trip?.number||'Trip')+' saved and assigned to '+driver(result.trip?.driverId));return}catch(err){notify(err.message);return}}if(formType==='diesel'){o.verified=false;const t=get('trips',o.tripId);if(t.id)t.dieselCost=sum(linked('diesel','tripId',t.id),x=>num(x.litres)*num(x.price))+num(o.litres)*num(o.price)}if(formType==='expense'){o.status=o.receiptNo?'Review':'Receipt missing';o.reimbursable=true}if(formType==='tripIssue')o.status='Open';if(formType==='invoice'){o.status='Unpaid';o.paidAmount=0;o.balance=o.amount}if(formType==='payment'){const inv=get('invoices',o.invoiceId),balance=invoiceBalance(inv);if(!inv.id||o.amount<=0)return notify('Select an invoice and enter a valid payment amount');if(o.amount>balance+.005)return notify(`Payment exceeds the outstanding balance of ${money(balance)}`)}if(formType==='inspection'){o.items={tyres:true,lights:true,brakes:true,fluids:true,documents:true,load:true};o.score=o.defects?80:100;o.status=o.defects?'Failed':'Passed'}if(formType==='incident')o.status='Open';if(formType==='permit')o.status='Active';db[key].unshift(o);if(formType==='payment')refreshInvoiceStatus(get('invoices',o.invoiceId));$('modal').classList.add('hidden');commit(formType==='payment'?`Payment of ${money(o.amount)} recorded for ${get('invoices',o.invoiceId).number}`:`${formType} record created`,formType,o.id)}
 function advanceTrip(id){const t=get('trips',id);if(t.stage===4&&!t.pod)return notify('Upload POD before invoicing');if(t.stage<5){t.stage++;t.status={2:'Loading',3:'In transit',4:'Delivered',5:'Invoiced'}[t.stage];if(t.stage===3){get('trucks',t.truckId).status='On trip';get('drivers',t.driverId).status='On trip'}if(t.stage===4)db.tasks.unshift({id:uid('task'),title:`Upload POD for ${t.number}`,ownerRole:'Driver',linkedType:'trip',linkedId:t.id,due:today(),priority:'High',status:'Open'});if(t.stage===5){const inv={id:uid('inv'),number:`INV-${1000+db.invoices.length+1}`,date:today(),clientId:t.clientId,tripId:t.id,amount:t.income,due:'',status:'Unpaid'};db.invoices.unshift(inv);t.invoiceId=inv.id;get('trucks',t.truckId).status='Available';get('drivers',t.driverId).status='Available'}}commit(`${t.number} moved to ${t.status}`,'trip',t.id)}
+function legAllocatedCost(t,leg){
+  const allFuel=linked('diesel','tripId',t.id),allExp=linked('expenses','tripId',t.id),totalDist=Math.max(1,journeyDistance(t)),share=Math.max(0,num(leg.distance))/totalDist;
+  const directFuel=sum(allFuel.filter(x=>x.legId===leg.id),fuelRecordCost),unassignedFuel=sum(allFuel.filter(x=>!x.legId),fuelRecordCost);
+  const directExp=sum(allExp.filter(x=>x.legId===leg.id),x=>x.amount),unassignedExp=sum(allExp.filter(x=>!x.legId),x=>x.amount);
+  const legacy=tripFinancials(t).legacyToll+tripFinancials(t).allowance+tripFinancials(t).other;
+  return directFuel+directExp+share*(unassignedFuel+unassignedExp+legacy)
+}
+function legContribution(t,leg){return legIncomeClient(leg)-legAllocatedCost(t,leg)}
+function journeyLegCard(t,leg){
+  const canEdit=['admin','manager','dispatcher','finance'].includes(role),cost=legAllocatedCost(t,leg),contribution=legContribution(t,leg),inv=leg.invoiceId?get('invoices',leg.invoiceId):{};
+  return `<article class="journey-leg-card ${activeJourneyLeg(t)?.id===leg.id?'active':''}">
+    <div class="journey-leg-head"><div><small>LEG ${num(leg.sequence)} · ${esc(leg.label||'Load')}</small><h3>${esc(route(leg.routeId))}</h3></div>${badge(leg.status||'Planned')}</div>
+    <div class="journey-leg-grid">
+      <div><span>Client</span><b>${esc(client(leg.clientId))}</b></div>
+      <div><span>Cargo</span><b>${esc(leg.load||'—')}</b></div>
+      <div><span>Quantity</span><b>${num(leg.tons)?num(leg.tons)+' t':num(leg.pallets)?num(leg.pallets)+' pallets':'—'}</b></div>
+      <div><span>Distance</span><b>${num(leg.distance).toLocaleString()} km</b></div>
+      <div><span>Pricing</span><b>${esc(legPricingLabel(leg))}</b></div>
+      <div><span>Leg income</span><b>${money(legIncomeClient(leg))}</b></div>
+      <div><span>Allocated cost</span><b>${money(cost)}</b></div>
+      <div><span>Contribution</span><b class="${contribution>=0?'positive':'negative'}">${money(contribution)}</b></div>
+    </div>
+    <div class="journey-leg-foot"><span>${leg.pod?'✓ POD':'POD missing'}${inv.id?' · '+esc(inv.number):''}</span><div>
+      ${canEdit?`<button type="button" class="ghost small edit-journey-leg" data-leg="${leg.id}">Edit</button>`:''}
+      ${canEdit&&tripLegs(t).length>1&&!leg.invoiceId?`<button type="button" class="ghost small remove-journey-leg" data-leg="${leg.id}">Remove</button>`:''}
+      ${['admin','manager','finance'].includes(role)&&leg.pod&&!leg.invoiceId?`<button type="button" class="primary small invoice-journey-leg" data-leg="${leg.id}">Create invoice</button>`:''}
+      ${inv.id?`<button type="button" class="link-button open-invoice" data-id="${inv.id}">Open invoice</button>`:''}
+    </div></div>
+  </article>`;
+}
+function journeyLegAmountPreview(){
+  const method=$('jlPricing')?.value||'Manual negotiated',rate=num($('jlRate')?.value),distance=num($('jlDistance')?.value),tons=num($('jlTons')?.value),pallets=num($('jlPallets')?.value),manual=num($('jlAmount')?.value);
+  let amount=manual,label='Negotiated amount';
+  if(method==='Per km'){amount=rate*distance;label=distance.toLocaleString()+' km × '+money(rate)}
+  else if(method==='Per ton'){amount=rate*tons;label=num(tons).toFixed(2)+' t × '+money(rate)}
+  else if(method==='Per pallet'){amount=rate*pallets;label=num(pallets)+' pallets × '+money(rate)}
+  else if(method==='Flat trip'){amount=rate||manual;label='Flat trip rate'}
+  if($('jlPreview'))$('jlPreview').innerHTML='<span>'+esc(label)+'</span><b>'+money(amount)+'</b>';
+}
+function openJourneyLegForm(tripId,legId='',returnLoad=false){
+  const t=get('trips',tripId),existing=legId?tripLegs(t).find(x=>x.id===legId):null,last=tripLegs(t).slice(-1)[0],defaultRoute=existing?.routeId||(returnLoad?(db.routes.find(r=>r.id!==last?.routeId)?.id||last?.routeId):last?.routeId)||db.routes[0]?.id||'',r=get('routes',defaultRoute);
+  const leg=existing||{label:returnLoad?'Return / Backload':'Additional load',routeId:defaultRoute,clientId:'',load:'',tons:0,pallets:0,distance:num(r.distance),namibiaKm:num(r.namibiaKm),pricingMethod:'Manual negotiated',unitRate:0,agreedAmount:0,status:'Planned'};
+  $('modalTitle').textContent=(existing?'Edit':'Add')+' journey leg · '+t.number;
+  $('entryForm').innerHTML=`<div class="journey-leg-form">
+    <div class="notice"><b>${returnLoad&&!existing?'Return/backload leg':'Journey leg'}</b><br>Each leg can have its own client, cargo, route and pricing. The parent journey totals update automatically.</div>
+    <div class="form-grid">
+      <div class="field"><label>Leg label</label><input id="jlLabel" value="${esc(leg.label||'')}"></div>
+      <div class="field"><label>Status</label><select id="jlStatus">${['Planned','Loading','In transit','At offloading','Delivered'].map(x=>`<option ${x===leg.status?'selected':''}>${x}</option>`).join('')}</select></div>
+      <div class="field full"><label>Route</label><select id="jlRoute">${db.routes.map(x=>`<option value="${x.id}" ${x.id===leg.routeId?'selected':''}>${esc(x.name)} · ${num(x.distance).toLocaleString()} km</option>`).join('')}</select></div>
+      <div class="field full"><label>Client</label><select id="jlClient"><option value="">Select client…</option>${db.clients.map(x=>`<option value="${x.id}" ${x.id===leg.clientId?'selected':''}>${esc(x.name)}</option>`).join('')}</select></div>
+      <div class="field full"><label>Cargo / load</label><input id="jlLoad" value="${esc(leg.load||'')}" placeholder="e.g. Charcoal / furniture"></div>
+      <div class="field"><label>Tons</label><input id="jlTons" type="number" step="0.01" value="${num(leg.tons)}"></div>
+      <div class="field"><label>Pallets</label><input id="jlPallets" type="number" step="1" value="${num(leg.pallets)}"></div>
+      <div class="field"><label>Distance (km)</label><input id="jlDistance" type="number" step="0.1" value="${num(leg.distance)||num(r.distance)}"></div>
+      <div class="field"><label>Namibian road km</label><input id="jlNamibiaKm" type="number" step="0.1" value="${num(leg.namibiaKm)||num(r.namibiaKm)}"></div>
+      <div class="field"><label>Pricing method</label><select id="jlPricing">${['Flat trip','Per km','Per ton','Per pallet','Manual negotiated'].map(x=>`<option ${x===leg.pricingMethod?'selected':''}>${x}</option>`).join('')}</select></div>
+      <div class="field"><label>Unit / flat rate</label><input id="jlRate" type="number" step="0.01" value="${num(leg.unitRate)}"></div>
+      <div class="field full"><label>Negotiated/manual total</label><input id="jlAmount" type="number" step="0.01" value="${num(leg.agreedAmount||leg.income)}"></div>
+    </div>
+    <div class="journey-leg-quote" id="jlPreview"></div>
+    <div class="form-actions"><button type="button" class="ghost" id="cancelForm">Cancel</button><button class="primary">${existing?'Save leg':'Add leg to journey'}</button></div>
+  </div>`;
+  $('modal').classList.remove('hidden');
+  const routeChanged=()=>{const rr=get('routes',$('jlRoute').value);$('jlDistance').value=num(rr.distance);$('jlNamibiaKm').value=rr.crossBorder?(num(rr.namibiaKm)||0):num(rr.distance);journeyLegAmountPreview()};
+  $('jlRoute').onchange=routeChanged;
+  ['jlPricing','jlRate','jlDistance','jlTons','jlPallets','jlAmount'].forEach(id=>$(id).oninput=journeyLegAmountPreview);
+  journeyLegAmountPreview();
+  $('cancelForm').onclick=()=>openTrip(tripId);
+  $('entryForm').onsubmit=async e=>{
+    e.preventDefault();
+    const body={label:$('jlLabel').value.trim(),status:$('jlStatus').value,routeId:$('jlRoute').value,clientId:$('jlClient').value,load:$('jlLoad').value.trim(),tons:num($('jlTons').value),pallets:num($('jlPallets').value),distance:num($('jlDistance').value),namibiaKm:num($('jlNamibiaKm').value),pricingMethod:$('jlPricing').value,unitRate:num($('jlRate').value),agreedAmount:num($('jlAmount').value)};
+    if(!body.clientId)return notify('Select a client');
+    if(!body.routeId)return notify('Select a route');
+    try{
+      const url='/api/admin/trips/'+encodeURIComponent(tripId)+'/legs'+(existing?'/'+encodeURIComponent(existing.id):'');
+      await api(url,{method:existing?'PATCH':'POST',body});
+      await refreshCentralState(false);openTrip(tripId);notify(existing?'Journey leg updated':'Journey leg added')
+    }catch(err){notify(err.message)}
+  };
+}
+async function removeJourneyLeg(tripId,legId){
+  if(!confirm('Remove this leg from the journey?'))return;
+  try{await api('/api/admin/trips/'+encodeURIComponent(tripId)+'/legs/'+encodeURIComponent(legId),{method:'DELETE'});await refreshCentralState(false);openTrip(tripId);notify('Journey leg removed')}catch(e){notify(e.message)}
+}
+async function invoiceJourneyLeg(tripId,legId){
+  try{const r=await api('/api/admin/trips/'+encodeURIComponent(tripId)+'/legs/'+encodeURIComponent(legId)+'/invoice',{method:'POST'});await refreshCentralState(false);openTrip(tripId);notify((r.invoice?.number||'Invoice')+' created for '+client(r.leg?.clientId))}catch(e){notify(e.message)}
+}
 function openTrip(id){
-  const t=get('trips',id),fuel=linked('diesel','tripId',id),expenses=linked('expenses','tripId',id),issues=linked('tripIssues','tripId',id),settlement=tripSettlement(t),m=settlement.fuel;
+  const t=get('trips',id),legs=tripLegs(t),fuel=linked('diesel','tripId',id),expenses=linked('expenses','tripId',id),issues=linked('tripIssues','tripId',id),settlement=tripSettlement(t),m=settlement.fuel;
   const dieselSpend=tripDieselSpend(t),expenseSpend=tripRouteExpenseSpend(t),totalCost=tripCost(t),contribution=tripProfit(t);
-  $('modalTitle').textContent=`${t.number} · ${route(t.routeId)}`;
+  $('modalTitle').textContent=`${t.number} · ${legs.length} leg${legs.length===1?'':'s'} · ${truck(t.truckId)}`;
   $('entryForm').innerHTML=
     `<div class="trip-live-summary">
-      <div><span>Income</span><b>${money(t.income)}</b></div>
+      <div><span>Journey income</span><b>${money(journeyIncome(t))}</b></div>
+      <div><span>Distance</span><b>${journeyDistance(t).toLocaleString()} km</b></div>
       <div><span>Diesel</span><b>${money(dieselSpend)}</b></div>
       <div><span>Route expenses</span><b>${money(expenseSpend)}</b></div>
       <div><span>Total trip cost</span><b>${money(totalCost)}</b></div>
-      <div><span>Contribution</span><b class="${contribution>=0?'positive':'negative'}">${money(contribution)}</b></div>
+      <div><span>Journey contribution</span><b class="${contribution>=0?'positive':'negative'}">${money(contribution)}</b></div>
     </div>
+    <div class="journey-summary-bar"><div><b>${esc(truck(t.truckId))}</b><span>${esc(trailer(t.trailerId))}</span></div><div><b>${esc(driver(t.driverId))}</b><span>${esc(t.date)}</span></div><div><b>${legs.length} priced leg${legs.length===1?'':'s'}</b><span>${legs.filter(x=>x.invoiceId).length} invoiced</span></div></div>
+    <div class="journey-leg-toolbar"><h3>Journey legs / loads</h3><div><button type="button" class="ghost" id="addJourneyLeg">+ Add leg</button><button type="button" class="primary" id="addReturnLeg">↩ Add return / backload</button></div></div>
+    <div class="journey-leg-list">${legs.map(x=>journeyLegCard(t,x)).join('')}</div>
     <div class="split-3">
-      <div><h3>Assignment</h3><p>${client(t.clientId)}<br>${truck(t.truckId)} / ${trailer(t.trailerId)}<br>${driver(t.driverId)}</p></div>
       <div><h3>Diesel performance</h3><p>${m.ready?`${m.kmPerL.toFixed(2)} km/L<br>${m.litresPerKm.toFixed(3)} L/km<br>${m.litresPer100Km.toFixed(1)} L/100 km`:'Awaiting distance and diesel'}<br>${fuel.length} slip(s) · ${num(m.litres).toFixed(2)} L</p></div>
       <div><h3>Driver settlement</h3><p>Incentive ${money(settlement.incentive)}${settlement.rate?`<br><small>${m.distance.toLocaleString()} km × ${money(settlement.rate)}/km</small>`:''}<br>Approved expenses ${money(settlement.reimbursable)}<br>Advances ${money(settlement.advances)}<br><b>Amount due ${money(settlement.due)}</b></p></div>
+      <div><h3>Invoice control</h3><p>${legs.filter(x=>x.invoiceId).length}/${legs.length} leg invoices created.<br>${legs.length>1?'Each client/load invoices separately.':'Single-load journeys can use the normal invoice flow.'}</p></div>
     </div>
     <h3>Diesel slips</h3>
-    ${fuel.length?fuel.map(x=>`<div class="approval"><span><b>${num(x.litres).toFixed(2)} L · ${money(fuelRecordCost(x))}</b><small>${esc(x.supplier||'Unknown supplier')} · ${money(x.price)}/L · Slip: ${esc(x.slip||'—')}</small></span><span>${x.verified?badge('Verified'):badge('Review')}</span></div>`).join(''):'<div class="empty">No diesel captured</div>'}
+    ${fuel.length?fuel.map(x=>`<div class="approval"><span><b>${num(x.litres).toFixed(2)} L · ${money(fuelRecordCost(x))}</b><small>${esc(x.supplier||'Unknown supplier')} · ${money(x.price)}/L${x.legId?' · Leg '+num(legs.find(l=>l.id===x.legId)?.sequence):''} · Slip: ${esc(x.slip||'—')}</small></span><span>${x.verified?badge('Verified'):badge('Review')}</span></div>`).join(''):'<div class="empty">No diesel captured</div>'}
     <h3>Route expenses & receipts</h3>
-    ${expenses.length?expenses.map(x=>`<div class="approval"><span><b>${esc(x.category)} · ${money(x.amount)}</b><small>${esc(x.supplier||'')} · Receipt: ${esc(x.receiptNo||'MISSING')}</small></span><span>${badge(x.status)} ${x.status==='Review'&&['admin','manager','finance'].includes(role)?`<button type="button" class="link-button approve-trip-expense" data-id="${x.id}">Approve</button>`:''}</span></div>`).join(''):'<div class="empty">No route expenses captured</div>'}
-    <h3>What went wrong on this trip</h3>
+    ${expenses.length?expenses.map(x=>`<div class="approval"><span><b>${esc(x.category)} · ${money(x.amount)}</b><small>${esc(x.supplier||'')} ${x.legId?'· Leg '+num(legs.find(l=>l.id===x.legId)?.sequence)+' ':''}· Receipt: ${esc(x.receiptNo||'MISSING')}</small></span><span>${badge(x.status)} ${x.status==='Review'&&['admin','manager','finance'].includes(role)?`<button type="button" class="link-button approve-trip-expense" data-id="${x.id}">Approve</button>`:''}</span></div>`).join(''):'<div class="empty">No route expenses captured</div>'}
+    <h3>What went wrong on this journey</h3>
     ${issues.length?issues.map(x=>`<div class="policy ${x.status==='Open'?'critical':''}"><h3>${esc(x.type)} · ${esc(x.location||'Location not recorded')}</h3><p>${esc(x.description)}<br><b>Action:</b> ${esc(x.action||'Pending')} · Cost ${money(x.cost)}</p></div>`).join(''):'<div class="empty">No trip problems reported</div>'}
     <div class="form-actions">
       <button type="button" class="ghost" id="cancelForm">Close</button>
       <button type="button" class="ghost" id="refreshTripValues">↻ Refresh values</button>
-      <button type="button" class="ghost" id="addExpenseModal">Add expense</button><button type="button" class="ghost" id="addMdcModal">MDC charge</button>
+      <button type="button" class="ghost" id="addExpenseModal">Add expense</button>
+      <button type="button" class="ghost" id="addMdcModal">MDC charge</button>
       <button type="button" class="ghost" id="addIssueModal">Report problem</button>
       <button type="button" class="primary" id="advanceFromModal">Advance workflow</button>
     </div>`;
   $('modal').classList.remove('hidden');
   $('cancelForm').onclick=()=>$('modal').classList.add('hidden');
-  $('refreshTripValues').onclick=async()=>{await refreshCentralState(false);openTrip(id);notify('Trip values refreshed')};
-  $('addExpenseModal').onclick=()=>openForm('expense',{tripId:id,truckId:t.truckId,driverId:t.driverId});$('addMdcModal').onclick=()=>{$('modal').classList.add('hidden');mdcTripPrefill=id;go('roadCharges')};
+  $('refreshTripValues').onclick=async()=>{await refreshCentralState(false);openTrip(id);notify('Journey values refreshed')};
+  $('addJourneyLeg').onclick=()=>openJourneyLegForm(id);
+  $('addReturnLeg').onclick=()=>openJourneyLegForm(id,'',true);
+  document.querySelectorAll('.edit-journey-leg').forEach(b=>b.onclick=()=>openJourneyLegForm(id,b.dataset.leg));
+  document.querySelectorAll('.remove-journey-leg').forEach(b=>b.onclick=()=>removeJourneyLeg(id,b.dataset.leg));
+  document.querySelectorAll('.invoice-journey-leg').forEach(b=>b.onclick=()=>invoiceJourneyLeg(id,b.dataset.leg));
+  document.querySelectorAll('.open-invoice').forEach(b=>b.onclick=()=>openInvoice(b.dataset.id));
+  $('addExpenseModal').onclick=()=>openForm('expense',{tripId:id,truckId:t.truckId,driverId:t.driverId});
+  $('addMdcModal').onclick=()=>{$('modal').classList.add('hidden');mdcTripPrefill=id;go('roadCharges')};
   $('addIssueModal').onclick=()=>openForm('tripIssue',{tripId:id,truckId:t.truckId,driverId:t.driverId});
   document.querySelectorAll('.approve-trip-expense').forEach(b=>b.onclick=()=>{get('expenses',b.dataset.id).status='Approved';commit(`Receipt approved for ${t.number}`,'expense',b.dataset.id);openTrip(id)});
   $('advanceFromModal').onclick=()=>{$('modal').classList.add('hidden');advanceTrip(t.id)}
