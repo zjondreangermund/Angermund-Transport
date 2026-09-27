@@ -192,8 +192,8 @@ function driverAccounts(){
   </section>`;
 }
 function openDriverAccountForm(selectedDriverId=''){
-  const activeLinks=new Set(appUsers.filter(u=>u.role==='driver'&&u.active&&u.driverId).map(u=>u.driverId));
-  const available=db.drivers.filter(d=>d.id===selectedDriverId||!activeLinks.has(d.id));
+  const linkedIds=new Set(appUsers.filter(u=>u.role==='driver'&&u.driverId).map(u=>u.driverId));
+  const available=db.drivers.filter(d=>d.id===selectedDriverId||!linkedIds.has(d.id));
   if(!available.length)return notify('All drivers already have active logins');
   const first=get('drivers',selectedDriverId).id?get('drivers',selectedDriverId):available[0];
   const password=temporaryDriverPassword();
