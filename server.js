@@ -333,11 +333,23 @@ async function sendExternal(n){
   if(n.role!=='driver'&&process.env.META_WHATSAPP_TOKEN&&process.env.META_PHONE_NUMBER_ID&&process.env.WHATSAPP_ALERT_TO)tasks.push(fetch(`https://graph.facebook.com/v21.0/${process.env.META_PHONE_NUMBER_ID}/messages`,{method:'POST',headers:{Authorization:`Bearer ${process.env.META_WHATSAPP_TOKEN}`,'Content-Type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to:process.env.WHATSAPP_ALERT_TO,type:'text',text:{body:`${n.title}\n${n.message}`}})}));
   let subs=[];
   if(pool){
-    if(n.driver_id)subs=await q('SELECT ps.subscription FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id WHERE u.active=true AND u.driver_id=$1',[n.driver_id]);
-    else if(n.role)subs=await q('SELECT ps.subscription FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id WHERE u.active=true AND u.role=$1',[n.role]);
-    else subs=await q('SELECT subscription FROM push_subscriptions');
-  }else subs=memory.subscriptions.filter(s=>!n.driver_id||s.driverId===n.driver_id).map(s=>({subscription:s.subscription||s}));
-  for(const row of subs)if(process.env.VAPID_PUBLIC_KEY)tasks.push(webpush.sendNotification(row.subscription||row,JSON.stringify({title:n.title,body:n.message,linkedType:n.linked_type,linkedId:n.linked_id})).catch(()=>null));
+    if(n.driver_id)subs=await q('SELECT ps.id,ps.subscription FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id WHERE u.active=true AND u.driver_id=$1',[n.driver_id]);
+    else if(n.role)subs=await q('SELECT ps.id,ps.subscription FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id WHERE u.active=true AND u.role=$1',[n.role]);
+    else subs=await q('SELECT id,subscription FROM push_subscriptions');
+  }else subs=memory.subscriptions.filter(x=>!n.driver_id||x.driverId===n.driver_id);
+  if(process.env.VAPID_PUBLIC_KEY&&process.env.VAPID_PRIVATE_KEY){
+    for(const row of subs)tasks.push((async()=>{
+      try{return await webpush.sendNotification(row.subscription||row,JSON.stringify({title:n.title,body:n.message,linkedType:n.linked_type,linkedId:n.linked_id,url:'/'}))}
+      catch(e){
+        const code=num(e.statusCode);
+        if(code===404||code===410){
+          if(pool&&row.id)await q('DELETE FROM push_subscriptions WHERE id=$1',[row.id]);
+          else memory.subscriptions=memory.subscriptions.filter(x=>x!==row);
+        }else console.error('Web Push failed',code||'',e.message);
+        return null
+      }
+    })())
+  }
   await Promise.allSettled(tasks);
 }
 async function evaluateGeofences(pos){
@@ -989,7 +1001,24 @@ app.get('/api/geofences',auth,async(req,res)=>res.json(pool?await q('SELECT id,n
 app.post('/api/geofences',auth,roles('admin','manager','dispatcher'),async(req,res)=>{const f={id:crypto.randomUUID(),name:String(req.body.name||''),latitude:Number(req.body.latitude),longitude:Number(req.body.longitude),radiusM:Number(req.body.radiusM||500),eventTypes:req.body.eventTypes||['enter','exit'],active:true};if(!f.name||!Number.isFinite(f.latitude)||!Number.isFinite(f.longitude))return res.status(400).json({error:'name, latitude and longitude required'});if(pool)await q('INSERT INTO geofences(id,name,latitude,longitude,radius_m,event_types) VALUES($1,$2,$3,$4,$5,$6)',[f.id,f.name,f.latitude,f.longitude,f.radiusM,f.eventTypes]);else memory.geofences.push(f);emit('geofence',f);res.status(201).json(f)});
 app.get('/api/notifications',auth,async(req,res)=>res.json(pool?await q(`SELECT id,type,severity,title,message,role,driver_id AS "driverId",linked_type AS "linkedType",linked_id AS "linkedId",read,created_at AS "createdAt" FROM notifications WHERE (role IS NULL OR role=$1) AND ($1<>'driver' OR driver_id IS NULL OR driver_id=$2) ORDER BY created_at DESC LIMIT 100`,[req.user.role,req.user.driverId||null]):memory.notifications.filter(x=>(!x.role||x.role===req.user.role)&&(req.user.role!=='driver'||!x.driver_id||x.driver_id===req.user.driverId)).slice(0,100)));
 app.patch('/api/notifications/:id/read',auth,async(req,res)=>{if(pool)await q('UPDATE notifications SET read=true WHERE id=$1',[req.params.id]);else{const n=memory.notifications.find(x=>x.id===req.params.id);if(n)n.read=true}res.json({success:true})});
-app.post('/api/push/subscribe',auth,async(req,res)=>{if(pool)await q('INSERT INTO push_subscriptions(user_id,subscription) VALUES($1,$2)',[req.user.sub,req.body]);else memory.subscriptions.push({userId:req.user.sub,role:req.user.role,driverId:req.user.driverId||null,subscription:req.body});res.status(201).json({success:true})});
+app.get('/api/push/status',auth,async(req,res)=>{
+  let count=0;
+  if(pool)count=num((await q('SELECT count(*)::int AS count FROM push_subscriptions WHERE user_id=$1',[req.user.sub]))[0]?.count);
+  else count=memory.subscriptions.filter(x=>x.userId===req.user.sub).length;
+  res.json({providerConfigured:Boolean(process.env.VAPID_PUBLIC_KEY&&process.env.VAPID_PRIVATE_KEY),subscriptionCount:count,subscribed:count>0})
+});
+app.post('/api/push/subscribe',auth,async(req,res)=>{
+  const sub=req.body&&typeof req.body==='object'?req.body:null,endpoint=String(sub?.endpoint||'');
+  if(!endpoint)return res.status(400).json({error:'Push subscription endpoint is required'});
+  if(pool){
+    await q("DELETE FROM push_subscriptions WHERE subscription->>'endpoint'=$1",[endpoint]);
+    await q('INSERT INTO push_subscriptions(user_id,subscription) VALUES($1,$2)',[req.user.sub,sub]);
+  }else{
+    memory.subscriptions=memory.subscriptions.filter(x=>String(x.subscription?.endpoint||'')!==endpoint);
+    memory.subscriptions.push({userId:req.user.sub,role:req.user.role,driverId:req.user.driverId||null,subscription:sub});
+  }
+  res.status(201).json({success:true})
+});
 app.get('/api/config',auth,(req,res)=>res.json({vapidPublicKey:process.env.VAPID_PUBLIC_KEY||null,mapStyle:process.env.MAP_STYLE_URL||'https://tiles.openfreemap.org/styles/liberty',providers:{whatsapp:Boolean(process.env.META_WHATSAPP_TOKEN),email:Boolean(process.env.RESEND_API_KEY),push:Boolean(process.env.VAPID_PUBLIC_KEY),telematics:Boolean(process.env.TELEMATICS_WEBHOOK_TOKEN),maps:'OpenFreeMap'}}));
 app.post('/api/export/:kind',auth,async(req,res)=>{const title=String(req.body.title||req.params.kind).slice(0,80),columns=Array.isArray(req.body.columns)?req.body.columns:[],rows=Array.isArray(req.body.rows)?req.body.rows:[];if(!columns.length)return res.status(400).json({error:'Export columns required'});const book=new ExcelJS.Workbook();book.creator='Angermund Transport';book.created=new Date();const sheet=book.addWorksheet(title.slice(0,31)||'Export',{views:[{state:'frozen',ySplit:4}]});sheet.properties.defaultRowHeight=20;sheet.mergeCells(1,1,1,columns.length);const heading=sheet.getCell(1,1);heading.value=`Angermund Transport CC — ${title}`;heading.font={name:'Aptos Display',size:16,bold:true,color:{argb:'FFFFFFFF'}};heading.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF0B2035'}};heading.alignment={vertical:'middle'};sheet.getRow(1).height=30;sheet.mergeCells(2,1,2,columns.length);sheet.getCell(2,1).value=`Exported ${new Date().toLocaleString('en-NA',{timeZone:'Africa/Windhoek'})}`;sheet.getCell(2,1).font={name:'Aptos',size:10,italic:true,color:{argb:'FF5E7184'}};sheet.getRow(4).values=columns.map(c=>c.label);sheet.getRow(4).eachCell(c=>{c.font={name:'Aptos',bold:true,color:{argb:'FFFFFFFF'}};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF1769AA'}};c.alignment={vertical:'middle',horizontal:'center'}});for(const source of rows){const values=columns.map(c=>source[c.key]??'');const row=sheet.addRow(values);row.eachCell((cell,index)=>{cell.font={name:'Aptos',size:10};cell.alignment={vertical:'middle',wrapText:false};const col=columns[index-1];if(col.type==='currency')cell.numFmt='N$ #,##0.00';else if(col.type==='number')cell.numFmt='#,##0.00';else if(col.type==='date'&&cell.value)cell.numFmt='yyyy-mm-dd'})}columns.forEach((c,i)=>{let width=Math.max(12,c.label.length+2);for(const row of rows.slice(0,200))width=Math.max(width,String(row[c.key]??'').length+2);sheet.getColumn(i+1).width=Math.min(42,width)});sheet.autoFilter={from:{row:4,column:1},to:{row:Math.max(4,rows.length+4),column:columns.length}};sheet.getRow(rows.length+5).getCell(1).value=`${rows.length} record(s)`;sheet.getRow(rows.length+5).getCell(1).font={italic:true,color:{argb:'FF5E7184'}};const buffer=await book.xlsx.writeBuffer();res.set({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="${req.params.kind}-${new Date().toISOString().slice(0,10)}.xlsx"`});res.send(Buffer.from(buffer))});
 app.post('/api/documents/scan',auth,upload.single('document'),async(req,res)=>{if(!req.file)return res.status(400).json({error:'Document image required'});const id=crypto.randomUUID(),row={id,user_id:req.user.sub,filename:req.file.originalname,status:'processing'};if(pool)await q('INSERT INTO scan_jobs(id,user_id,filename,status) VALUES($1,$2,$3,$4)',[id,row.user_id,row.filename,row.status]);else memory.scanJobs.push({...row,rawText:null,extracted:null,confidence:null,error:null,createdAt:new Date().toISOString(),completedAt:null});res.status(202).json({id,status:'processing'});(async()=>{try{const result=await recognizeReceiptBest(req.file.buffer),state=await readOpsState().catch(()=>({})),extractions=result.results.map(r=>extractReceiptFields(r.text,state)),extracted=mergeReceiptExtractions(extractions),raw=result.results.map(r=>'['+r.label+']\n'+r.text).join('\n\n--- OCR PASS ---\n\n'),confidence=result.best.confidence;if(pool)await q('UPDATE scan_jobs SET status=$2,raw_text=$3,extracted=$4,confidence=$5,completed_at=now() WHERE id=$1',[id,'review',raw,extracted,confidence]);else{const m=memory.scanJobs.find(x=>x.id===id);if(m)Object.assign(m,{status:'review',rawText:raw,extracted,confidence,completedAt:new Date().toISOString()})}emit('scan',{id,status:'review',extracted,confidence,ocrMode:'merged'})}catch(e){if(pool)await q('UPDATE scan_jobs SET status=$2,error=$3,completed_at=now() WHERE id=$1',[id,'failed',e.message]);else{const m=memory.scanJobs.find(x=>x.id===id);if(m)Object.assign(m,{status:'failed',error:e.message,completedAt:new Date().toISOString()})}emit('scan',{id,status:'failed',error:e.message})}})()});
