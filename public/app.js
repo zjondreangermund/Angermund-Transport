@@ -135,16 +135,77 @@ async function scanReceiptFile(file){
   }
   return{};
 }
+async function prepareReceiptThresholdForOcr(file){
+  try{
+    const bmp=await createImageBitmap(file,{imageOrientation:'from-image'});
+    const targetWidth=Math.min(2200,Math.max(1400,bmp.width));
+    const scale=targetWidth/bmp.width,w=Math.round(bmp.width*scale),h=Math.round(bmp.height*scale);
+    const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;
+    const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.drawImage(bmp,0,0,w,h);bmp.close?.();
+    const img=ctx.getImageData(0,0,w,h),d=img.data,hist=new Uint32Array(256);
+    for(let i=0;i<d.length;i+=4){const y=Math.round(.299*d[i]+.587*d[i+1]+.114*d[i+2]);hist[y]++}
+    const total=w*h;
+    let sum=0;for(let i=0;i<256;i++)sum+=i*hist[i];
+    let sumB=0,wB=0,maxVar=-1,threshold=160;
+    for(let t=0;t<256;t++){
+      wB+=hist[t];if(!wB)continue;
+      const wF=total-wB;if(!wF)break;
+      sumB+=t*hist[t];
+      const mB=sumB/wB,mF=(sum-sumB)/wF,between=wB*wF*(mB-mF)*(mB-mF);
+      if(between>maxVar){maxVar=between;threshold=t}
+    }
+    threshold=Math.max(110,Math.min(210,threshold+8));
+    for(let i=0;i<d.length;i+=4){
+      const y=.299*d[i]+.587*d[i+1]+.114*d[i+2];
+      const v=y<threshold?0:255;d[i]=d[i+1]=d[i+2]=v;d[i+3]=255;
+    }
+    ctx.putImageData(img,0,0);
+    const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/png'));
+    return blob?new File([blob],'receipt-threshold.png',{type:'image/png'}):file;
+  }catch{return file}
+}
+function weakReceiptResult(x){
+  return !x||x.category==='Other'||num(x.categoryConfidence)<75||(!num(x.suggestedAmount)&&!num(x.litres));
+}
+function mergeClientReceiptResults(...items){
+  const valid=items.filter(Boolean).sort((a,b)=>receiptClientScore(b)-receiptClientScore(a));
+  if(!valid.length)return{};
+  const out=JSON.parse(JSON.stringify(valid[0]));
+  for(const c of valid.slice(1)){
+    for(const key of ['supplier','documentNumber','date','registration','odometer','printedTotal','suggestedAmount','litres','pricePerLitre']){
+      if((out[key]===null||out[key]===undefined||out[key]===''||num(out[key])===0)&&(c[key]!==null&&c[key]!==undefined&&c[key]!==''))out[key]=c[key];
+    }
+    if((!out.category||out.category==='Other')&&c.category&&c.category!=='Other'){
+      out.category=c.category;out.categoryConfidence=c.categoryConfidence;out.categoryReason=c.categoryReason;out.categorySource=c.categorySource;
+    }
+  }
+  const fuel=valid.filter(x=>Array.isArray(x.fuelTransactions)&&x.fuelTransactions.length)
+    .sort((a,b)=>((b.totalsReconcile===true?100:0)+(b.fuelTransactions?.length||0)*20+(num(b.printedTotal)>0?15:0))-((a.totalsReconcile===true?100:0)+(a.fuelTransactions?.length||0)*20+(num(a.printedTotal)>0?15:0)))[0];
+  if(fuel){
+    for(const key of ['fuelTransactions','fuelTransactionCount','fuelLineAmount','litres','pricePerLitre','printedTotal','suggestedAmount','adjustment','totalsReconcile','totalDifference','needsReview']){
+      if(fuel[key]!==undefined)out[key]=JSON.parse(JSON.stringify(fuel[key]));
+    }
+    if(!out.category||out.category==='Other'){out.category='Diesel';out.categoryConfidence=Math.max(96,num(fuel.categoryConfidence));out.categoryReason='Fuel line-items detected across scan attempts';out.categorySource='merged-images'}
+  }
+  out.categoryConfidence=Math.max(num(out.categoryConfidence),...valid.filter(x=>x.category===out.category).map(x=>num(x.categoryConfidence)));
+  return out;
+}
 async function scanDriverReceipt(file){
   try{
     const enhanced=await prepareReceiptForOcr(file);
-    let best=await scanReceiptFile(enhanced);
-    const weak=best.category==='Other'||num(best.categoryConfidence)<75||(!num(best.suggestedAmount)&&!num(best.litres));
-    if(weak&&enhanced!==file){
-      const original=await scanReceiptFile(file);
-      if(receiptClientScore(original)>receiptClientScore(best))best=original;
+    const enhancedResult=await scanReceiptFile(enhanced);
+    if(!weakReceiptResult(enhancedResult))return enhancedResult;
+
+    const originalResult=enhanced===file?{}:await scanReceiptFile(file);
+    let merged=mergeClientReceiptResults(enhancedResult,originalResult);
+    if(!weakReceiptResult(merged))return merged;
+
+    const threshold=await prepareReceiptThresholdForOcr(file);
+    if(threshold!==file){
+      const thresholdResult=await scanReceiptFile(threshold);
+      merged=mergeClientReceiptResults(merged,thresholdResult);
     }
-    return best||{};
+    return merged||{};
   }catch{return{}}
 }
 async function openDriverSmartSlip(t,file){
