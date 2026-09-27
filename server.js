@@ -318,9 +318,9 @@ async function evaluateTripZones(pos){
   const snapshot=await readOpsState();
   const active=(snapshot.trips||[]).filter(t=>t.truckId===pos.vehicleId&&!t.driverComplete&&!['Closed','Invoiced'].includes(t.status)).sort((a,b)=>num(b.stage)-num(a.stage))[0];
   if(!active)return;
-  const route=(snapshot.routes||[]).find(r=>r.id===active.routeId),zones=routeTripZones(route);
+  const activeLeg=activeTripLegServer(active),route=(snapshot.routes||[]).find(r=>r.id===(activeLeg?.routeId||active.routeId)),zones=routeTripZones(route),multi=Array.isArray(active.legs)&&active.legs.length>1;
   if(!zones)return;
-  const preliminaryGeo=active.geo||{},loadM=distance(pos,zones.load),offM=distance(pos,zones.offload),alreadyDeparted=Boolean(preliminaryGeo.loadDepartedAt)||num(active.stage)>=3||['In transit','At offloading','Return journey','Delivered','Returned'].includes(active.status);
+  const preliminaryGeo=activeLeg?.geo||active.geo||{},loadM=distance(pos,zones.load),offM=distance(pos,zones.offload),alreadyDeparted=Boolean(preliminaryGeo.loadDepartedAt)||String(activeLeg?.status||'').toLowerCase()==='in transit'||(!multi&&(num(active.stage)>=3||['In transit','At offloading','Return journey','Delivered','Returned'].includes(active.status)));
   const possible=
     (!alreadyDeparted&&!preliminaryGeo.loadApproachAt&&loadM<=zones.approachM)||
     (!alreadyDeparted&&!preliminaryGeo.loadArrivedAt&&loadM<=zones.arrivalM)||
@@ -328,27 +328,27 @@ async function evaluateTripZones(pos){
     (alreadyDeparted&&!preliminaryGeo.offloadApproachAt&&offM<=zones.approachM)||
     (alreadyDeparted&&!preliminaryGeo.offloadArrivedAt&&offM<=zones.arrivalM)||
     (preliminaryGeo.offloadArrivedAt&&!preliminaryGeo.offloadDepartedAt&&offM>=zones.departM)||
-    (zones.roundTrip&&preliminaryGeo.offloadDepartedAt&&!preliminaryGeo.returnApproachAt&&loadM<=zones.approachM)||
-    (zones.roundTrip&&preliminaryGeo.returnApproachAt&&!preliminaryGeo.returnArrivedAt&&loadM<=zones.arrivalM);
+    (!multi&&zones.roundTrip&&preliminaryGeo.offloadDepartedAt&&!preliminaryGeo.returnApproachAt&&loadM<=zones.approachM)||
+    (!multi&&zones.roundTrip&&preliminaryGeo.returnApproachAt&&!preliminaryGeo.returnArrivedAt&&loadM<=zones.arrivalM);
   if(!possible)return;
   const changed=await mutateOpsState(async state=>{
-    const t=(state.trips||[]).find(x=>x.id===active.id),r=(state.routes||[]).find(x=>x.id===active.routeId),z=routeTripZones(r);
+    const t=(state.trips||[]).find(x=>x.id===active.id),currentLeg=t?activeTripLegServer(t):null,r=(state.routes||[]).find(x=>x.id===(currentLeg?.routeId||active.routeId)),z=routeTripZones(r),multiLeg=Array.isArray(t?.legs)&&t.legs.length>1;
     if(!t||!z)return{events:[]};
-    t.geo??={};
+    if(currentLeg)currentLeg.geo??={};else t.geo??={};
     state.tasks??=[];
     state.trucks??=[];
     state.drivers??=[];
-    const g=t.geo,now=new Date().toISOString(),lm=distance(pos,z.load),om=distance(pos,z.offload),events=[],km=m=>(m/1000).toFixed(1);if((num(t.stage)>=3||['In transit','At offloading','Return journey','Delivered','Returned'].includes(t.status))&&!g.loadDepartedAt)g.loadDepartedAt=t.startedAt||now;
+    const g=currentLeg?currentLeg.geo:t.geo,now=new Date().toISOString(),lm=distance(pos,z.load),om=distance(pos,z.offload),events=[],km=m=>(m/1000).toFixed(1);if((num(t.stage)>=3||['In transit','At offloading','Return journey','Delivered','Returned'].includes(t.status))&&!g.loadDepartedAt)g.loadDepartedAt=t.startedAt||now;
     if(!g.loadApproachAt&&lm<=z.approachM){
       g.loadApproachAt=now;
       events.push({title:t.number+' approaching loading point',message:pos.vehicleId+' is '+km(lm)+' km from '+z.load.name+'.'});
     }
     if(!g.loadArrivedAt&&lm<=z.arrivalM){
-      g.loadArrivedAt=now;g.loadArrivalPosition={latitude:pos.latitude,longitude:pos.longitude};t.stage=Math.max(2,num(t.stage)||1);t.status='At loading';
+      g.loadArrivedAt=now;g.loadArrivalPosition={latitude:pos.latitude,longitude:pos.longitude};t.stage=Math.max(2,num(t.stage)||1);t.status='At loading';if(currentLeg)currentLeg.status='At loading';
       events.push({title:t.number+' arrived at loading',message:pos.vehicleId+' arrived at '+z.load.name+' ('+km(lm)+' km from pin).'});
     }
     if(g.loadArrivedAt&&!g.loadDepartedAt&&lm>=z.departM){
-      g.loadDepartedAt=now;g.loadDeparturePosition={latitude:pos.latitude,longitude:pos.longitude};t.stage=Math.max(3,num(t.stage)||1);t.status='In transit';t.startedAt=t.startedAt||now;
+      g.loadDepartedAt=now;g.loadDeparturePosition={latitude:pos.latitude,longitude:pos.longitude};t.stage=Math.max(3,num(t.stage)||1);t.status='In transit';t.startedAt=t.startedAt||now;if(currentLeg){currentLeg.status='In transit';currentLeg.startedAt=currentLeg.startedAt||now;}
       const tr=state.trucks.find(x=>x.id===t.truckId);if(tr)tr.status='On trip';
       const dr=state.drivers.find(x=>x.id===t.driverId);if(dr)dr.status='On trip';
       events.push({title:t.number+' departed loading point',message:pos.vehicleId+' has left '+z.load.name+' and is now '+km(lm)+' km away. Trip changed to In transit.'});
@@ -358,16 +358,16 @@ async function evaluateTripZones(pos){
       events.push({title:t.number+' approaching offloading',message:pos.vehicleId+' is '+km(om)+' km from '+z.offload.name+'.'});
     }
     if(g.loadDepartedAt&&!g.offloadArrivedAt&&om<=z.arrivalM){
-      g.offloadArrivedAt=now;g.offloadArrivalPosition={latitude:pos.latitude,longitude:pos.longitude};t.status='At offloading';t.arrivedAt=t.arrivedAt||now;
+      g.offloadArrivedAt=now;g.offloadArrivalPosition={latitude:pos.latitude,longitude:pos.longitude};t.status='At offloading';t.arrivedAt=t.arrivedAt||now;if(currentLeg){currentLeg.status='At offloading';currentLeg.arrivedAt=currentLeg.arrivedAt||now;}
       events.push({title:t.number+' arrived at offloading',message:pos.vehicleId+' arrived at '+z.offload.name+' ('+km(om)+' km from pin).'});
     }
     if(g.offloadArrivedAt&&!g.offloadDepartedAt&&om>=z.departM){
       g.offloadDepartedAt=now;g.offloadDeparturePosition={latitude:pos.latitude,longitude:pos.longitude};
-      if(z.roundTrip){
+      if(!multiLeg&&z.roundTrip){
         g.returnStartedAt=now;t.status='Return journey';
         events.push({title:t.number+' return journey started',message:pos.vehicleId+' has left '+z.offload.name+' and is now '+km(om)+' km away.'});
       }else{
-        t.stage=Math.max(4,num(t.stage)||1);t.status='Delivered';
+        if(multiLeg){t.status='Awaiting POD';if(currentLeg)currentLeg.status='At offloading'}else{t.stage=Math.max(4,num(t.stage)||1);t.status='Delivered'};
         if(!state.tasks.some(x=>x.linkedId===t.id&&/POD/i.test(x.title)&&x.status==='Open')){
           state.tasks.unshift({id:'task_'+crypto.randomUUID(),title:'Upload POD for '+t.number,ownerRole:'Driver',linkedType:'trip',linkedId:t.id,due:now.slice(0,10),priority:'High',status:'Open'});
         }
