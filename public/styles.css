@@ -292,3 +292,11 @@ body.driver-mode .toast{left:12px;right:12px;bottom:86px;text-align:center}
 @media(max-width:520px){.driver-welcome{align-items:flex-start}.driver-welcome-actions{gap:6px}.driver-online{padding:6px 8px}.driver-logout-top{padding:6px 9px}}
 
 .driver-bottom #driverLogoutBottom{color:#ff9b9b}.driver-bottom #driverLogoutBottom span{color:#ff9b9b}
+
+/* Global authenticated logout */
+.global-logout{display:inline-flex;align-items:center;gap:5px;color:#ff9b9b;border-color:rgba(255,112,112,.35)}
+@media(max-width:760px){
+  .header-actions>.ghost.global-logout{display:inline-flex!important;padding:8px 10px!important;font-size:11px;white-space:nowrap}
+  .role-picker{max-width:128px}
+  .role-picker select{width:108px}
+}
