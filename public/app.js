@@ -89,7 +89,64 @@ function driverNextStep(t){
 }
 async function driverMainStep(t){const n=driverNextStep(t);if(n.key==='accept')return sendDriverAction(t.id,'accept',{},'Trip accepted');if(n.key==='inspection')return openDriverInspection(t);if(n.key==='start'){gpsCheckIn();return sendDriverAction(t.id,'start',{},'Trip started')}if(n.key==='arrive'){gpsCheckIn();return sendDriverAction(t.id,'arrive',{},'Arrival recorded')}if(n.key==='pod')return driverCapture('pod',file=>sendDriverPhotoAction(t.id,'pod',file,'pod',{},'POD received'));if(n.key==='finish')return sendDriverAction(t.id,'finish',{},'✅ Trip finished')}
 function openDriverInspection(t){$('modalTitle').textContent='Quick vehicle check';$('entryForm').innerHTML='<div class="driver-check"><div class="driver-check-icon">🚛</div><h2>Is the truck safe to drive?</h2><p>Check tyres, lights, brakes, fluids, documents and the load.</p><button type="button" class="driver-good" id="driverAllGood">✓ ALL GOOD</button><button type="button" class="driver-found" id="driverFoundProblem">⚠ I FOUND A PROBLEM</button><button type="button" class="ghost" id="cancelForm">Cancel</button><div id="driverDefectBox" class="hidden"><label>Tell the office what is wrong</label><textarea id="driverDefectText" rows="4" placeholder="Type it or use the microphone…"></textarea><div class="driver-inline"><button type="button" class="ghost" id="driverSpeak">🎤 SPEAK</button><button type="button" class="danger" id="driverSendDefect">SEND PROBLEM</button></div></div></div>';$('modal').classList.remove('hidden');$('cancelForm').onclick=()=>$('modal').classList.add('hidden');$('driverAllGood').onclick=async()=>{$('modal').classList.add('hidden');await sendDriverAction(t.id,'inspection',{defects:''},'Vehicle check passed')};$('driverFoundProblem').onclick=()=>{$('driverDefectBox').classList.remove('hidden');$('driverFoundProblem').classList.add('hidden')};$('driverSpeak').onclick=()=>driverSpeechTo($('driverDefectText'));$('driverSendDefect').onclick=async()=>{const defects=$('driverDefectText').value.trim();if(!defects)return notify('Tell the office what is wrong');$('modal').classList.add('hidden');await sendDriverAction(t.id,'inspection',{defects},'Problem sent to office');await sendDriverAction(t.id,'problem',{type:'Vehicle defect',description:defects},'Problem sent to office')}}
-async function scanDriverReceipt(file){try{const fd=new FormData();fd.append('document',file,file.name||'receipt.jpg');const job=await api('/api/documents/scan',{method:'POST',body:fd});for(let i=0;i<20;i++){await new Promise(r=>setTimeout(r,750));const row=await api('/api/documents/scans/'+encodeURIComponent(job.id));if(row.status==='review')return row.extracted||{};if(row.status==='failed')return{}}}catch{}return{}}
+async function prepareReceiptForOcr(file){
+  try{
+    const bmp=await createImageBitmap(file,{imageOrientation:'from-image'});
+    const targetWidth=Math.min(2000,Math.max(1200,bmp.width));
+    const scale=targetWidth/bmp.width,w=Math.round(bmp.width*scale),h=Math.round(bmp.height*scale);
+    const canvas=document.createElement('canvas');canvas.width=w;canvas.height=h;
+    const ctx=canvas.getContext('2d',{willReadFrequently:true});ctx.drawImage(bmp,0,0,w,h);bmp.close?.();
+    const img=ctx.getImageData(0,0,w,h),d=img.data,hist=new Uint32Array(256);
+    for(let i=0;i<d.length;i+=4){const y=Math.round(.299*d[i]+.587*d[i+1]+.114*d[i+2]);hist[y]++}
+    const total=w*h,percentile=p=>{let n=0,target=total*p;for(let i=0;i<256;i++){n+=hist[i];if(n>=target)return i}return p<.5?0:255};
+    const low=percentile(.03),high=Math.max(low+30,percentile(.97)),span=high-low;
+    for(let i=0;i<d.length;i+=4){
+      let y=.299*d[i]+.587*d[i+1]+.114*d[i+2];
+      y=Math.max(0,Math.min(255,(y-low)*255/span));
+      y=Math.max(0,Math.min(255,(y-128)*1.35+128));
+      if(y>225)y=255;else if(y<80)y=Math.max(0,y*.72);
+      d[i]=d[i+1]=d[i+2]=Math.round(y);d[i+3]=255;
+    }
+    ctx.putImageData(img,0,0);
+    const blob=await new Promise(resolve=>canvas.toBlob(resolve,'image/jpeg',.94));
+    return blob?new File([blob],'receipt-ocr.jpg',{type:'image/jpeg'}):file;
+  }catch{return file}
+}
+function receiptClientScore(x){
+  if(!x)return 0;
+  let score=num(x.categoryConfidence);
+  if(x.category&&x.category!=='Other')score+=30;
+  if(num(x.suggestedAmount)>0)score+=18;
+  if(num(x.litres)>0)score+=22;
+  if(num(x.pricePerLitre)>0)score+=14;
+  if(x.documentNumber)score+=4;
+  if(x.odometer)score+=6;
+  if(x.supplier&&String(x.supplier).length>=3)score+=6;
+  return score;
+}
+async function scanReceiptFile(file){
+  const fd=new FormData();fd.append('document',file,file.name||'receipt.jpg');
+  const job=await api('/api/documents/scan',{method:'POST',body:fd});
+  for(let i=0;i<30;i++){
+    await new Promise(r=>setTimeout(r,650));
+    const row=await api('/api/documents/scans/'+encodeURIComponent(job.id));
+    if(row.status==='review')return row.extracted||{};
+    if(row.status==='failed')return{};
+  }
+  return{};
+}
+async function scanDriverReceipt(file){
+  try{
+    const enhanced=await prepareReceiptForOcr(file);
+    let best=await scanReceiptFile(enhanced);
+    const weak=best.category==='Other'||num(best.categoryConfidence)<75||(!num(best.suggestedAmount)&&!num(best.litres));
+    if(weak&&enhanced!==file){
+      const original=await scanReceiptFile(file);
+      if(receiptClientScore(original)>receiptClientScore(best))best=original;
+    }
+    return best||{};
+  }catch{return{}}
+}
 async function openDriverSmartSlip(t,file){
   $('modalTitle').textContent='📷 Scan slip';
   $('entryForm').innerHTML='<div class="driver-scan-loading"><div class="driver-scan-camera">📷</div><h2>Reading slip…</h2><p>Finding the supplier, amount and expense type.</p></div>';
