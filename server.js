@@ -246,7 +246,7 @@ async function recognizeReceiptBest(buffer){
 
 if(!DATABASE_URL)console.warn('DATABASE_URL missing: using development memory store. Set PostgreSQL for multi-device persistence.');
 const pool=DATABASE_URL?new Pool({connectionString:DATABASE_URL,ssl:/localhost|127\.0\.0\.1/.test(DATABASE_URL)?false:{rejectUnauthorized:false}}):null;
-const memory={state:null,users:[],gps:[],geofences:[],notifications:[],subscriptions:[],uploads:[],scanJobs:[]};const clients=new Set();
+const memory={state:null,users:[],gps:[],geofences:[],notifications:[],subscriptions:[],uploads:[],tripDocuments:[],scanJobs:[]};const clients=new Set();
 app.use(express.json({limit:'10mb'}));app.use(express.urlencoded({extended:true}));
 app.use((req,res,next)=>{res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','same-origin');res.setHeader('Permissions-Policy','geolocation=(self), camera=(self)');next()});
 const q=async(text,params=[])=>pool?(await pool.query(text,params)).rows:null;
@@ -258,7 +258,7 @@ CREATE TABLE IF NOT EXISTS geofences(id uuid PRIMARY KEY,name text NOT NULL,lati
 CREATE TABLE IF NOT EXISTS geofence_state(vehicle_id text NOT NULL,geofence_id uuid REFERENCES geofences(id) ON DELETE CASCADE,inside boolean NOT NULL,updated_at timestamptz DEFAULT now(),PRIMARY KEY(vehicle_id,geofence_id));
 CREATE TABLE IF NOT EXISTS notifications(id uuid PRIMARY KEY,type text NOT NULL,severity text DEFAULT 'info',title text NOT NULL,message text NOT NULL,role text,driver_id text,linked_type text,linked_id text,read boolean DEFAULT false,created_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS push_subscriptions(id bigserial PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE CASCADE,subscription jsonb NOT NULL,created_at timestamptz DEFAULT now());
-CREATE TABLE IF NOT EXISTS scan_jobs(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id),filename text,status text NOT NULL DEFAULT 'processing',raw_text text,extracted jsonb,confidence double precision,error text,created_at timestamptz DEFAULT now(),completed_at timestamptz);\nCREATE TABLE IF NOT EXISTS driver_uploads(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,trip_id text NOT NULL,kind text NOT NULL,filename text NOT NULL,mime_type text NOT NULL,content bytea NOT NULL,created_at timestamptz DEFAULT now());\nALTER TABLE notifications ADD COLUMN IF NOT EXISTS driver_id text;\nCREATE INDEX IF NOT EXISTS driver_uploads_trip ON driver_uploads(trip_id,created_at DESC);`);
+CREATE TABLE IF NOT EXISTS scan_jobs(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id),filename text,status text NOT NULL DEFAULT 'processing',raw_text text,extracted jsonb,confidence double precision,error text,created_at timestamptz DEFAULT now(),completed_at timestamptz);\nCREATE TABLE IF NOT EXISTS driver_uploads(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,trip_id text NOT NULL,kind text NOT NULL,filename text NOT NULL,mime_type text NOT NULL,content bytea NOT NULL,created_at timestamptz DEFAULT now());\nCREATE TABLE IF NOT EXISTS trip_documents(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,trip_id text NOT NULL,leg_id text,kind text NOT NULL,reference text,filename text,mime_type text,content bytea,created_at timestamptz DEFAULT now());\nCREATE INDEX IF NOT EXISTS trip_documents_trip ON trip_documents(trip_id,created_at DESC);\nALTER TABLE notifications ADD COLUMN IF NOT EXISTS driver_id text;\nCREATE INDEX IF NOT EXISTS driver_uploads_trip ON driver_uploads(trip_id,created_at DESC);`);
  const email=(process.env.INITIAL_ADMIN_EMAIL||'admin@angermund.local').toLowerCase(),pass=process.env.INITIAL_ADMIN_PASSWORD||'ChangeMe123!';const found=await q('SELECT id FROM users WHERE email=$1',[email]);if(!found.length)await q('INSERT INTO users(id,email,password_hash,name,role) VALUES($1,$2,$3,$4,$5)',[crypto.randomUUID(),email,await bcrypt.hash(pass,12),'System Administrator','admin']);await q("INSERT INTO app_state(id,payload) VALUES(1,'{}') ON CONFLICT(id) DO NOTHING");
  }else if(!memory.users.length)memory.users.push({id:crypto.randomUUID(),email:(process.env.INITIAL_ADMIN_EMAIL||'admin@angermund.local').toLowerCase(),password_hash:await bcrypt.hash(process.env.INITIAL_ADMIN_PASSWORD||'ChangeMe123!',10),name:'System Administrator',role:'admin',active:true});
  if(process.env.VAPID_PUBLIC_KEY&&process.env.VAPID_PRIVATE_KEY)webpush.setVapidDetails(process.env.VAPID_SUBJECT||'mailto:angermundtransport@iway.na',process.env.VAPID_PUBLIC_KEY,process.env.VAPID_PRIVATE_KEY);
@@ -774,6 +774,42 @@ app.post('/api/driver/trips/:tripId/receipt',auth,roles('driver'),upload.array('
     if(action==='diesel'){const litres=num(data.litres),total=num(data.total),price=num(data.price)||(litres>0&&total>0?total/litres:0);if(litres<=0)return res.status(400).json({error:'Enter diesel litres'});const rec={id:mk('fuel'),tripId:t.id,legId:leg?.id||'',date,truckId:t.truckId,driverId:did,litres,price,odometer:num(data.odometer),supplier:String(data.supplier||''),slip:String(data.slip||''),receiptUploadId:ids[0]||'',receiptUploadIds:ids,supportingReceiptUploadId:ids[1]||'',receiptCount:ids.length,verified:false,detectedCategory:String(data.detectedCategory||'Diesel'),categoryConfidence:num(data.categoryConfidence),fuelTransactions:Array.isArray(data.fuelTransactions)?data.fuelTransactions.slice(0,10):[],fuelTransactionCount:num(data.fuelTransactionCount)||1,printedTotal:num(data.printedTotal)||total||null,receiptAdjustment:data.adjustment===null||data.adjustment===undefined?null:num(data.adjustment),driverEasyMode:true};state.diesel.unshift(rec);rememberSupplierCategory(state,rec.supplier,'Diesel')}else{const amount=num(data.amount);if(amount<=0)return res.status(400).json({error:'Enter the expense amount'});const category=String(data.category||'Other'),supplier=String(data.supplier||'');state.expenses.unshift({id:mk('expense'),date,tripId:t.id,truckId:t.truckId,driverId:did,category,supplier,amount,receiptNo:String(data.receiptNo||''),notes:String(data.notes||''),receiptUploadId:ids[0]||'',receiptUploadIds:ids,supportingReceiptUploadId:ids[1]||'',receiptCount:ids.length,status:'Review',reimbursable:true,detectedCategory:String(data.detectedCategory||''),categoryConfidence:num(data.categoryConfidence),driverEasyMode:true});rememberSupplierCategory(state,supplier,category)}
     recalcTripCosts(state,t);if(clientActionId)state.driverActions.unshift({clientActionId,tripId:t.id,driverId:did,action,at:now});memory.state=state;emit('state',{revision:Date.now()});return res.status(201).json({success:true,action,tripId:t.id})
   }catch(e){return res.status(e.status||500).json({error:e.message})}
+});
+
+app.get('/api/trips/:tripId/documents',auth,roles('admin','manager','dispatcher','finance','driver'),async(req,res)=>{
+  const state=await readOpsState(),t=(state.trips||[]).find(x=>x.id===req.params.tripId);
+  if(!t)return res.status(404).json({error:'Trip not found'});
+  if(req.user.role==='driver'&&t.driverId!==req.user.driverId)return res.status(403).json({error:'This trip is not assigned to you'});
+  let rows;
+  if(pool)rows=await q('SELECT id,user_id AS "userId",trip_id AS "tripId",leg_id AS "legId",kind,reference,filename,mime_type AS "mimeType",octet_length(content) AS size,created_at AS "createdAt" FROM trip_documents WHERE trip_id=$1 ORDER BY created_at DESC',[t.id]);
+  else rows=memory.tripDocuments.filter(x=>x.tripId===t.id).sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))).map(x=>({id:x.id,userId:x.userId,tripId:x.tripId,legId:x.legId||'',kind:x.kind,reference:x.reference||'',filename:x.filename||'',mimeType:x.mimeType||'',size:x.content?.length||0,createdAt:x.createdAt}));
+  res.json(rows)
+});
+app.post('/api/trips/:tripId/documents',auth,roles('admin','manager','dispatcher','finance'),upload.single('document'),async(req,res)=>{
+  try{
+    const state=await readOpsState(),t=(state.trips||[]).find(x=>x.id===req.params.tripId);
+    if(!t)return res.status(404).json({error:'Trip not found'});
+    const kind=String(req.body.kind||'other').slice(0,80),reference=String(req.body.reference||'').slice(0,200),legId=String(req.body.legId||'').slice(0,120);
+    if(!req.file&&!reference)return res.status(400).json({error:'Upload a document or enter its reference'});
+    const id=crypto.randomUUID(),createdAt=new Date().toISOString(),filename=req.file?.originalname||'',mimeType=req.file?.mimetype||'',content=req.file?.buffer||null;
+    if(pool)await q('INSERT INTO trip_documents(id,user_id,trip_id,leg_id,kind,reference,filename,mime_type,content,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[id,req.user.sub,t.id,legId||null,kind,reference,filename||null,mimeType||null,content,createdAt]);
+    else memory.tripDocuments.push({id,userId:req.user.sub,tripId:t.id,legId,kind,reference,filename,mimeType,content,createdAt});
+    res.status(201).json({id,userId:req.user.sub,tripId:t.id,legId,kind,reference,filename,mimeType,size:req.file?.size||0,createdAt})
+  }catch(e){res.status(500).json({error:e.message})}
+});
+app.get('/api/trip-documents/:id',auth,roles('admin','manager','dispatcher','finance','driver'),async(req,res)=>{
+  let d;
+  if(pool)d=(await q('SELECT id,user_id AS "userId",trip_id AS "tripId",leg_id AS "legId",kind,reference,filename,mime_type AS "mimeType",content FROM trip_documents WHERE id=$1',[req.params.id]))[0];
+  else d=memory.tripDocuments.find(x=>x.id===req.params.id);
+  if(!d)return res.status(404).json({error:'Document not found'});
+  if(req.user.role==='driver'){const state=await readOpsState(),t=(state.trips||[]).find(x=>x.id===d.tripId);if(!t||t.driverId!==req.user.driverId)return res.status(403).json({error:'This document is not assigned to you'})}
+  if(!d.content)return res.status(404).json({error:'Only a reference was saved for this item'});
+  res.setHeader('Content-Type',d.mimeType||'application/octet-stream');res.setHeader('Content-Disposition','inline; filename="'+String(d.filename||'document').replace(/"/g,'')+'"');res.send(d.content)
+});
+app.delete('/api/trip-documents/:id',auth,roles('admin','manager','dispatcher','finance'),async(req,res)=>{
+  if(pool){const rows=await q('DELETE FROM trip_documents WHERE id=$1 RETURNING id',[req.params.id]);if(!rows.length)return res.status(404).json({error:'Document not found'})}
+  else{const i=memory.tripDocuments.findIndex(x=>x.id===req.params.id);if(i<0)return res.status(404).json({error:'Document not found'});memory.tripDocuments.splice(i,1)}
+  res.json({success:true})
 });
 app.post('/api/driver/trips/:tripId/upload',auth,roles('driver'),upload.single('document'),async(req,res)=>{
   try{
