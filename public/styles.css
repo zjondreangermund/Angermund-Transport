@@ -300,3 +300,27 @@ body.driver-mode .toast{left:12px;right:12px;bottom:86px;text-align:center}
   .role-picker{max-width:128px}
   .role-picker select{width:108px}
 }
+
+/* Driver uploads library */
+.driver-upload-grid{display:grid;gap:10px}
+.driver-upload-card{display:grid;grid-template-columns:48px 1fr auto;gap:12px;align-items:center;padding:13px;border:1px solid var(--line);border-radius:13px;background:#091827}
+.driver-upload-icon{width:44px;height:44px;border-radius:11px;background:rgba(47,140,255,.12);display:grid;place-items:center;font-size:22px}
+.driver-upload-info{min-width:0}
+.driver-upload-top{display:flex;justify-content:space-between;gap:10px;align-items:center}
+.driver-upload-top b{font-size:12px;color:var(--cyan);text-transform:uppercase;letter-spacing:.5px}
+.driver-upload-top span{font-size:11px;color:var(--green);font-weight:800}
+.driver-upload-info h3{font-size:14px;margin:4px 0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.driver-upload-info p{margin:0;color:#b8cadd;font-size:12px}
+.driver-upload-info small{display:block;color:var(--muted);margin-top:4px}
+.driver-upload-view{display:grid;gap:14px}
+.driver-upload-preview{display:block;max-width:100%;max-height:65vh;margin:auto;border-radius:12px;border:1px solid var(--line);background:#050b12}
+.driver-upload-frame{width:100%;height:65vh;border:1px solid var(--line);border-radius:12px;background:white}
+.driver-upload-file-icon{height:220px;display:grid;place-items:center;font-size:70px;border:1px dashed var(--line);border-radius:12px}
+.driver-upload-meta{display:grid;gap:4px;padding:12px;border:1px solid var(--line);border-radius:10px;background:#081827}
+.driver-upload-meta span{color:var(--muted);font-size:12px}
+.button-like{display:inline-flex;align-items:center;text-decoration:none}
+@media(max-width:600px){
+  .driver-upload-card{grid-template-columns:42px 1fr}
+  .driver-upload-card>.primary{grid-column:1/-1;width:100%}
+  .driver-upload-top{align-items:flex-start;flex-direction:column;gap:3px}
+}
