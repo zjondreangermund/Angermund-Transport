@@ -489,14 +489,21 @@ function uploadSize(bytes){
 function uploadTripLabel(id){const t=get('trips',id);return t.id?t.number:String(id||'—')}
 function uploadDriverLabel(u){return u.driverId?driver(u.driverId):(u.userName||'Driver')}
 function driverUploadRows(rows){
-  return '<div class="driver-upload-grid">'+(rows.length?rows.map(u=>'<article class="driver-upload-card">'
-    +'<div class="driver-upload-icon">'+(String(u.mimeType||'').startsWith('image/')?'🖼️':String(u.mimeType||'').includes('pdf')?'📄':'📎')+'</div>'
-    +'<div class="driver-upload-info"><div class="driver-upload-top"><b>'+esc(uploadKindLabel(u.kind))+'</b><span>'+esc(uploadTripLabel(u.tripId))+'</span></div>'
-    +'<h3>'+esc(u.filename||'Driver file')+'</h3>'
-    +'<p>👤 '+esc(uploadDriverLabel(u))+' · '+esc(uploadSize(u.size))+'</p>'
-    +'<small>'+esc(u.createdAt?new Date(u.createdAt).toLocaleString():'')+'</small></div>'
-    +'<button class="primary small view-driver-upload" data-id="'+u.id+'">View</button>'
-    +'</article>').join(''):'<div class="empty">No driver files uploaded yet.</div>')+'</div>';
+  return '<div class="driver-upload-grid">'+(rows.length?rows.map(u=>{
+    const canRecover=!u.posted&&!/support/i.test(String(u.kind||''))&&/diesel|expense|receipt/i.test(String(u.kind||''));
+    const status=u.posted
+      ?'<span class="upload-posted">✓ POSTED TO TRIP</span>'
+      :'<span class="upload-file-only">⚠ FILE ONLY · VALUES NOT POSTED</span>';
+    return '<article class="driver-upload-card">'
+      +'<div class="driver-upload-icon">'+(String(u.mimeType||'').startsWith('image/')?'🖼️':String(u.mimeType||'').includes('pdf')?'📄':'📎')+'</div>'
+      +'<div class="driver-upload-info"><div class="driver-upload-top"><b>'+esc(uploadKindLabel(u.kind))+'</b><span>'+esc(uploadTripLabel(u.tripId))+'</span></div>'
+      +'<h3>'+esc(u.filename||'Driver file')+'</h3>'
+      +'<p>👤 '+esc(uploadDriverLabel(u))+' · '+esc(uploadSize(u.size))+'</p>'
+      +'<small>'+esc(u.createdAt?new Date(u.createdAt).toLocaleString():'')+'</small>'+status+'</div>'
+      +'<div class="driver-upload-actions"><button class="ghost small view-driver-upload" data-id="'+u.id+'">View</button>'
+      +(canRecover?'<button class="primary small recover-driver-upload" data-id="'+u.id+'">Recover values</button>':'')
+      +'</div></article>'
+  }).join(''):'<div class="empty">No driver files uploaded yet.</div>')+'</div>';
 }
 function driverUploadsPage(){
   if(!driverUploadsLoaded)setTimeout(()=>loadDriverUploads(),0);
@@ -531,15 +538,60 @@ async function openDriverUpload(id){
     $('cancelForm').onclick=()=>$('modal').classList.add('hidden');
   }catch(e){notify(e.message)}
 }
+async function recoverDriverUpload(id){
+  const meta=driverUploads.find(x=>x.id===id);if(!meta)return;
+  $('modalTitle').textContent='Recover slip values · '+uploadTripLabel(meta.tripId);
+  $('entryForm').innerHTML='<div class="driver-scan-loading"><div class="driver-scan-camera">🔎</div><h2>Re-reading stored slip…</h2><p>The original driver upload is being scanned again. You will confirm the values before they are posted.</p></div>';
+  $('modal').classList.remove('hidden');
+  try{
+    const result=await api('/api/admin/driver-uploads/'+encodeURIComponent(id)+'/scan',{method:'POST'}),x=result.extracted||{};
+    const categories=['Diesel','Toll','Meals','Accommodation','Parking','Border permit','Loading / offloading','Emergency repair','Other'];
+    const defaultCategory=/diesel/i.test(String(meta.kind||''))?'Diesel':(categories.includes(x.category)?x.category:'Other');
+    const opts=categories.map(c=>'<option value="'+esc(c)+'" '+(c===defaultCategory?'selected':'')+'>'+esc(c)+'</option>').join('');
+    $('entryForm').innerHTML='<div class="driver-smart-slip">'
+      +'<div class="notice"><b>This file was uploaded, but its values were not posted to the trip.</b><br>Check the values below, then save them to '+esc(uploadTripLabel(meta.tripId))+'.</div>'
+      +'<label>Slip type<select id="recoverCategory">'+opts+'</select></label>'
+      +'<div class="smart-slip-grid"><label>Amount<input id="recoverAmount" type="number" step="0.01" value="'+esc(String(x.suggestedAmount||''))+'"></label>'
+      +'<label>Supplier<input id="recoverSupplier" value="'+esc(String(x.supplier||''))+'"></label>'
+      +'<label>Receipt number<input id="recoverNumber" value="'+esc(String(x.documentNumber||''))+'"></label></div>'
+      +'<div id="recoverDieselFields" class="smart-diesel-fields"><label>Total litres<input id="recoverLitres" type="number" step="0.001" value="'+esc(String(x.litres||''))+'"></label>'
+      +'<label>Price / litre<input id="recoverPrice" type="number" step="0.0001" value="'+esc(String(x.pricePerLitre||''))+'"></label>'
+      +'<label>Odometer<input id="recoverOdo" type="number" value="'+esc(String(x.odometer||''))+'"></label></div>'
+      +'<div class="driver-modal-actions"><button type="button" class="ghost" id="cancelForm">Cancel</button><button class="driver-save">✓ POST VALUES TO TRIP</button></div></div>';
+    const toggle=()=>$('recoverDieselFields').classList.toggle('hidden',$('recoverCategory').value!=='Diesel');
+    $('recoverCategory').onchange=toggle;toggle();
+    $('cancelForm').onclick=()=>$('modal').classList.add('hidden');
+    $('entryForm').onsubmit=async e=>{
+      e.preventDefault();
+      const category=$('recoverCategory').value,amount=num($('recoverAmount').value),supplier=$('recoverSupplier').value.trim(),receiptNo=$('recoverNumber').value.trim();
+      let action='expense',data={category,amount,supplier,receiptNo,detectedCategory:x.category||category,categoryConfidence:num(x.categoryConfidence)};
+      if(category==='Diesel'){
+        const litres=num($('recoverLitres').value),price=num($('recoverPrice').value)||(litres>0&&amount>0?amount/litres:0);
+        if(litres<=0)return notify('Enter diesel litres');
+        if(amount<=0&&price<=0)return notify('Enter receipt total or price per litre');
+        action='diesel';data={litres,total:amount,price,odometer:num($('recoverOdo').value),supplier,slip:receiptNo,detectedCategory:'Diesel',categoryConfidence:num(x.categoryConfidence),fuelTransactions:Array.isArray(x.fuelTransactions)?x.fuelTransactions:[],fuelTransactionCount:num(x.fuelTransactionCount)||1,printedTotal:num(x.printedTotal)||amount||null,adjustment:x.adjustment===null||x.adjustment===undefined?null:num(x.adjustment)}
+      }else if(amount<=0)return notify('Enter the expense amount');
+      const posted=await api('/api/admin/driver-uploads/'+encodeURIComponent(id)+'/post',{method:'POST',body:{action,data}});
+      $('modal').classList.add('hidden');
+      await refreshCentralState(false);
+      driverUploadsLoaded=false;await loadDriverUploads(true);
+      notify((posted.number||'Trip')+' values updated');
+    };
+  }catch(e){$('modal').classList.add('hidden');notify(e.message)}
+}
+function wireDriverUploadButtons(){
+  document.querySelectorAll('.view-driver-upload').forEach(b=>b.onclick=()=>openDriverUpload(b.dataset.id));
+  document.querySelectorAll('.recover-driver-upload').forEach(b=>b.onclick=()=>recoverDriverUpload(b.dataset.id));
+}
 function wireDriverUploads(){
   if($('refreshDriverUploads'))$('refreshDriverUploads').onclick=()=>loadDriverUploads(true);
   if($('driverUploadSearch'))$('driverUploadSearch').oninput=e=>{
     const q=String(e.target.value||'').toLowerCase().trim();
-    const rows=!q?driverUploads:driverUploads.filter(u=>[uploadKindLabel(u.kind),u.filename,uploadTripLabel(u.tripId),uploadDriverLabel(u)].join(' ').toLowerCase().includes(q));
+    const rows=!q?driverUploads:driverUploads.filter(u=>[uploadKindLabel(u.kind),u.filename,uploadTripLabel(u.tripId),uploadDriverLabel(u),u.posted?'posted':'file only'].join(' ').toLowerCase().includes(q));
     $('driverUploadResults').innerHTML=driverUploadRows(rows);
-    document.querySelectorAll('.view-driver-upload').forEach(b=>b.onclick=()=>openDriverUpload(b.dataset.id));
+    wireDriverUploadButtons();
   };
-  document.querySelectorAll('.view-driver-upload').forEach(b=>b.onclick=()=>openDriverUpload(b.dataset.id));
+  wireDriverUploadButtons();
 }
 function fleet(){return `<section class="kpis">${kpi('Available',db.trucks.filter(t=>t.status==='Available').length,'Ready for dispatch')}${kpi('On work',db.trucks.filter(t=>/trip|duty/i.test(t.status)).length,'Currently allocated')}${kpi('GPS online',db.trucks.filter(t=>t.gps==='Online').length,`${db.trucks.length} registered`)}${kpi('Service due',serviceDue().length,'Within 5,000 km')}</section><div class="cards-list">${db.trucks.map(t=>`<article class="entity-card"><div class="panel-head"><h3>${esc(t.registration)}</h3>${badge(t.status)}</div><p>${esc(t.make)} · ${esc(t.type)}</p><p><span class="status-dot ${t.gps==='Online'?'':'bad'}"></span>GPS ${esc(t.gps)}</p><div class="metric-line"><span>Odometer</span><b>${num(t.odometer).toLocaleString()} km</b></div><div class="metric-line"><span>Next service</span><b>${num(t.serviceDue).toLocaleString()} km</b></div><div class="metric-line"><span>Trips</span><b>${db.trips.filter(x=>x.truckId===t.id).length}</b></div></article>`).join('')}</div>`}
 function diesel(){const litres=sum(db.diesel,x=>x.litres),spend=sum(db.diesel,fuelRecordCost);return `<section class="kpis">${kpi('Fuel spend',money(spend),'Verified and pending')}${kpi('Litres',litres.toLocaleString()+' L',`${db.diesel.length} entries`)}${kpi('Average price',money(litres?spend/litres:0),'Per litre')}${kpi('Below target',db.trips.filter(t=>fuelEfficiency(t.id)&&fuelEfficiency(t.id)<db.settings.targetKml).length,`Target ${db.settings.targetKml} km/L`,'warning')}</section>${dataTable('Diesel entries','diesel',['Date','Trip','Truck','Driver','Litres','Price','km/L','L/km','L/100 km','Status'],db.diesel,x=>{const m=fuelMetrics(x.tripId);return[x.date,get('trips',x.tripId).number||'—',truck(x.truckId),driver(x.driverId),`${num(x.litres).toLocaleString()} L`,money(x.price),m.ready?m.kmPerL.toFixed(2):'—',m.ready?m.litresPerKm.toFixed(3):'—',m.ready?m.litresPer100Km.toFixed(1):'—',x.verified?'Verified':'Review']})}`}
