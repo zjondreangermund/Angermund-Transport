@@ -72,8 +72,9 @@ async function openDriverSmartSlip(t,file){
   const x=await scanDriverReceipt(file);
   if($('modal').classList.contains('hidden'))return;
   const categories=['Diesel','Toll','Meals','Accommodation','Parking','Border permit','Loading / offloading','Emergency repair','Other'];
-  const detected=categories.includes(x.category)?x.category:'Other';
-  const confidence=Math.max(0,Math.min(100,num(x.categoryConfidence)));
+  const fuelStructure=num(x.litres)>0||num(x.pricePerLitre)>0;
+  const detected=fuelStructure&&(!x.category||x.category==='Other')?'Diesel':(categories.includes(x.category)?x.category:'Other');
+  const confidence=fuelStructure&&detected==='Diesel'?Math.max(96,Math.max(0,Math.min(100,num(x.categoryConfidence)))):Math.max(0,Math.min(100,num(x.categoryConfidence)));
   const high=confidence>=85,medium=confidence>=65;
   const confidenceText=confidence?confidence+'% confidence':'Needs confirmation';
   const detectionClass=high?'high':medium?'medium':'low';
@@ -90,7 +91,7 @@ async function openDriverSmartSlip(t,file){
     +'<div id="smartDieselFields" class="smart-diesel-fields">'
       +'<label>Litres<input id="smartSlipLitres" type="number" inputmode="decimal" step="0.01" value="'+(x.litres||'')+'" placeholder="Litres"></label>'
       +'<label>Price / litre<input id="smartSlipPrice" type="number" inputmode="decimal" step="0.01" value="'+(x.pricePerLitre||'')+'" placeholder="N$ / L"></label>'
-      +'<label>Odometer <small>(optional)</small><input id="smartSlipOdo" type="number" inputmode="numeric" placeholder="km"></label>'
+      +'<label>Odometer <small>(optional)</small><input id="smartSlipOdo" type="number" inputmode="numeric" value="'+(x.odometer||'')+'" placeholder="km"></label>'
     +'</div>'
     +'<div class="driver-slip-note" id="smartSlipNote">'+(high?'If this is correct, just press the green button.':'Please check the type and amount before saving.')+'</div>'
     +'<div class="driver-modal-actions"><button type="button" class="ghost" id="cancelForm">Cancel</button><button class="driver-save" id="saveSmartSlip">✓ CORRECT & SAVE</button></div>'
