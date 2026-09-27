@@ -451,7 +451,18 @@ app.post('/api/admin/trips',auth,roles('admin','manager','dispatcher'),async(req
     res.status(201).json({trip:changed.result,revision:changed.revision});
   }catch(e){res.status(e.status||500).json({error:e.message})}
 });
-app.post('/api/driver/trips/:tripId/upload',auth,roles('driver'),upload.single('document'),async(req,res)=>{try{if(!req.file)return res.status(400).json({error:'Photo or document required'});const state=await readOpsState();driverTrip(state,req);const kind=String(req.body.kind||'document').slice(0,30),id=crypto.randomUUID();if(pool)await q('INSERT INTO driver_uploads(id,user_id,trip_id,kind,filename,mime_type,content) VALUES($1,$2,$3,$4,$5,$6,$7)',[id,req.user.sub,req.params.tripId,kind,req.file.originalname||'photo.jpg',req.file.mimetype||'application/octet-stream',req.file.buffer]);else memory.uploads.push({id,userId:req.user.sub,tripId:req.params.tripId,kind,filename:req.file.originalname||'photo.jpg',mimeType:req.file.mimetype||'application/octet-stream',content:req.file.buffer,createdAt:new Date().toISOString()});res.status(201).json({id,kind,filename:req.file.originalname||'photo.jpg'})}catch(e){res.status(e.status||500).json({error:e.message})}});
+app.post('/api/driver/trips/:tripId/upload',auth,roles('driver'),upload.single('document'),async(req,res)=>{
+  try{
+    if(!req.file)return res.status(400).json({error:'Photo or document required'});
+    const state=await readOpsState();driverTrip(state,req);
+    const kind=String(req.body.kind||'document').slice(0,30),id=crypto.randomUUID(),createdAt=new Date().toISOString();
+    if(pool)await q('INSERT INTO driver_uploads(id,user_id,trip_id,kind,filename,mime_type,content,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[id,req.user.sub,req.params.tripId,kind,req.file.originalname||'photo.jpg',req.file.mimetype||'application/octet-stream',req.file.buffer,createdAt]);
+    else memory.uploads.push({id,userId:req.user.sub,driverId:req.user.driverId||null,userName:req.user.name||'',tripId:req.params.tripId,kind,filename:req.file.originalname||'photo.jpg',mimeType:req.file.mimetype||'application/octet-stream',content:req.file.buffer,createdAt});
+    const meta={id,userId:req.user.sub,driverId:req.user.driverId||null,userName:req.user.name||'',tripId:req.params.tripId,kind,filename:req.file.originalname||'photo.jpg',mimeType:req.file.mimetype||'application/octet-stream',size:req.file.size||req.file.buffer.length,createdAt};
+    emit('driver-upload',meta);
+    res.status(201).json(meta)
+  }catch(e){res.status(e.status||500).json({error:e.message})}
+});
 app.get('/api/driver/uploads',auth,roles('admin','manager','dispatcher','finance','workshop'),async(req,res)=>{
   const limit=Math.max(1,Math.min(500,num(req.query.limit)||200));
   if(pool){
