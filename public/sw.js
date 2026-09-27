@@ -13,3 +13,31 @@ self.addEventListener('fetch',e=>{
   }
   e.respondWith(fetch(req,{cache:'no-store'}).then(r=>{if(ASSETS.includes(url.pathname)){const copy=r.clone();caches.open(CACHE).then(c=>c.put(req,copy))}return r}).catch(()=>caches.match(req)));
 });
+self.addEventListener('push',event=>{
+  event.waitUntil((async()=>{
+    let data={};
+    try{data=event.data?event.data.json():{}}catch{data={body:event.data?event.data.text():'New Angermund Transport alert'}}
+    const title=data.title||'Angermund Transport';
+    const options={
+      body:data.body||'You have a new notification.',
+      icon:'/icon.svg',
+      badge:'/icon.svg',
+      tag:data.linkedId?('angermund-'+data.linkedId):('angermund-'+Date.now()),
+      renotify:true,
+      requireInteraction:Boolean(data.requireInteraction),
+      data:{linkedType:data.linkedType||null,linkedId:data.linkedId||null,url:data.url||'/'}
+    };
+    await self.registration.showNotification(title,options)
+  })())
+});
+self.addEventListener('notificationclick',event=>{
+  event.notification.close();
+  event.waitUntil((async()=>{
+    const target=event.notification.data?.url||'/';
+    const windows=await self.clients.matchAll({type:'window',includeUncontrolled:true});
+    for(const client of windows){
+      if('focus' in client){await client.focus();try{client.postMessage({type:'push-click',data:event.notification.data||{}})}catch{}return}
+    }
+    if(self.clients.openWindow)return self.clients.openWindow(target)
+  })())
+});
