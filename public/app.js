@@ -70,20 +70,36 @@ async function driverApiAction(job){return api('/api/driver/trips/'+encodeURICom
 async function driverUpload(tripId,kind,file){const fd=new FormData();fd.append('kind',kind);fd.append('document',file,file.name||kind+'.jpg');return api('/api/driver/trips/'+encodeURIComponent(tripId)+'/upload',{method:'POST',body:fd})}
 async function queueDriverJob(job){await driverQueuePut(job);notify('✅ Saved on this phone — will send when signal returns')}
 async function sendDriverAction(tripId,action,data={},success='Saved'){const job={id:driverJobId('job'),type:'action',tripId,action,data,clientActionId:driverJobId(action),createdAt:new Date().toISOString()};if(!navigator.onLine){await queueDriverJob(job);return{queued:true}}try{const r=await driverApiAction(job);await refreshDriverState();notify(success);return r}catch(e){if(/fetch|network|offline|load failed/i.test(String(e.message||''))){await queueDriverJob(job);return{queued:true}}notify(e.message);throw e}}
-async function sendDriverPhotoAction(tripId,kind,file,action,data={},success='Saved'){const job={id:driverJobId('job'),type:'photo-action',tripId,kind,file,action,data,clientActionId:driverJobId(action),createdAt:new Date().toISOString()};if(!navigator.onLine){await queueDriverJob(job);return{queued:true}}try{const up=await driverUpload(tripId,kind,file);job.data={...data,uploadId:up.id};const r=await driverApiAction(job);await refreshDriverState();notify(success);return r}catch(e){if(/fetch|network|offline|load failed/i.test(String(e.message||''))){await queueDriverJob(job);return{queued:true}}notify(e.message);throw e}}
+async function driverReceiptAction(tripId,files,action,data,clientActionId){
+  const clean=(files||[]).filter(Boolean).slice(0,2),fd=new FormData();
+  if(!clean.length)throw new Error('Receipt photo required');
+  fd.append('action',action);fd.append('data',JSON.stringify(data||{}));fd.append('clientActionId',clientActionId||driverJobId(action));
+  clean.forEach((file,i)=>fd.append('documents',file,file.name||((i?'supporting-':'')+action+'.jpg')));
+  return api('/api/driver/trips/'+encodeURIComponent(tripId)+'/receipt',{method:'POST',body:fd});
+}
+async function sendDriverPhotoAction(tripId,kind,file,action,data={},success='Saved'){
+  const job={id:driverJobId('job'),type:'photo-action',tripId,kind,file,action,data,clientActionId:driverJobId(action),createdAt:new Date().toISOString()};
+  if(!navigator.onLine){await queueDriverJob(job);return{queued:true}}
+  try{
+    let r;
+    if(action==='diesel'||action==='expense')r=await driverReceiptAction(tripId,[file],action,data,job.clientActionId);
+    else{const up=await driverUpload(tripId,kind,file);job.data={...data,uploadId:up.id,receiptUploadIds:[up.id]};r=await driverApiAction(job)}
+    await refreshDriverState();notify(success);return r
+  }catch(e){
+    if(/fetch|network|offline|load failed/i.test(String(e.message||''))){await queueDriverJob(job);return{queued:true}}
+    notify(e.message);throw e
+  }
+}
 async function sendDriverMultiPhotoAction(tripId,kind,files,action,data={},success='Saved'){
   const clean=(files||[]).filter(Boolean).slice(0,2);
   if(!clean.length)throw new Error('At least one receipt photo is required');
   const job={id:driverJobId('job'),type:'multi-photo-action',tripId,kind,files:clean,action,data,clientActionId:driverJobId(action),createdAt:new Date().toISOString()};
   if(!navigator.onLine){await queueDriverJob(job);return{queued:true}}
   try{
-    const uploads=[];
-    for(let i=0;i<clean.length;i++)uploads.push(await driverUpload(tripId,i===0?kind:kind+'-supporting',clean[i]));
-    job.data={...data,uploadId:uploads[0]?.id||'',receiptUploadIds:uploads.map(x=>x.id),supportingUploadId:uploads[1]?.id||''};
-    const r=await driverApiAction(job);
-    await refreshDriverState();
-    notify(success);
-    return r;
+    const r=(action==='diesel'||action==='expense')
+      ?await driverReceiptAction(tripId,clean,action,data,job.clientActionId)
+      :await (async()=>{const uploads=[];for(let i=0;i<clean.length;i++)uploads.push(await driverUpload(tripId,i===0?kind:kind+'-supporting',clean[i]));job.data={...data,uploadId:uploads[0]?.id||'',receiptUploadIds:uploads.map(x=>x.id),supportingUploadId:uploads[1]?.id||''};return driverApiAction(job)})();
+    await refreshDriverState();notify(success);return r
   }catch(e){
     if(/fetch|network|offline|load failed/i.test(String(e.message||''))){await queueDriverJob(job);return{queued:true}}
     notify(e.message);throw e
@@ -95,15 +111,20 @@ async function flushDriverJobs(){
   let jobs=[];try{jobs=await driverQueueList()}catch{return}
   for(const job of jobs.sort((a,b)=>String(a.createdAt).localeCompare(String(b.createdAt)))){
     try{
-      if(job.type==='photo-action'){
-        const up=await driverUpload(job.tripId,job.kind,job.file);
-        job.data={...(job.data||{}),uploadId:up.id,receiptUploadIds:[up.id]};
-      }else if(job.type==='multi-photo-action'){
-        const uploads=[];
-        for(let i=0;i<(job.files||[]).length;i++)uploads.push(await driverUpload(job.tripId,i===0?job.kind:job.kind+'-supporting',job.files[i]));
-        job.data={...(job.data||{}),uploadId:uploads[0]?.id||'',receiptUploadIds:uploads.map(x=>x.id),supportingUploadId:uploads[1]?.id||''};
+      if((job.action==='diesel'||job.action==='expense')&&(job.type==='photo-action'||job.type==='multi-photo-action')){
+        const files=job.type==='multi-photo-action'?(job.files||[]):[job.file];
+        await driverReceiptAction(job.tripId,files,job.action,job.data||{},job.clientActionId);
+      }else{
+        if(job.type==='photo-action'){
+          const up=await driverUpload(job.tripId,job.kind,job.file);
+          job.data={...(job.data||{}),uploadId:up.id,receiptUploadIds:[up.id]};
+        }else if(job.type==='multi-photo-action'){
+          const uploads=[];
+          for(let i=0;i<(job.files||[]).length;i++)uploads.push(await driverUpload(job.tripId,i===0?job.kind:job.kind+'-supporting',job.files[i]));
+          job.data={...(job.data||{}),uploadId:uploads[0]?.id||'',receiptUploadIds:uploads.map(x=>x.id),supportingUploadId:uploads[1]?.id||''};
+        }
+        await driverApiAction(job);
       }
-      await driverApiAction(job);
       await driverQueueDelete(job.id);
     }catch(e){
       if(/401|403|invalid|not assigned|not found/i.test(String(e.message||'')))await driverQueueDelete(job.id);else break
