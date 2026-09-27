@@ -401,8 +401,51 @@ app.post('/api/users/:id/reset-password',auth,roles('admin'),async(req,res)=>{co
 app.get('/api/state',auth,async(req,res)=>{const row=pool?(await q('SELECT payload,revision,updated_at FROM app_state WHERE id=1'))[0]:{payload:memory.state||{},revision:0};res.json(row)});
 app.put('/api/state',auth,roles('admin','manager','dispatcher','workshop','finance'),async(req,res)=>{if(!req.body||typeof req.body!=='object')return res.status(400).json({error:'Invalid state'});if(pool){const row=(await q('UPDATE app_state SET payload=$1,revision=revision+1,updated_at=now() WHERE id=1 RETURNING revision,updated_at',[req.body]))[0];emit('state',{revision:row.revision,updatedAt:row.updated_at});res.json(row)}else{memory.state=req.body;emit('state',{revision:Date.now()});res.json({revision:Date.now()})}});
 
+
+function legPricingMethod(v){
+  const x=String(v||'Flat trip');
+  return ['Flat trip','Per km','Per ton','Per pallet','Manual negotiated'].includes(x)?x:'Flat trip'
+}
+function calculateLegIncome(leg){
+  const method=legPricingMethod(leg.pricingMethod),rate=num(leg.unitRate),manual=num(leg.agreedAmount||leg.income);
+  if(method==='Per km')return rate*num(leg.distance);
+  if(method==='Per ton')return rate*num(leg.tons);
+  if(method==='Per pallet')return rate*num(leg.pallets);
+  if(method==='Manual negotiated')return manual;
+  return rate>0?rate:manual
+}
+function ensureTripLegs(state,t){
+  if(Array.isArray(t.legs)&&t.legs.length)return t.legs;
+  const r=(state.routes||[]).find(x=>x.id===t.routeId);
+  const legacy={
+    id:'leg_'+crypto.randomUUID(),sequence:1,label:'Outbound / Load 1',routeId:t.routeId||'',clientId:t.clientId||'',
+    load:String(t.load||''),tons:num(t.tons),pallets:num(t.pallets),distance:num(t.distance)||num(r?.distance),
+    namibiaKm:num(t.namibiaKm)||num(r?.namibiaKm),pricingMethod:'Manual negotiated',unitRate:0,agreedAmount:num(t.income),
+    income:num(t.income),status:t.status||'Planned',pod:Boolean(t.pod),invoiceId:t.invoiceId||'',legacy:true
+  };
+  t.legs=[legacy];return t.legs
+}
+function syncTripFromLegs(state,t){
+  const legs=ensureTripLegs(state,t).sort((a,b)=>num(a.sequence)-num(b.sequence));
+  legs.forEach((leg,i)=>{
+    const r=(state.routes||[]).find(x=>x.id===leg.routeId);
+    leg.sequence=i+1;leg.label=String(leg.label||('Leg '+(i+1)));leg.distance=num(leg.distance)||num(r?.distance);
+    if(!leg.namibiaKm)leg.namibiaKm=num(r?.namibiaKm);
+    leg.pricingMethod=legPricingMethod(leg.pricingMethod);leg.income=Number(calculateLegIncome(leg).toFixed(2))
+  });
+  const first=legs[0]||{};
+  t.routeId=first.routeId||t.routeId;t.clientId=first.clientId||t.clientId;t.load=first.load||t.load;t.tons=num(first.tons);t.pallets=num(first.pallets);
+  t.distance=Number(legs.reduce((a,x)=>a+num(x.distance),0).toFixed(2));
+  t.income=Number(legs.reduce((a,x)=>a+num(x.income),0).toFixed(2));
+  t.journeyLegCount=legs.length;t.multiLeg=legs.length>1;
+  return t
+}
+function serverTripLegSummary(state,t){
+  const legs=ensureTripLegs(state,t);return{count:legs.length,income:legs.reduce((a,x)=>a+calculateLegIncome(x),0),distance:legs.reduce((a,x)=>a+num(x.distance),0)}
+}
 function driverFuelRecordCost(x){const total=num(x.printedTotal)||num(x.total);return total>0?total:num(x.litres)*num(x.price)}
 function recalcTripCosts(state,t){
+  if(Array.isArray(t.legs)&&t.legs.length)syncTripFromLegs(state,t);
   const fuel=(state.diesel||[]).filter(x=>x.tripId===t.id),expenses=(state.expenses||[]).filter(x=>x.tripId===t.id);
   const diesel=fuel.length?fuel.reduce((a,x)=>a+driverFuelRecordCost(x),0):num(t.dieselCost);
   const expense=expenses.reduce((a,x)=>a+num(x.amount),0);
