@@ -424,11 +424,25 @@ function openDriverExpense(t,file){$('modalTitle').textContent='💵 Route expen
 function driverSpeechTo(target){const SR=window.SpeechRecognition||window.webkitSpeechRecognition;if(!SR)return notify('Voice typing is not supported on this phone');const r=new SR();r.lang='en-ZA';r.interimResults=false;r.onresult=e=>{target.value=(target.value+' '+e.results[0][0].transcript).trim()};r.onerror=()=>notify('Could not hear you. Please try again.');r.start()}
 function openDriverProblem(t){const types=['🛞 Tyre','🔧 Breakdown','⏱ Delay','📦 Load / cargo','💥 Accident','❓ Other'];$('modalTitle').textContent='⚠ Report a problem';$('entryForm').innerHTML='<div class="driver-problem"><p>Tap what went wrong:</p><div class="driver-problem-grid">'+types.map(x=>'<button type="button" class="driver-problem-type">'+x+'</button>').join('')+'</div><input id="drvProblemType" type="hidden"><label>Explain quickly<textarea id="drvProblemText" rows="4" placeholder="You can type or speak…"></textarea></label><div class="driver-inline"><button type="button" class="ghost" id="driverProblemSpeak">🎤 SPEAK</button><button type="button" class="ghost" id="driverProblemPhoto">📷 PHOTO</button></div><div id="driverProblemPhotoReady" class="driver-photo-ok hidden">📷 Photo ready</div><div class="driver-modal-actions"><button type="button" class="ghost" id="cancelForm">Cancel</button><button class="danger">SEND TO OFFICE</button></div></div>';$('modal').classList.remove('hidden');let photo=null;document.querySelectorAll('.driver-problem-type').forEach(b=>b.onclick=()=>{document.querySelectorAll('.driver-problem-type').forEach(x=>x.classList.remove('selected'));b.classList.add('selected');$('drvProblemType').value=b.textContent.replace(/^[^ ]+ /,'')});$('driverProblemSpeak').onclick=()=>driverSpeechTo($('drvProblemText'));$('driverProblemPhoto').onclick=()=>driverCapture('problem',f=>{photo=f;$('driverProblemPhotoReady').classList.remove('hidden')});$('cancelForm').onclick=()=>$('modal').classList.add('hidden');$('entryForm').onsubmit=async e=>{e.preventDefault();const type=$('drvProblemType').value||'Other',description=$('drvProblemText').value.trim()||type;$('modal').classList.add('hidden');if(photo)await sendDriverPhotoAction(t.id,'problem',photo,'problem',{type,description},'Problem sent to office');else await sendDriverAction(t.id,'problem',{type,description},'Problem sent to office')}}
 function openDriverHelp(){const d=get('drivers',currentDriver());$('modalTitle').textContent='Driver account';$('entryForm').innerHTML='<div class="driver-help"><div class="driver-avatar">👤</div><h2>'+esc(d.name||sessionUser?.name||'Driver')+'</h2><p>Signed in as <b>'+esc(sessionUser?.email||'')+'</b>. Your assigned trip and values load automatically when you sign in.</p><a class="driver-call-big" href="tel:+264811299942">📞 CALL OFFICE</a><button type="button" class="driver-switch-account" id="driverSwitchAccount">↪ LOG OUT / SWITCH DRIVER</button><button type="button" class="ghost" id="cancelForm">Close</button></div>';$('modal').classList.remove('hidden');$('cancelForm').onclick=()=>$('modal').classList.add('hidden');$('driverSwitchAccount').onclick=()=>{$('modal').classList.add('hidden');logout()}}
+function driverTripPriority(t){
+  const status=String(t.status||'').toLowerCase();
+  if(/loading|in transit|at offloading|return journey/.test(status))return 500;
+  if(/planned|assigned|booked/.test(status))return 400;
+  if(/delivered/.test(status)&&!t.pod)return 250;
+  if(/delivered/.test(status)&&!t.driverComplete)return 200;
+  return 100
+}
+function driverTripSort(a,b){
+  const p=driverTripPriority(b)-driverTripPriority(a);if(p)return p;
+  const bd=new Date(b.createdAt||b.date||0).getTime()||0,ad=new Date(a.createdAt||a.date||0).getTime()||0;
+  if(bd!==ad)return bd-ad;
+  return String(b.number||'').localeCompare(String(a.number||''),undefined,{numeric:true})
+}
 function driverPortal(){
   const preview=role!=='driver';
   const did=preview?(driverPreviewId||currentDriver()):currentDriver();
   const d=get('drivers',did);
-  const mine=db.trips.filter(t=>t.driverId===did&&!t.driverComplete&&!['Closed','Invoiced'].includes(t.status)).sort((a,b)=>num(b.stage)-num(a.stage));
+  const mine=db.trips.filter(t=>t.driverId===did&&!t.driverComplete&&!['Closed','Invoiced'].includes(t.status)).sort(driverTripSort);
   const t=mine[0];
   const next=t?driverNextStep(t):null;
   const pending=db.tasks.filter(x=>x.ownerRole==='Driver'&&x.status==='Open'&&(!t||x.linkedId===t.id)).length;
