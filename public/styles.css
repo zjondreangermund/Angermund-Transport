@@ -250,3 +250,18 @@ body.driver-mode .toast{left:12px;right:12px;bottom:86px;text-align:center}
 .route-zone-form small{color:var(--muted)}
 .driver-next[disabled] strong{pointer-events:none}
 @media(max-width:620px){.zone-grid{grid-template-columns:1fr}}
+
+/* Multi-fill diesel receipt breakdown */
+.fuel-breakdown{display:grid;gap:8px;padding:13px;border:1px solid rgba(56,217,150,.28);background:rgba(56,217,150,.055);border-radius:13px}
+.fuel-breakdown-head,.fuel-fill-row,.fuel-total-row,.fuel-adjustment-row{display:grid;grid-template-columns:1fr auto;gap:8px;align-items:center}
+.fuel-breakdown-head{padding-bottom:8px;border-bottom:1px solid rgba(255,255,255,.08)}
+.fuel-breakdown-head b{font-size:14px}
+.fuel-breakdown-head span{color:#7ef0bb;font-weight:900}
+.fuel-fill-row{grid-template-columns:58px 1fr auto;padding:8px 0;border-bottom:1px dashed rgba(255,255,255,.08)}
+.fuel-fill-row span{color:var(--muted);font-size:11px;text-transform:uppercase}
+.fuel-fill-row b{font-size:13px}
+.fuel-fill-row strong{font-size:13px}
+.fuel-total-row{padding-top:5px;font-size:15px}
+.fuel-total-row b{color:#7ef0bb;font-size:16px}
+.fuel-adjustment-row{font-size:11px;color:var(--muted)}
+@media(max-width:520px){.fuel-fill-row{grid-template-columns:1fr auto}.fuel-fill-row span{grid-column:1/-1}.fuel-fill-row strong{text-align:right}}
