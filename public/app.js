@@ -505,8 +505,9 @@ function uploadDriverLabel(u){return u.driverId?driver(u.driverId):(u.userName||
 function driverUploadRows(rows){
   return '<div class="driver-upload-grid">'+(rows.length?rows.map(u=>{
     const canRecover=!u.posted&&!/support/i.test(String(u.kind||''))&&/diesel|expense|receipt/i.test(String(u.kind||''));
+    const canMove=u.posted&&/diesel|expense/i.test(String(u.linkedRecordType||u.kind||''));
     const status=u.posted
-      ?'<span class="upload-posted">✓ POSTED TO TRIP</span>'
+      ?'<span class="upload-posted">✓ POSTED TO '+esc(uploadTripLabel(u.tripId))+'</span>'
       :'<span class="upload-file-only">⚠ FILE ONLY · VALUES NOT POSTED</span>';
     return '<article class="driver-upload-card">'
       +'<div class="driver-upload-icon">'+(String(u.mimeType||'').startsWith('image/')?'🖼️':String(u.mimeType||'').includes('pdf')?'📄':'📎')+'</div>'
@@ -516,6 +517,7 @@ function driverUploadRows(rows){
       +'<small>'+esc(u.createdAt?new Date(u.createdAt).toLocaleString():'')+'</small>'+status+'</div>'
       +'<div class="driver-upload-actions"><button class="ghost small view-driver-upload" data-id="'+u.id+'">View</button>'
       +(canRecover?'<button class="primary small recover-driver-upload" data-id="'+u.id+'">Recover values</button>':'')
+      +(canMove?'<button class="ghost small move-driver-upload" data-id="'+u.id+'">Move to trip</button>':'')
       +'</div></article>'
   }).join(''):'<div class="empty">No driver files uploaded yet.</div>')+'</div>';
 }
@@ -593,9 +595,33 @@ async function recoverDriverUpload(id){
     };
   }catch(e){$('modal').classList.add('hidden');notify(e.message)}
 }
+async function moveDriverUpload(id){
+    const meta=driverUploads.find(x=>x.id===id);if(!meta)return;
+    const candidates=db.trips.filter(t=>t.id!==meta.tripId&&(!meta.driverId||t.driverId===meta.driverId)&&!['Closed'].includes(t.status)).sort((a,b)=>new Date(b.createdAt||b.date||0)-new Date(a.createdAt||a.date||0));
+    if(!candidates.length)return notify('No other trip found for this driver');
+    $('modalTitle').textContent='Move posted receipt';
+    $('entryForm').innerHTML='<div class="driver-upload-move"><div class="notice"><b>Currently posted to '+esc(uploadTripLabel(meta.tripId))+'.</b><br>Moving this receipt also moves its diesel/expense values and any supporting photo, then recalculates both trips.</div>'
+      +'<label>Move to trip<select id="moveUploadTrip">'+candidates.map(t=>'<option value="'+t.id+'">'+esc(t.number)+' · '+esc(t.status)+' · '+esc(route(t.routeId))+' · '+esc(truck(t.truckId))+'</option>').join('')+'</select></label>'
+      +'<div class="driver-modal-actions"><button type="button" class="ghost" id="cancelForm">Cancel</button><button class="driver-save">✓ MOVE RECEIPT & VALUES</button></div></div>';
+    $('modal').classList.remove('hidden');
+    $('cancelForm').onclick=()=>$('modal').classList.add('hidden');
+    $('entryForm').onsubmit=async e=>{
+      e.preventDefault();
+      const targetTripId=$('moveUploadTrip').value;
+      if(!targetTripId)return notify('Choose a trip');
+      try{
+        const r=await api('/api/admin/driver-uploads/'+encodeURIComponent(id)+'/move',{method:'POST',body:{targetTripId}});
+        $('modal').classList.add('hidden');
+        await refreshCentralState(false);
+        driverUploadsLoaded=false;await loadDriverUploads(true);
+        notify((r.sourceNumber||'Receipt')+' → '+(r.targetNumber||'trip')+' moved and totals recalculated');
+      }catch(err){notify(err.message)}
+    };
+  }
 function wireDriverUploadButtons(){
   document.querySelectorAll('.view-driver-upload').forEach(b=>b.onclick=()=>openDriverUpload(b.dataset.id));
   document.querySelectorAll('.recover-driver-upload').forEach(b=>b.onclick=()=>recoverDriverUpload(b.dataset.id));
+  document.querySelectorAll('.move-driver-upload').forEach(b=>b.onclick=()=>moveDriverUpload(b.dataset.id));
 }
 function wireDriverUploads(){
   if($('refreshDriverUploads'))$('refreshDriverUploads').onclick=()=>loadDriverUploads(true);
