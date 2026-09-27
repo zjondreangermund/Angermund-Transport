@@ -158,7 +158,7 @@ async function openDriverSmartSlip(t,file){
   const categories=['Diesel','Toll','Meals','Accommodation','Parking','Border permit','Loading / offloading','Emergency repair','Other'];
   const fuelStructure=num(x.litres)>0||num(x.pricePerLitre)>0||(Array.isArray(x.fuelTransactions)&&x.fuelTransactions.length>0);
   const detected=fuelStructure&&(!x.category||x.category==='Other')?'Diesel':(categories.includes(x.category)?x.category:'Other');
-  const confidence=fuelStructure&&detected==='Diesel'
+  const confidence=fuelStructure&&detected==='Diesel'&&!x.needsReview
     ?Math.max(96,Math.max(0,Math.min(100,num(x.categoryConfidence))))
     :Math.max(0,Math.min(100,num(x.categoryConfidence)));
   const high=confidence>=85,medium=confidence>=65;
@@ -175,6 +175,9 @@ async function openDriverSmartSlip(t,file){
       +(x.adjustment!==null&&x.adjustment!==undefined&&Math.abs(num(x.adjustment))>=.005
         ?'<div class="fuel-adjustment-row"><span>Receipt adjustment</span><b>'+money(x.adjustment)+'</b></div>'
         :'')
+      +(x.needsReview
+        ?'<div class="fuel-review-warning">⚠ Numbers do not fully reconcile. Check litres, prices and receipt total before saving.</div>'
+        :'<div class="fuel-math-ok">✓ Fill amounts and receipt total reconcile</div>')
       +'</div>';
   }
 
@@ -193,7 +196,7 @@ async function openDriverSmartSlip(t,file){
       +'<label>Combined price / litre<input id="smartSlipPrice" type="number" inputmode="decimal" step="0.0001" value="'+(x.pricePerLitre||'')+'" placeholder="N$ / L"></label>'
       +'<label>Odometer <small>(optional)</small><input id="smartSlipOdo" type="number" inputmode="numeric" value="'+(x.odometer||'')+'" placeholder="km"></label>'
     +'</div>'
-    +'<div class="driver-slip-note" id="smartSlipNote">'+(high?'If this is correct, just press the green button.':'Please check the type and amount before saving.')+'</div>'
+    +'<div class="driver-slip-note" id="smartSlipNote">'+(x.needsReview?'Please verify the highlighted receipt numbers before saving.':(high?'If this is correct, just press the green button.':'Please check the type and amount before saving.'))+'</div>'
     +'<div class="driver-modal-actions"><button type="button" class="ghost" id="cancelForm">Cancel</button><button class="driver-save" id="saveSmartSlip">✓ CORRECT & SAVE</button></div>'
     +'</div>';
 
