@@ -282,3 +282,11 @@ body.driver-mode .toast{left:12px;right:12px;bottom:86px;text-align:center}
 .receipt-slot-actions{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
 .support-merge-note{padding:9px 11px;border-radius:10px;background:rgba(56,217,150,.08);border:1px solid rgba(56,217,150,.2);color:#7ef0bb;font-size:11px;font-weight:800}
 @media(max-width:520px){.receipt-slot.attached{align-items:flex-start;flex-direction:column}.receipt-slot.main{flex-direction:row}.receipt-slot-actions{width:100%;justify-content:flex-start}}
+
+/* Driver account switching */
+.driver-welcome-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.driver-logout-top{border:1px solid rgba(255,255,255,.16);background:#081827;color:#d8e6f3;border-radius:18px;padding:7px 11px;font-size:11px;font-weight:800}
+.driver-logout-top:active{transform:scale(.98)}
+.driver-switch-account{border:1px solid rgba(255,112,112,.35);background:rgba(255,112,112,.08);color:#ff9b9b;border-radius:14px;min-height:54px;font-weight:900;font-size:14px}
+.driver-switch-account:active{background:rgba(255,112,112,.15)}
+@media(max-width:520px){.driver-welcome{align-items:flex-start}.driver-welcome-actions{gap:6px}.driver-online{padding:6px 8px}.driver-logout-top{padding:6px 9px}}
