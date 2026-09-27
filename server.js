@@ -466,6 +466,57 @@ app.post('/api/admin/trips',auth,roles('admin','manager','dispatcher'),async(req
     res.status(201).json({trip:changed.result,revision:changed.revision});
   }catch(e){res.status(e.status||500).json({error:e.message})}
 });
+
+app.post('/api/driver/trips/:tripId/receipt',auth,roles('driver'),upload.array('documents',2),async(req,res)=>{
+  const files=(req.files||[]).slice(0,2),action=String(req.body.action||''),clientActionId=String(req.body.clientActionId||'').slice(0,100);
+  let data={};try{data=JSON.parse(req.body.data||'{}')}catch{return res.status(400).json({error:'Invalid receipt data'})}
+  if(!['diesel','expense'].includes(action))return res.status(400).json({error:'Receipt action must be diesel or expense'});
+  if(!files.length)return res.status(400).json({error:'Receipt photo required'});
+  if(pool){
+    const c=await pool.connect();
+    try{
+      await c.query('BEGIN');
+      const row=(await c.query('SELECT payload,revision FROM app_state WHERE id=1 FOR UPDATE')).rows[0]||{payload:{},revision:0};
+      const state=row.payload||{}, {trip:t,did}=driverTrip(state,req),now=new Date().toISOString(),date=now.slice(0,10),mk=p=>p+'_'+crypto.randomUUID();
+      state.driverActions??=[];state.diesel??=[];state.expenses??=[];
+      if(clientActionId&&state.driverActions.some(x=>x.clientActionId===clientActionId)){await c.query('ROLLBACK');return res.json({duplicate:true,action,tripId:t.id})}
+      const uploads=[];
+      for(let i=0;i<files.length;i++){
+        const file=files[i],id=crypto.randomUUID(),kind=i===0?action:action+'-supporting';
+        await c.query('INSERT INTO driver_uploads(id,user_id,trip_id,kind,filename,mime_type,content,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[id,req.user.sub,t.id,kind,file.originalname||'receipt.jpg',file.mimetype||'application/octet-stream',file.buffer,now]);
+        uploads.push({id,kind,filename:file.originalname||'receipt.jpg',mimeType:file.mimetype||'application/octet-stream',size:file.size||file.buffer.length,createdAt:now})
+      }
+      const ids=uploads.map(x=>x.id);
+      if(action==='diesel'){
+        const litres=num(data.litres),total=num(data.total),price=num(data.price)||(litres>0&&total>0?total/litres:0);
+        if(litres<=0){const e=Error('Enter diesel litres');e.status=400;throw e}
+        const rec={id:mk('fuel'),tripId:t.id,date,truckId:t.truckId,driverId:did,litres,price,odometer:num(data.odometer),supplier:String(data.supplier||''),slip:String(data.slip||''),receiptUploadId:ids[0]||'',receiptUploadIds:ids,supportingReceiptUploadId:ids[1]||'',receiptCount:ids.length,verified:false,detectedCategory:String(data.detectedCategory||'Diesel'),categoryConfidence:num(data.categoryConfidence),fuelTransactions:Array.isArray(data.fuelTransactions)?data.fuelTransactions.slice(0,10):[],fuelTransactionCount:num(data.fuelTransactionCount)||1,printedTotal:num(data.printedTotal)||total||null,receiptAdjustment:data.adjustment===null||data.adjustment===undefined?null:num(data.adjustment),driverEasyMode:true};
+        state.diesel.unshift(rec);rememberSupplierCategory(state,rec.supplier,'Diesel');
+      }else{
+        const amount=num(data.amount);if(amount<=0){const e=Error('Enter the expense amount');e.status=400;throw e}
+        const category=String(data.category||'Other'),supplier=String(data.supplier||'');
+        state.expenses.unshift({id:mk('expense'),date,tripId:t.id,truckId:t.truckId,driverId:did,category,supplier,amount,receiptNo:String(data.receiptNo||''),notes:String(data.notes||''),receiptUploadId:ids[0]||'',receiptUploadIds:ids,supportingReceiptUploadId:ids[1]||'',receiptCount:ids.length,status:'Review',reimbursable:true,detectedCategory:String(data.detectedCategory||''),categoryConfidence:num(data.categoryConfidence),driverEasyMode:true});
+        rememberSupplierCategory(state,supplier,category);
+      }
+      recalcTripCosts(state,t);
+      if(clientActionId)state.driverActions.unshift({clientActionId,tripId:t.id,driverId:did,action,at:now});
+      state.driverActions=state.driverActions.slice(0,1000);
+      const updated=(await c.query('UPDATE app_state SET payload=$1,revision=revision+1,updated_at=now() WHERE id=1 RETURNING revision,updated_at',[state])).rows[0];
+      await c.query('COMMIT');
+      emit('state',{revision:updated.revision,updatedAt:updated.updated_at});
+      for(const up of uploads)emit('driver-upload',{...up,userId:req.user.sub,driverId:did,userName:req.user.name||'',tripId:t.id,posted:true,linkedRecordType:action});
+      return res.status(201).json({success:true,action,tripId:t.id,number:t.number,uploads,trip:{dieselCost:t.dieselCost,expenseCost:t.expenseCost,actualTripCost:t.actualTripCost,actualProfit:t.actualProfit},revision:updated.revision})
+    }catch(e){await c.query('ROLLBACK');return res.status(e.status||500).json({error:e.message})}finally{c.release()}
+  }
+  try{
+    const state=await readOpsState(),{trip:t,did}=driverTrip(state,req),now=new Date().toISOString(),date=now.slice(0,10),mk=p=>p+'_'+crypto.randomUUID(),ids=[];
+    state.driverActions??=[];state.diesel??=[];state.expenses??=[];
+    if(clientActionId&&state.driverActions.some(x=>x.clientActionId===clientActionId))return res.json({duplicate:true,action,tripId:t.id});
+    for(let i=0;i<files.length;i++){const file=files[i],id=crypto.randomUUID(),kind=i===0?action:action+'-supporting';memory.uploads.push({id,userId:req.user.sub,driverId:did,userName:req.user.name||'',tripId:t.id,kind,filename:file.originalname||'receipt.jpg',mimeType:file.mimetype||'application/octet-stream',content:file.buffer,createdAt:now});ids.push(id)}
+    if(action==='diesel'){const litres=num(data.litres),total=num(data.total),price=num(data.price)||(litres>0&&total>0?total/litres:0);if(litres<=0)return res.status(400).json({error:'Enter diesel litres'});const rec={id:mk('fuel'),tripId:t.id,date,truckId:t.truckId,driverId:did,litres,price,odometer:num(data.odometer),supplier:String(data.supplier||''),slip:String(data.slip||''),receiptUploadId:ids[0]||'',receiptUploadIds:ids,supportingReceiptUploadId:ids[1]||'',receiptCount:ids.length,verified:false,detectedCategory:String(data.detectedCategory||'Diesel'),categoryConfidence:num(data.categoryConfidence),fuelTransactions:Array.isArray(data.fuelTransactions)?data.fuelTransactions.slice(0,10):[],fuelTransactionCount:num(data.fuelTransactionCount)||1,printedTotal:num(data.printedTotal)||total||null,receiptAdjustment:data.adjustment===null||data.adjustment===undefined?null:num(data.adjustment),driverEasyMode:true};state.diesel.unshift(rec);rememberSupplierCategory(state,rec.supplier,'Diesel')}else{const amount=num(data.amount);if(amount<=0)return res.status(400).json({error:'Enter the expense amount'});const category=String(data.category||'Other'),supplier=String(data.supplier||'');state.expenses.unshift({id:mk('expense'),date,tripId:t.id,truckId:t.truckId,driverId:did,category,supplier,amount,receiptNo:String(data.receiptNo||''),notes:String(data.notes||''),receiptUploadId:ids[0]||'',receiptUploadIds:ids,supportingReceiptUploadId:ids[1]||'',receiptCount:ids.length,status:'Review',reimbursable:true,detectedCategory:String(data.detectedCategory||''),categoryConfidence:num(data.categoryConfidence),driverEasyMode:true});rememberSupplierCategory(state,supplier,category)}
+    recalcTripCosts(state,t);if(clientActionId)state.driverActions.unshift({clientActionId,tripId:t.id,driverId:did,action,at:now});memory.state=state;emit('state',{revision:Date.now()});return res.status(201).json({success:true,action,tripId:t.id})
+  }catch(e){return res.status(e.status||500).json({error:e.message})}
+});
 app.post('/api/driver/trips/:tripId/upload',auth,roles('driver'),upload.single('document'),async(req,res)=>{
   try{
     if(!req.file)return res.status(400).json({error:'Photo or document required'});
