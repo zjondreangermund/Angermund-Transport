@@ -565,7 +565,7 @@ function openDriverAccountForm(selectedDriverId=''){
     try{
       await api('/api/users',{method:'POST',body:{email,password,name:d.name,role:'driver',driverId:did}});
       $('entryForm').innerHTML=`<div class="driver-login-created"><div class="success-icon">✓</div><h2>Login created for ${esc(d.name)}</h2><p>Give these details to the driver:</p><div class="credential-box"><span>Login</span><b>${esc(email)}</b><span>Password</span><b>${esc(password)}</b></div><div class="form-actions"><button type="button" class="ghost" id="copyDriverCredentials">Copy details</button><button type="button" class="primary" id="finishDriverAccount">Done</button></div></div>`;
-      $('copyDriverCredentials').onclick=async()=>{try{await navigator.clipboard.writeText('Angermund Transport login\\nLogin: '+email+'\\nPassword: '+password);notify('Login details copied')}catch{notify('Copy is not available on this browser')}};
+      $('copyDriverCredentials').onclick=async()=>{try{const loginUrl=location.origin+location.pathname+'?login=1';await navigator.clipboard.writeText('Angermund Transport\\nOpen: '+loginUrl+'\\nLogin: '+email+'\\nPassword: '+password);notify('Login details copied')}catch{notify('Copy is not available on this browser')}};
       $('finishDriverAccount').onclick=async()=>{$('modal').classList.add('hidden');await loadDriverAccounts(true)};
     }catch(err){notify(err.message)}
   };
@@ -583,7 +583,7 @@ function openResetDriverPassword(userId){
     try{
       await api('/api/users/'+encodeURIComponent(userId)+'/reset-password',{method:'POST',body:{password:p}});
       $('entryForm').innerHTML=`<div class="driver-login-created"><div class="success-icon">✓</div><h2>Password reset</h2><div class="credential-box"><span>Login</span><b>${esc(u.email)}</b><span>New password</span><b>${esc(p)}</b></div><div class="form-actions"><button type="button" class="ghost" id="copyResetCredentials">Copy details</button><button type="button" class="primary" id="finishResetPassword">Done</button></div></div>`;
-      $('copyResetCredentials').onclick=async()=>{try{await navigator.clipboard.writeText('Angermund Transport login\\nLogin: '+u.email+'\\nPassword: '+p);notify('Login details copied')}catch{}};
+      $('copyResetCredentials').onclick=async()=>{try{const loginUrl=location.origin+location.pathname+'?login=1';await navigator.clipboard.writeText('Angermund Transport\\nOpen: '+loginUrl+'\\nLogin: '+u.email+'\\nPassword: '+p);notify('Login details copied')}catch{}};
       $('finishResetPassword').onclick=()=>$('modal').classList.add('hidden');
     }catch(err){notify(err.message)}
   };
