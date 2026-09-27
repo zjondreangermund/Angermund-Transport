@@ -80,21 +80,34 @@ function scoreReceiptText(raw){
 
 function extractReceiptFields(raw,state={}){
   const text=String(raw||''),toN=v=>Number(String(v??'').replace(/\s/g,'').replace(/,/g,'')),lines=text.split(/\r?\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean);
-  const amountCandidates=[...text.matchAll(/(?:N\$|NAD|R)?\s*(-?\d[\d ,]*[.,]\d{2})/gi)].map(x=>x[1]);
+  const amountCandidates=[...text.matchAll(/(?:N\$|NAD|R)?\s*(-?\d[\d ,.]*[.,]\d{2})/gi)].map(x=>x[1]);
   const fuelTransactions=[],seen=new Set();
   const fuelRow=/(\d{2,5}(?:[.,]\d{1,3})?)\s*\(\s*[LlI1]\s*\)\s*(\d{1,3}(?:[.,]\d{1,4})?)\s+(\d[\d ,]*[.,]\d{2})/i;
+
   for(let i=0;i<lines.length;i++){
     const candidates=[lines[i],i+1<lines.length?lines[i]+' '+lines[i+1]:''];
     for(const candidate of candidates){
       const m=candidate.match(fuelRow);
       if(!m)continue;
-      const litres=toN(m[1]),price=toN(m[2]),amount=toN(m[3]);
-      if(!(litres>0&&litres<5000&&price>5&&price<100&&amount>10))continue;
-      const key=[litres.toFixed(3),price.toFixed(4),amount.toFixed(2)].join('|');
+      const litres=toN(m[1]),ocrPrice=toN(m[2]),amount=toN(m[3]);
+      if(!(litres>0&&litres<5000&&ocrPrice>5&&ocrPrice<100&&amount>10))continue;
+
+      const calculatedPrice=amount/litres;
+      const priceDiff=Math.abs(ocrPrice-calculatedPrice);
+      const price=priceDiff>0.03&&calculatedPrice>5&&calculatedPrice<100?calculatedPrice:ocrPrice;
+      const key=[litres.toFixed(3),amount.toFixed(2)].join('|');
       if(seen.has(key))continue;
-      seen.add(key);fuelTransactions.push({litres:Number(litres.toFixed(3)),pricePerLitre:Number(price.toFixed(4)),amount:Number(amount.toFixed(2))});
+      seen.add(key);
+      fuelTransactions.push({
+        litres:Number(litres.toFixed(3)),
+        pricePerLitre:Number(price.toFixed(4)),
+        amount:Number(amount.toFixed(2)),
+        ocrPricePerLitre:Number(ocrPrice.toFixed(4)),
+        priceCorrected:Math.abs(price-ocrPrice)>=0.005
+      });
     }
   }
+
   const printedTotalPatterns=[
     /^\s*(?:grand\s*)?total\s*[:=-]?\s*(?:N\$|NAD|R)?\s*(-?\d[\d ,]*[.,]\d{2})\s*$/im,
     /^\s*amount\s+in\s+nad\s*[:=-]?\s*(-?\d[\d ,]*[.,]\d{2})\s*$/im,
@@ -102,29 +115,43 @@ function extractReceiptFields(raw,state={}){
   ];
   let printedTotal=null;
   for(const re of printedTotalPatterns){const m=text.match(re);if(m){printedTotal=toN(m[1]);break}}
+
   const explicitLitres=(text.match(/(?:sfs\s*d[i1l][e3]s[e3][l1]|fuel\s*save\s*d[i1l][e3]s[e3][l1]|d[i1l][e3]s[e3][l1])[\s\S]{0,35}?\bL\s*[:=-]?\s*(\d+(?:[.,]\d{1,3})?)/i)||[])[1];
   const priceLine=(text.match(/(?:PRICE\s*\/\s*LITRES?|PRICE\s*\/\s*LITRE|PRICE\s*\/\s*L|PER\s*LITRE|LITRE\s*PRICE)[^0-9]{0,16}(\d+(?:[.,]\d{1,4})?)/i)||[])[1];
+
   const lineLitres=fuelTransactions.reduce((a,x)=>a+x.litres,0),lineAmount=fuelTransactions.reduce((a,x)=>a+x.amount,0);
   let litres=lineLitres||toN(explicitLitres)||null;
   if(!litres){
     const single=(text.match(/(\d+(?:[.,]\d{1,3})?)\s*(?:L|LTR|LITRE|LITRES)\b/i)||[])[1];
     litres=toN(single)||null;
   }
+
   let suggestedAmount=printedTotal;
   if(!(suggestedAmount>0)&&lineAmount>0)suggestedAmount=Number(lineAmount.toFixed(2));
   if(!(suggestedAmount>0)){
     const nums=amountCandidates.map(toN).filter(x=>Number.isFinite(x)&&x>0);
     suggestedAmount=nums.length?Math.max(...nums):null;
   }
+
   let pricePerLitre=toN(priceLine)||null;
-  if(!(pricePerLitre>0)&&litres>0&&suggestedAmount>0)pricePerLitre=suggestedAmount/litres;
-  const itemWeighted=fuelTransactions.length&&lineLitres>0?lineAmount/lineLitres:null;
-  if(itemWeighted&&(!pricePerLitre||Math.abs(itemWeighted-pricePerLitre)>.5))pricePerLitre=itemWeighted;
+  if(litres>0&&suggestedAmount>0){
+    const combined=suggestedAmount/litres;
+    if(combined>5&&combined<100)pricePerLitre=combined;
+  }else if(!(pricePerLitre>0)&&lineLitres>0&&lineAmount>0)pricePerLitre=lineAmount/lineLitres;
+
   const adjustment=printedTotal!==null&&lineAmount>0?Number((printedTotal-lineAmount).toFixed(2)):null;
+  const totalDifference=printedTotal!==null&&lineAmount>0?Math.abs(printedTotal-lineAmount):0;
+  const totalTolerance=printedTotal!==null?Math.max(0.25,Math.abs(printedTotal)*0.005):0;
+  const totalsReconcile=!(printedTotal!==null&&lineAmount>0)||totalDifference<=totalTolerance;
+  const lineMathOk=fuelTransactions.every(x=>Math.abs(x.litres*x.pricePerLitre-x.amount)<=Math.max(0.25,x.amount*0.003));
+  const needsReview=!totalsReconcile||!lineMathOk;
+
   const odometerMatch=text.match(/ODOMETER\s*[:#-]?\s*(\d{4,9})/i);
   const supplier=receiptSupplier(text);
   const facts={litres,pricePerLitre,suggestedAmount};
-  const classification=classifyReceipt(text,supplier,state,facts);
+  let classification=classifyReceipt(text,supplier,state,facts);
+  if(needsReview&&classification.category==='Diesel')classification={...classification,confidence:Math.min(classification.confidence,84),reason:'Diesel detected, but receipt totals need review'};
+
   return{
     documentNumber:(text.match(/(?:invoice|slip|pod|ref|receipt|ticket)\s*(?:no|number|#)?\s*[:.-]?\s*([A-Z0-9/-]+)/i)||[])[1]||null,
     date:(text.match(/\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/)||[])[0]||null,
@@ -140,11 +167,14 @@ function extractReceiptFields(raw,state={}){
     fuelTransactionCount:fuelTransactions.length||((litres&&classification.category==='Diesel')?1:0),
     fuelLineAmount:lineAmount?Number(lineAmount.toFixed(2)):null,
     adjustment,
+    totalsReconcile,
+    totalDifference:Number(totalDifference.toFixed(2)),
+    needsReview,
     category:classification.category,
     categoryConfidence:classification.confidence,
     categoryReason:classification.reason,
     categorySource:classification.source,
-    requiresManualAmountConfirmation:!(printedTotal>0||lineAmount>0)
+    requiresManualAmountConfirmation:needsReview||!(printedTotal>0||lineAmount>0)
   };
 }
 async function recognizeReceiptBest(buffer){
