@@ -151,33 +151,52 @@ async function openDriverSmartSlip(t,file){
   $('modalTitle').textContent='📷 Scan slip';
   $('entryForm').innerHTML='<div class="driver-scan-loading"><div class="driver-scan-camera">📷</div><h2>Reading slip…</h2><p>Finding the supplier, amount and expense type.</p></div>';
   $('modal').classList.remove('hidden');
+
   const x=await scanDriverReceipt(file);
   if($('modal').classList.contains('hidden'))return;
+
   const categories=['Diesel','Toll','Meals','Accommodation','Parking','Border permit','Loading / offloading','Emergency repair','Other'];
-  const fuelStructure=num(x.litres)>0||num(x.pricePerLitre)>0;
+  const fuelStructure=num(x.litres)>0||num(x.pricePerLitre)>0||(Array.isArray(x.fuelTransactions)&&x.fuelTransactions.length>0);
   const detected=fuelStructure&&(!x.category||x.category==='Other')?'Diesel':(categories.includes(x.category)?x.category:'Other');
-  const confidence=fuelStructure&&detected==='Diesel'?Math.max(96,Math.max(0,Math.min(100,num(x.categoryConfidence)))):Math.max(0,Math.min(100,num(x.categoryConfidence)));
+  const confidence=fuelStructure&&detected==='Diesel'
+    ?Math.max(96,Math.max(0,Math.min(100,num(x.categoryConfidence))))
+    :Math.max(0,Math.min(100,num(x.categoryConfidence)));
   const high=confidence>=85,medium=confidence>=65;
   const confidenceText=confidence?confidence+'% confidence':'Needs confirmation';
   const detectionClass=high?'high':medium?'medium':'low';
   const options=categories.map(c=>'<option value="'+esc(c)+'" '+(c===detected?'selected':'')+'>'+esc(c)+'</option>').join('');
+
+  let fuelBreakdown='';
+  if(detected==='Diesel'&&Array.isArray(x.fuelTransactions)&&x.fuelTransactions.length){
+    fuelBreakdown='<div class="fuel-breakdown">'
+      +'<div class="fuel-breakdown-head"><b>⛽ '+x.fuelTransactions.length+' fuel transaction'+(x.fuelTransactions.length===1?'':'s')+' on this slip</b><span>'+num(x.litres).toFixed(2)+' L total</span></div>'
+      +x.fuelTransactions.map((it,i)=>'<div class="fuel-fill-row"><span>Fill '+(i+1)+'</span><b>'+num(it.litres).toFixed(2)+' L × N$'+num(it.pricePerLitre).toFixed(2)+'</b><strong>'+money(it.amount)+'</strong></div>').join('')
+      +'<div class="fuel-total-row"><span>Receipt total</span><b>'+money(x.printedTotal||x.suggestedAmount)+'</b></div>'
+      +(x.adjustment!==null&&x.adjustment!==undefined&&Math.abs(num(x.adjustment))>=.005
+        ?'<div class="fuel-adjustment-row"><span>Receipt adjustment</span><b>'+money(x.adjustment)+'</b></div>'
+        :'')
+      +'</div>';
+  }
+
   $('modalTitle').textContent='📷 Check slip';
   $('entryForm').innerHTML='<div class="driver-smart-slip">'
     +'<div class="driver-detection '+detectionClass+'" id="smartSlipDetection"><span>'+(high?'✨':medium?'🔎':'⚠️')+'</span><div><strong>Looks like: '+esc(detected)+'</strong><small>'+esc(confidenceText)+(x.categoryReason?' · '+esc(x.categoryReason):'')+'</small></div></div>'
+    +fuelBreakdown
     +'<label>What is this slip for?<select id="smartSlipCategory">'+options+'</select></label>'
     +'<div class="smart-slip-grid">'
-      +'<label>Amount<input id="smartSlipAmount" type="number" inputmode="decimal" step="0.01" placeholder="N$ total" value="'+(x.suggestedAmount||'')+'"></label>'
+      +'<label>'+(detected==='Diesel'?'Receipt total':'Amount')+'<input id="smartSlipAmount" type="number" inputmode="decimal" step="0.01" placeholder="N$ total" value="'+(x.suggestedAmount||'')+'"></label>'
       +'<label>Supplier / place<input id="smartSlipSupplier" value="'+esc(x.supplier||'')+'" placeholder="Where did you pay?"></label>'
       +'<label>Slip / receipt no.<input id="smartSlipNumber" value="'+esc(x.documentNumber||'')+'" placeholder="Optional"></label>'
     +'</div>'
     +'<div id="smartDieselFields" class="smart-diesel-fields">'
-      +'<label>Litres<input id="smartSlipLitres" type="number" inputmode="decimal" step="0.01" value="'+(x.litres||'')+'" placeholder="Litres"></label>'
-      +'<label>Price / litre<input id="smartSlipPrice" type="number" inputmode="decimal" step="0.01" value="'+(x.pricePerLitre||'')+'" placeholder="N$ / L"></label>'
+      +'<label>Total litres<input id="smartSlipLitres" type="number" inputmode="decimal" step="0.001" value="'+(x.litres||'')+'" placeholder="Litres"></label>'
+      +'<label>Combined price / litre<input id="smartSlipPrice" type="number" inputmode="decimal" step="0.0001" value="'+(x.pricePerLitre||'')+'" placeholder="N$ / L"></label>'
       +'<label>Odometer <small>(optional)</small><input id="smartSlipOdo" type="number" inputmode="numeric" value="'+(x.odometer||'')+'" placeholder="km"></label>'
     +'</div>'
     +'<div class="driver-slip-note" id="smartSlipNote">'+(high?'If this is correct, just press the green button.':'Please check the type and amount before saving.')+'</div>'
     +'<div class="driver-modal-actions"><button type="button" class="ghost" id="cancelForm">Cancel</button><button class="driver-save" id="saveSmartSlip">✓ CORRECT & SAVE</button></div>'
     +'</div>';
+
   const updateFields=()=>{
     const isDiesel=$('smartSlipCategory').value==='Diesel';
     $('smartDieselFields').classList.toggle('hidden',!isDiesel);
@@ -186,18 +205,34 @@ async function openDriverSmartSlip(t,file){
       $('smartSlipDetection').innerHTML='<span>✓</span><div><strong>Changed to: '+esc($('smartSlipCategory').value)+'</strong><small>The app will remember this supplier after you save.</small></div>';
     }
   };
+
   $('smartSlipCategory').onchange=updateFields;
   updateFields();
   $('cancelForm').onclick=()=>$('modal').classList.add('hidden');
+
   $('entryForm').onsubmit=async e=>{
     e.preventDefault();
-    const category=$('smartSlipCategory').value,supplier=$('smartSlipSupplier').value.trim(),amount=num($('smartSlipAmount').value),receiptNo=$('smartSlipNumber').value.trim();
+    const category=$('smartSlipCategory').value;
+    const supplier=$('smartSlipSupplier').value.trim();
+    const amount=num($('smartSlipAmount').value);
+    const receiptNo=$('smartSlipNumber').value.trim();
+
     if(category==='Diesel'){
-      const litres=num($('smartSlipLitres').value),price=num($('smartSlipPrice').value)||(litres>0&&amount>0?amount/litres:0);
+      const litres=num($('smartSlipLitres').value);
+      const price=num($('smartSlipPrice').value)||(litres>0&&amount>0?amount/litres:0);
       if(litres<=0)return notify('Please enter diesel litres');
-      if(amount<=0&&price<=0)return notify('Please enter the total or price per litre');
+      if(amount<=0&&price<=0)return notify('Please enter the receipt total or price per litre');
       $('modal').classList.add('hidden');
-      await sendDriverPhotoAction(t.id,'diesel',file,'diesel',{litres,total:amount,price,odometer:num($('smartSlipOdo').value),supplier,slip:receiptNo,detectedCategory:detected,categoryConfidence:confidence},'⛽ Diesel slip saved');
+      await sendDriverPhotoAction(t.id,'diesel',file,'diesel',{
+        litres,total:amount,price,
+        odometer:num($('smartSlipOdo').value),
+        supplier,slip:receiptNo,
+        detectedCategory:detected,categoryConfidence:confidence,
+        fuelTransactions:Array.isArray(x.fuelTransactions)?x.fuelTransactions:[],
+        fuelTransactionCount:num(x.fuelTransactionCount)||1,
+        printedTotal:num(x.printedTotal)||null,
+        adjustment:x.adjustment===null||x.adjustment===undefined?null:num(x.adjustment)
+      },'⛽ Diesel slip saved');
     }else{
       if(amount<=0)return notify('Please enter the amount');
       $('modal').classList.add('hidden');
