@@ -887,7 +887,7 @@ app.get('/api/driver/uploads',auth,roles('admin','manager','dispatcher','finance
   for(const x of state.diesel||[])for(const id of (x.receiptUploadIds||[x.receiptUploadId]).filter(Boolean))refs.set(id,{posted:true,linkedRecordType:'diesel',linkedRecordId:x.id});
   for(const x of state.expenses||[])for(const id of (x.receiptUploadIds||[x.receiptUploadId]).filter(Boolean))refs.set(id,{posted:true,linkedRecordType:'expense',linkedRecordId:x.id});
   for(const x of state.tripIssues||[])if(x.photoUploadId)refs.set(x.photoUploadId,{posted:true,linkedRecordType:'problem',linkedRecordId:x.id});
-  for(const x of state.trips||[])if(x.podUploadId)refs.set(x.podUploadId,{posted:true,linkedRecordType:'pod',linkedRecordId:x.id});
+  for(const x of state.trips||[]){if(x.podUploadId)refs.set(x.podUploadId,{posted:true,linkedRecordType:'pod',linkedRecordId:x.id});for(const l of x.legs||[])if(l.podUploadId)refs.set(l.podUploadId,{posted:true,linkedRecordType:'pod',linkedRecordId:l.id})}
   let rows;
   if(pool)rows=await q('SELECT du.id,du.user_id AS "userId",u.driver_id AS "driverId",u.name AS "userName",du.trip_id AS "tripId",du.kind,du.filename,du.mime_type AS "mimeType",octet_length(du.content) AS size,du.created_at AS "createdAt" FROM driver_uploads du LEFT JOIN users u ON u.id=du.user_id ORDER BY du.created_at DESC LIMIT $1',[limit]);
   else rows=memory.uploads.slice().sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))).slice(0,limit).map(x=>({id:x.id,userId:x.userId,driverId:x.driverId||null,userName:x.userName||'',tripId:x.tripId,kind:x.kind,filename:x.filename,mimeType:x.mimeType,size:x.content?.length||0,createdAt:x.createdAt}));
