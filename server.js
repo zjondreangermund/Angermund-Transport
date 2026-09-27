@@ -314,9 +314,16 @@ async function tripGeoNotify(trip,title,message,severity='info'){
     createNotification({type:'trip-geofence',severity,title,message,role:'dispatcher',linkedType:'trip',linkedId:trip.id})
   ]);
 }
+function serverTripPriority(t){
+  const status=String(t?.status||'').toLowerCase();
+  if(/loading|in transit|at loading|at offloading|awaiting pod|return journey/.test(status))return 500;
+  if(/planned|assigned|booked/.test(status))return 400;
+  if(/delivered/.test(status)&&!t.driverComplete)return 200;
+  return 100
+}
 async function evaluateTripZones(pos){
   const snapshot=await readOpsState();
-  const active=(snapshot.trips||[]).filter(t=>t.truckId===pos.vehicleId&&!t.driverComplete&&!['Closed','Invoiced'].includes(t.status)).sort((a,b)=>num(b.stage)-num(a.stage))[0];
+  const active=(snapshot.trips||[]).filter(t=>t.truckId===pos.vehicleId&&!t.driverComplete&&!['Closed','Invoiced'].includes(t.status)).sort((a,b)=>{const p=serverTripPriority(b)-serverTripPriority(a);if(p)return p;return new Date(b.createdAt||b.date||0)-new Date(a.createdAt||a.date||0)})[0];
   if(!active)return;
   const activeLeg=activeTripLegServer(active),route=(snapshot.routes||[]).find(r=>r.id===(activeLeg?.routeId||active.routeId)),zones=routeTripZones(route),multi=Array.isArray(active.legs)&&active.legs.length>1;
   if(!zones)return;
