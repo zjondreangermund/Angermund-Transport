@@ -265,3 +265,6 @@ body.driver-mode .toast{left:12px;right:12px;bottom:86px;text-align:center}
 .fuel-total-row b{color:#7ef0bb;font-size:16px}
 .fuel-adjustment-row{font-size:11px;color:var(--muted)}
 @media(max-width:520px){.fuel-fill-row{grid-template-columns:1fr auto}.fuel-fill-row span{grid-column:1/-1}.fuel-fill-row strong{text-align:right}}
+
+.fuel-math-ok{padding:8px 10px;border-radius:9px;background:rgba(56,217,150,.08);color:#7ef0bb;font-size:11px;font-weight:800}
+.fuel-review-warning{padding:9px 10px;border-radius:9px;background:rgba(255,189,74,.1);border:1px solid rgba(255,189,74,.24);color:#ffd88a;font-size:11px;font-weight:800;line-height:1.4}
