@@ -156,7 +156,7 @@ body.driver-mode main{margin-left:0;padding:84px 12px 104px;max-width:720px;marg
 .driver-no-trip p{color:var(--muted)}
 .driver-no-trip a,.driver-call-big{display:block;text-decoration:none;background:linear-gradient(135deg,#1478ee,#3c97ff);color:white;border-radius:14px;padding:16px;font-weight:900;margin-top:18px}
 .driver-reminder{background:rgba(255,189,74,.1);border:1px solid rgba(255,189,74,.28);color:#ffd88a;border-radius:13px;padding:12px 14px}
-.driver-bottom{position:fixed;z-index:25;left:50%;bottom:0;transform:translateX(-50%);width:min(720px,100%);height:72px;background:rgba(6,17,30,.97);backdrop-filter:blur(14px);border-top:1px solid #28435b;display:grid;grid-template-columns:repeat(3,1fr);padding-bottom:env(safe-area-inset-bottom)}
+.driver-bottom{position:fixed;z-index:25;left:50%;bottom:0;transform:translateX(-50%);width:min(720px,100%);height:72px;background:rgba(6,17,30,.97);backdrop-filter:blur(14px);border-top:1px solid #28435b;display:grid;grid-template-columns:repeat(4,1fr);padding-bottom:env(safe-area-inset-bottom)}
 .driver-bottom button{border:0;background:transparent;color:#91a8be;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:19px}
 .driver-bottom button span{font-size:10px;font-weight:800;letter-spacing:.5px}
 .driver-bottom button.active{color:var(--cyan)}
@@ -290,3 +290,5 @@ body.driver-mode .toast{left:12px;right:12px;bottom:86px;text-align:center}
 .driver-switch-account{border:1px solid rgba(255,112,112,.35);background:rgba(255,112,112,.08);color:#ff9b9b;border-radius:14px;min-height:54px;font-weight:900;font-size:14px}
 .driver-switch-account:active{background:rgba(255,112,112,.15)}
 @media(max-width:520px){.driver-welcome{align-items:flex-start}.driver-welcome-actions{gap:6px}.driver-online{padding:6px 8px}.driver-logout-top{padding:6px 9px}}
+
+.driver-bottom #driverLogoutBottom{color:#ff9b9b}.driver-bottom #driverLogoutBottom span{color:#ff9b9b}
