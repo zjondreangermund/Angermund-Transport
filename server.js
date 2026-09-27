@@ -71,7 +71,114 @@ function emit(type,data){const msg=`event: ${type}\ndata: ${JSON.stringify(data)
 const distance=(a,b)=>{const R=6371000,p=x=>x*Math.PI/180,dLat=p(b.latitude-a.latitude),dLon=p(b.longitude-a.longitude),x=Math.sin(dLat/2)**2+Math.cos(p(a.latitude))*Math.cos(p(b.latitude))*Math.sin(dLon/2)**2;return 2*R*Math.atan2(Math.sqrt(x),Math.sqrt(1-x))};
 async function createNotification(n){const row={id:crypto.randomUUID(),type:n.type||'system',severity:n.severity||'info',title:n.title,message:n.message,role:n.role||null,driver_id:n.driverId||null,linked_type:n.linkedType||null,linked_id:n.linkedId||null,read:false,created_at:new Date().toISOString()};if(pool)await q('INSERT INTO notifications(id,type,severity,title,message,role,driver_id,linked_type,linked_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[row.id,row.type,row.severity,row.title,row.message,row.role,row.driver_id,row.linked_type,row.linked_id]);else memory.notifications.unshift(row);emit('notification',row);await sendExternal(row);return row}
 async function sendExternal(n){const tasks=[];if(process.env.RESEND_API_KEY&&process.env.ALERT_EMAIL_TO)tasks.push(fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${process.env.RESEND_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({from:'Angermund Alerts <alerts@resend.dev>',to:[process.env.ALERT_EMAIL_TO],subject:n.title,html:`<h2>${n.title}</h2><p>${n.message}</p>`})}));if(process.env.META_WHATSAPP_TOKEN&&process.env.META_PHONE_NUMBER_ID&&process.env.WHATSAPP_ALERT_TO)tasks.push(fetch(`https://graph.facebook.com/v21.0/${process.env.META_PHONE_NUMBER_ID}/messages`,{method:'POST',headers:{Authorization:`Bearer ${process.env.META_WHATSAPP_TOKEN}`,'Content-Type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to:process.env.WHATSAPP_ALERT_TO,type:'text',text:{body:`${n.title}\n${n.message}`}})}));const subs=pool?await q('SELECT subscription FROM push_subscriptions'):memory.subscriptions;for(const s of subs)if(process.env.VAPID_PUBLIC_KEY)tasks.push(webpush.sendNotification(s.subscription||s,JSON.stringify({title:n.title,body:n.message})).catch(()=>null));await Promise.allSettled(tasks)}
-async function evaluateGeofences(pos){const fences=pool?await q('SELECT * FROM geofences WHERE active=true'):memory.geofences.filter(x=>x.active!==false);for(const f of fences){const inside=distance(pos,{latitude:num(f.latitude),longitude:num(f.longitude)})<=num(f.radius_m||f.radiusM),prev=pool?(await q('SELECT inside FROM geofence_state WHERE vehicle_id=$1 AND geofence_id=$2',[pos.vehicleId,f.id]))[0]:f.states?.[pos.vehicleId];if(prev!==undefined&&Boolean(prev.inside??prev)!==inside){await createNotification({type:'geofence',severity:inside?'info':'warning',title:`${inside?'Entered':'Exited'} ${f.name}`,message:`${pos.vehicleId} ${inside?'entered':'left'} the ${f.name} geofence.`,linkedType:'vehicle',linkedId:pos.vehicleId})}if(pool)await q('INSERT INTO geofence_state(vehicle_id,geofence_id,inside) VALUES($1,$2,$3) ON CONFLICT(vehicle_id,geofence_id) DO UPDATE SET inside=$3,updated_at=now()',[pos.vehicleId,f.id,inside]);else{f.states??={};f.states[pos.vehicleId]=inside}}}
+async function evaluateGeofences(pos){
+  const fences=pool?await q('SELECT * FROM geofences WHERE active=true'):memory.geofences.filter(x=>x.active!==false);
+  for(const f of fences){
+    const inside=distance(pos,{latitude:num(f.latitude),longitude:num(f.longitude)})<=num(f.radius_m||f.radiusM);
+    const prev=pool?(await q('SELECT inside FROM geofence_state WHERE vehicle_id=$1 AND geofence_id=$2',[pos.vehicleId,f.id]))[0]:f.states?.[pos.vehicleId];
+    if(prev!==undefined&&Boolean(prev.inside??prev)!==inside){
+      await createNotification({type:'geofence',severity:inside?'info':'warning',title:(inside?'Entered ':'Exited ')+f.name,message:pos.vehicleId+' '+(inside?'entered':'left')+' the '+f.name+' geofence.',linkedType:'vehicle',linkedId:pos.vehicleId});
+    }
+    if(pool)await q('INSERT INTO geofence_state(vehicle_id,geofence_id,inside) VALUES($1,$2,$3) ON CONFLICT(vehicle_id,geofence_id) DO UPDATE SET inside=$3,updated_at=now()',[pos.vehicleId,f.id,inside]);
+    else{f.states??={};f.states[pos.vehicleId]=inside}
+  }
+}
+function routeTripZones(route){
+  const loadLat=Number(route?.loadLat),loadLon=Number(route?.loadLon),offloadLat=Number(route?.offloadLat),offloadLon=Number(route?.offloadLon);
+  if(!Number.isFinite(loadLat)||!Number.isFinite(loadLon)||!Number.isFinite(offloadLat)||!Number.isFinite(offloadLon)||(!loadLat&&!loadLon)||(!offloadLat&&!offloadLon))return null;
+  const approachKm=Math.max(2,Math.min(5,num(route.approachKm)||5));
+  const arrivalKm=Math.max(.5,Math.min(approachKm-.25,num(route.arrivalKm)||2));
+  return{
+    load:{latitude:loadLat,longitude:loadLon,name:String(route.loadName||'Loading point')},
+    offload:{latitude:offloadLat,longitude:offloadLon,name:String(route.offloadName||'Offloading point')},
+    approachM:approachKm*1000,
+    arrivalM:arrivalKm*1000,
+    departM:Math.min(approachKm*1000,Math.max(arrivalKm*1000+500,arrivalKm*1250)),
+    roundTrip:Boolean(route.roundTrip)||/[↔]|round\s*trip|return/i.test(String(route.name||'')+' '+String(route.notes||''))
+  };
+}
+async function tripGeoNotify(trip,title,message,severity='info'){
+  await Promise.allSettled([
+    createNotification({type:'trip-geofence',severity,title,message,role:'driver',driverId:trip.driverId,linkedType:'trip',linkedId:trip.id}),
+    createNotification({type:'trip-geofence',severity,title,message,role:'dispatcher',linkedType:'trip',linkedId:trip.id})
+  ]);
+}
+async function evaluateTripZones(pos){
+  const snapshot=await readOpsState();
+  const active=(snapshot.trips||[]).filter(t=>t.truckId===pos.vehicleId&&!t.driverComplete&&!['Closed','Invoiced'].includes(t.status)).sort((a,b)=>num(b.stage)-num(a.stage))[0];
+  if(!active)return;
+  const route=(snapshot.routes||[]).find(r=>r.id===active.routeId),zones=routeTripZones(route);
+  if(!zones)return;
+  const preliminaryGeo=active.geo||{},loadM=distance(pos,zones.load),offM=distance(pos,zones.offload);
+  const possible=
+    (!preliminaryGeo.loadApproachAt&&loadM<=zones.approachM)||
+    (!preliminaryGeo.loadArrivedAt&&loadM<=zones.arrivalM)||
+    (preliminaryGeo.loadArrivedAt&&!preliminaryGeo.loadDepartedAt&&loadM>=zones.departM)||
+    (preliminaryGeo.loadDepartedAt&&!preliminaryGeo.offloadApproachAt&&offM<=zones.approachM)||
+    (preliminaryGeo.loadDepartedAt&&!preliminaryGeo.offloadArrivedAt&&offM<=zones.arrivalM)||
+    (preliminaryGeo.offloadArrivedAt&&!preliminaryGeo.offloadDepartedAt&&offM>=zones.departM)||
+    (zones.roundTrip&&preliminaryGeo.offloadDepartedAt&&!preliminaryGeo.returnApproachAt&&loadM<=zones.approachM)||
+    (zones.roundTrip&&preliminaryGeo.returnApproachAt&&!preliminaryGeo.returnArrivedAt&&loadM<=zones.arrivalM);
+  if(!possible)return;
+  const changed=await mutateOpsState(async state=>{
+    const t=(state.trips||[]).find(x=>x.id===active.id),r=(state.routes||[]).find(x=>x.id===active.routeId),z=routeTripZones(r);
+    if(!t||!z)return{events:[]};
+    t.geo??={};
+    state.tasks??=[];
+    state.trucks??=[];
+    state.drivers??=[];
+    const g=t.geo,now=new Date().toISOString(),lm=distance(pos,z.load),om=distance(pos,z.offload),events=[],km=m=>(m/1000).toFixed(1);
+    if(!g.loadApproachAt&&lm<=z.approachM){
+      g.loadApproachAt=now;
+      events.push({title:t.number+' approaching loading point',message:pos.vehicleId+' is '+km(lm)+' km from '+z.load.name+'.'});
+    }
+    if(!g.loadArrivedAt&&lm<=z.arrivalM){
+      g.loadArrivedAt=now;g.loadArrivalPosition={latitude:pos.latitude,longitude:pos.longitude};t.stage=Math.max(2,num(t.stage)||1);t.status='At loading';
+      events.push({title:t.number+' arrived at loading',message:pos.vehicleId+' arrived at '+z.load.name+' ('+km(lm)+' km from pin).'});
+    }
+    if(g.loadArrivedAt&&!g.loadDepartedAt&&lm>=z.departM){
+      g.loadDepartedAt=now;g.loadDeparturePosition={latitude:pos.latitude,longitude:pos.longitude};t.stage=Math.max(3,num(t.stage)||1);t.status='In transit';t.startedAt=t.startedAt||now;
+      const tr=state.trucks.find(x=>x.id===t.truckId);if(tr)tr.status='On trip';
+      const dr=state.drivers.find(x=>x.id===t.driverId);if(dr)dr.status='On trip';
+      events.push({title:t.number+' departed loading point',message:pos.vehicleId+' has left '+z.load.name+' and is now '+km(lm)+' km away. Trip changed to In transit.'});
+    }
+    if(g.loadDepartedAt&&!g.offloadApproachAt&&om<=z.approachM){
+      g.offloadApproachAt=now;
+      events.push({title:t.number+' approaching offloading',message:pos.vehicleId+' is '+km(om)+' km from '+z.offload.name+'.'});
+    }
+    if(g.loadDepartedAt&&!g.offloadArrivedAt&&om<=z.arrivalM){
+      g.offloadArrivedAt=now;g.offloadArrivalPosition={latitude:pos.latitude,longitude:pos.longitude};t.status='At offloading';t.arrivedAt=t.arrivedAt||now;
+      events.push({title:t.number+' arrived at offloading',message:pos.vehicleId+' arrived at '+z.offload.name+' ('+km(om)+' km from pin).'});
+    }
+    if(g.offloadArrivedAt&&!g.offloadDepartedAt&&om>=z.departM){
+      g.offloadDepartedAt=now;g.offloadDeparturePosition={latitude:pos.latitude,longitude:pos.longitude};
+      if(z.roundTrip){
+        g.returnStartedAt=now;t.status='Return journey';
+        events.push({title:t.number+' return journey started',message:pos.vehicleId+' has left '+z.offload.name+' and is now '+km(om)+' km away.'});
+      }else{
+        t.stage=Math.max(4,num(t.stage)||1);t.status='Delivered';
+        if(!state.tasks.some(x=>x.linkedId===t.id&&/POD/i.test(x.title)&&x.status==='Open')){
+          state.tasks.unshift({id:'task_'+crypto.randomUUID(),title:'Upload POD for '+t.number,ownerRole:'Driver',linkedType:'trip',linkedId:t.id,due:now.slice(0,10),priority:'High',status:'Open'});
+        }
+        events.push({title:t.number+' left offloading point',message:pos.vehicleId+' has departed '+z.offload.name+'. Delivery marked complete; POD is still required.'});
+      }
+    }
+    if(z.roundTrip&&g.offloadDepartedAt&&!g.returnApproachAt&&lm<=z.approachM){
+      g.returnApproachAt=now;
+      events.push({title:t.number+' approaching return point',message:pos.vehicleId+' is '+km(lm)+' km from '+z.load.name+' on the return journey.'});
+    }
+    if(z.roundTrip&&g.returnApproachAt&&!g.returnArrivedAt&&lm<=z.arrivalM){
+      g.returnArrivedAt=now;g.returnArrivalPosition={latitude:pos.latitude,longitude:pos.longitude};t.stage=Math.max(4,num(t.stage)||1);t.status='Returned';
+      if(!state.tasks.some(x=>x.linkedId===t.id&&/POD/i.test(x.title)&&x.status==='Open')&&!t.pod){
+        state.tasks.unshift({id:'task_'+crypto.randomUUID(),title:'Upload POD for '+t.number,ownerRole:'Driver',linkedType:'trip',linkedId:t.id,due:now.slice(0,10),priority:'High',status:'Open'});
+      }
+      events.push({title:t.number+' returned',message:pos.vehicleId+' arrived back at '+z.load.name+'. Trip is ready for POD/office closure.'});
+    }
+    g.lastPositionAt=now;g.lastLoadDistanceKm=Number((lm/1000).toFixed(2));g.lastOffloadDistanceKm=Number((om/1000).toFixed(2));
+    return{events,tripId:t.id,driverId:t.driverId};
+  });
+  for(const e of changed.result?.events||[])await tripGeoNotify({...active,driverId:changed.result.driverId},e.title,e.message,e.severity||'info');
+}
 app.post('/api/auth/login',async(req,res)=>{const email=String(req.body.email||'').toLowerCase(),u=pool?(await q('SELECT * FROM users WHERE email=$1 AND active=true',[email]))[0]:memory.users.find(x=>x.email===email&&x.active);if(!u||!await bcrypt.compare(String(req.body.password||''),u.password_hash))return res.status(401).json({error:'Invalid email or password'});res.json({token:tokenFor(u),user:{id:u.id,email:u.email,name:u.name,role:u.role,driverId:u.driver_id||u.driverId||null}})});
 app.get('/api/session',auth,(req,res)=>res.json({user:req.user}));
 app.get('/api/users',auth,roles('admin','manager'),async(req,res)=>res.json(pool?await q('SELECT id,email,name,role,driver_id AS "driverId",active,created_at AS "createdAt" FROM users ORDER BY name'):memory.users.map(({password_hash,...u})=>u)));
@@ -93,7 +200,7 @@ app.post('/api/driver/trips/:tripId/action',auth,roles('driver'),async(req,res)=
 app.get('/api/events',auth,(req,res)=>{res.set({'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});res.flushHeaders();res.write('event: ready\ndata: {}\n\n');clients.add(res);req.on('close',()=>clients.delete(res))});
 app.post('/api/gps',auth,async(req,res)=>gpsIn(req,res,'driver'));
 app.post('/api/integrations/telematics/webhook',async(req,res)=>{if(req.headers['x-telematics-token']!==process.env.TELEMATICS_WEBHOOK_TOKEN)return res.status(401).json({error:'Invalid webhook token'});req.user={sub:'telematics'};return gpsIn(req,res,'telematics')});
-async function gpsIn(req,res,source){const p={vehicleId:String(req.body.vehicleId||req.body.vehicle_id||''),driverId:req.body.driverId||req.user.driverId||null,tripId:req.body.tripId||null,latitude:Number(req.body.latitude),longitude:Number(req.body.longitude),speed:num(req.body.speed),heading:num(req.body.heading),accuracy:req.body.accuracy==null?null:num(req.body.accuracy),source,recordedAt:req.body.recordedAt||new Date().toISOString()};if(!p.vehicleId||!Number.isFinite(p.latitude)||!Number.isFinite(p.longitude))return res.status(400).json({error:'vehicleId, latitude and longitude are required'});if(pool)await q('INSERT INTO gps_positions(vehicle_id,driver_id,trip_id,latitude,longitude,speed,heading,accuracy,source,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[p.vehicleId,p.driverId,p.tripId,p.latitude,p.longitude,p.speed,p.heading,p.accuracy,p.source,p.recordedAt]);else memory.gps.push(p);await evaluateGeofences(p);emit('gps',p);res.status(201).json(p)}
+async function gpsIn(req,res,source){const p={vehicleId:String(req.body.vehicleId||req.body.vehicle_id||''),driverId:req.body.driverId||req.user.driverId||null,tripId:req.body.tripId||null,latitude:Number(req.body.latitude),longitude:Number(req.body.longitude),speed:num(req.body.speed),heading:num(req.body.heading),accuracy:req.body.accuracy==null?null:num(req.body.accuracy),source,recordedAt:req.body.recordedAt||new Date().toISOString()};if(!p.vehicleId||!Number.isFinite(p.latitude)||!Number.isFinite(p.longitude))return res.status(400).json({error:'vehicleId, latitude and longitude are required'});if(pool)await q('INSERT INTO gps_positions(vehicle_id,driver_id,trip_id,latitude,longitude,speed,heading,accuracy,source,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[p.vehicleId,p.driverId,p.tripId,p.latitude,p.longitude,p.speed,p.heading,p.accuracy,p.source,p.recordedAt]);else memory.gps.push(p);await evaluateGeofences(p);await evaluateTripZones(p);emit('gps',p);res.status(201).json(p)}
 app.get('/api/gps/latest',auth,async(req,res)=>{const rows=pool?await q('SELECT DISTINCT ON(vehicle_id) vehicle_id AS "vehicleId",driver_id AS "driverId",trip_id AS "tripId",latitude,longitude,speed,heading,accuracy,source,recorded_at AS "recordedAt" FROM gps_positions ORDER BY vehicle_id,recorded_at DESC'):Object.values(memory.gps.reduce((a,x)=>(a[x.vehicleId]=x,a),{}));res.json(rows)});
 app.get('/api/gps/history/:vehicleId',auth,async(req,res)=>{const hours=Math.min(168,Math.max(1,num(req.query.hours)||24)),rows=pool?await q('SELECT vehicle_id AS "vehicleId",latitude,longitude,speed,heading,recorded_at AS "recordedAt" FROM gps_positions WHERE vehicle_id=$1 AND recorded_at>now()-($2||\' hours\')::interval ORDER BY recorded_at',[req.params.vehicleId,String(hours)]):memory.gps.filter(x=>x.vehicleId===req.params.vehicleId&&Date.now()-new Date(x.recordedAt)<hours*3600000);res.json(rows)});
 app.get('/api/geofences',auth,async(req,res)=>res.json(pool?await q('SELECT id,name,latitude,longitude,radius_m AS "radiusM",event_types AS "eventTypes",active FROM geofences ORDER BY name'):memory.geofences));
