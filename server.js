@@ -624,10 +624,18 @@ app.post('/api/admin/trips',auth,roles('admin','manager','dispatcher'),async(req
         startKm:num(body.startKm),
         income:num(body.income),
         distance:num(route.distance),
+        legs:[{
+          id:'leg_'+crypto.randomUUID(),sequence:1,label:'Outbound / Load 1',routeId:String(body.routeId),clientId:String(body.clientId),
+          load:String(body.load||''),tons:num(body.tons),pallets:num(body.pallets),distance:num(route.distance),namibiaKm:num(route.namibiaKm),
+          pricingMethod:legPricingMethod(body.pricingMethod||'Manual negotiated'),unitRate:num(body.unitRate),
+          agreedAmount:num(body.income),income:num(body.income),status, pod:false,invoiceId:''
+        }],
+        journeyLegCount:1,multiLeg:false,
         dieselCost:0,tolls:0,allowance:0,other:0,
         status,stage,pod:false,approved:false,settlementStatus:'Pending',
         createdAt:new Date().toISOString(),createdBy:req.user.sub
       };
+      syncTripFromLegs(state,trip);recalcTripCosts(state,trip);
       state.trips.unshift(trip);
       truck.status=stage>=3?'On trip':'Reserved';
       driver.status=stage>=3?'On trip':'Assigned';
@@ -637,6 +645,73 @@ app.post('/api/admin/trips',auth,roles('admin','manager','dispatcher'),async(req
       return trip;
     });
     res.status(201).json({trip:changed.result,revision:changed.revision});
+  }catch(e){res.status(e.status||500).json({error:e.message})}
+});
+
+app.post('/api/admin/trips/:tripId/legs',auth,roles('admin','manager','dispatcher','finance'),async(req,res)=>{
+  try{
+    const body=req.body&&typeof req.body==='object'?req.body:{};
+    const changed=await mutateOpsState(async state=>{
+      const t=(state.trips||[]).find(x=>x.id===req.params.tripId);if(!t){const e=Error('Trip not found');e.status=404;throw e}
+      const route=(state.routes||[]).find(x=>x.id===body.routeId);if(!route){const e=Error('Route not found');e.status=400;throw e}
+      if(!(state.clients||[]).some(x=>x.id===body.clientId)){const e=Error('Client not found');e.status=400;throw e}
+      const legs=ensureTripLegs(state,t),seq=legs.length+1;
+      const leg={id:'leg_'+crypto.randomUUID(),sequence:seq,label:String(body.label||('Leg '+seq)),routeId:String(body.routeId),clientId:String(body.clientId),
+        load:String(body.load||''),tons:num(body.tons),pallets:num(body.pallets),distance:num(body.distance)||num(route.distance),namibiaKm:num(body.namibiaKm)||num(route.namibiaKm),
+        pricingMethod:legPricingMethod(body.pricingMethod),unitRate:num(body.unitRate),agreedAmount:num(body.agreedAmount||body.income),
+        income:0,status:String(body.status||'Planned'),pod:false,invoiceId:'',createdAt:new Date().toISOString()};
+      leg.income=Number(calculateLegIncome(leg).toFixed(2));legs.push(leg);syncTripFromLegs(state,t);recalcTripCosts(state,t);
+      state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:req.user.name||req.user.email||req.user.role,action:'Added '+leg.label+' to '+t.number+' · '+leg.load+' · N$'+leg.income.toFixed(2),linkedType:'trip',linkedId:t.id});state.audit=state.audit.slice(0,100);
+      return{trip:t,leg}
+    });
+    res.status(201).json(changed.result)
+  }catch(e){res.status(e.status||500).json({error:e.message})}
+});
+app.patch('/api/admin/trips/:tripId/legs/:legId',auth,roles('admin','manager','dispatcher','finance'),async(req,res)=>{
+  try{
+    const body=req.body&&typeof req.body==='object'?req.body:{};
+    const changed=await mutateOpsState(async state=>{
+      const t=(state.trips||[]).find(x=>x.id===req.params.tripId);if(!t){const e=Error('Trip not found');e.status=404;throw e}
+      const legs=ensureTripLegs(state,t),leg=legs.find(x=>x.id===req.params.legId);if(!leg){const e=Error('Journey leg not found');e.status=404;throw e}
+      if(body.routeId!==undefined){const r=(state.routes||[]).find(x=>x.id===body.routeId);if(!r){const e=Error('Route not found');e.status=400;throw e}leg.routeId=String(body.routeId);if(body.distance===undefined)leg.distance=num(r.distance);if(body.namibiaKm===undefined)leg.namibiaKm=num(r.namibiaKm)}
+      if(body.clientId!==undefined){if(!(state.clients||[]).some(x=>x.id===body.clientId)){const e=Error('Client not found');e.status=400;throw e}leg.clientId=String(body.clientId)}
+      for(const key of ['label','load','status'])if(body[key]!==undefined)leg[key]=String(body[key]||'');
+      for(const key of ['tons','pallets','distance','namibiaKm','unitRate','agreedAmount'])if(body[key]!==undefined)leg[key]=num(body[key]);
+      if(body.pricingMethod!==undefined)leg.pricingMethod=legPricingMethod(body.pricingMethod);
+      if(body.pod!==undefined)leg.pod=Boolean(body.pod);
+      leg.income=Number(calculateLegIncome(leg).toFixed(2));leg.updatedAt=new Date().toISOString();syncTripFromLegs(state,t);recalcTripCosts(state,t);
+      return{trip:t,leg}
+    });
+    res.json(changed.result)
+  }catch(e){res.status(e.status||500).json({error:e.message})}
+});
+app.delete('/api/admin/trips/:tripId/legs/:legId',auth,roles('admin','manager','dispatcher','finance'),async(req,res)=>{
+  try{
+    const changed=await mutateOpsState(async state=>{
+      const t=(state.trips||[]).find(x=>x.id===req.params.tripId);if(!t){const e=Error('Trip not found');e.status=404;throw e}
+      const legs=ensureTripLegs(state,t),i=legs.findIndex(x=>x.id===req.params.legId);if(i<0){const e=Error('Journey leg not found');e.status=404;throw e}
+      if(legs.length<=1){const e=Error('A journey must keep at least one leg');e.status=400;throw e}
+      if(legs[i].invoiceId){const e=Error('This leg already has an invoice and cannot be removed');e.status=409;throw e}
+      const [removed]=legs.splice(i,1);syncTripFromLegs(state,t);recalcTripCosts(state,t);return{trip:t,removed}
+    });
+    res.json(changed.result)
+  }catch(e){res.status(e.status||500).json({error:e.message})}
+});
+app.post('/api/admin/trips/:tripId/legs/:legId/invoice',auth,roles('admin','manager','finance'),async(req,res)=>{
+  try{
+    const changed=await mutateOpsState(async state=>{
+      state.invoices??=[];
+      const t=(state.trips||[]).find(x=>x.id===req.params.tripId);if(!t){const e=Error('Trip not found');e.status=404;throw e}
+      const leg=ensureTripLegs(state,t).find(x=>x.id===req.params.legId);if(!leg){const e=Error('Journey leg not found');e.status=404;throw e}
+      if(leg.invoiceId){const existing=state.invoices.find(x=>x.id===leg.invoiceId);if(existing)return{invoice:existing,trip:t,leg,existing:true}}
+      const highest=state.invoices.reduce((m,x)=>Math.max(m,Number(String(x.number||'').match(/INV-(\d+)/)?.[1]||0)),999);
+      const client=(state.clients||[]).find(x=>x.id===leg.clientId),terms=num(client?.terms)||30,date=new Date(),due=new Date(date.getTime()+terms*86400000).toISOString().slice(0,10);
+      const inv={id:'inv_'+crypto.randomUUID(),number:'INV-'+(highest+1),date:date.toISOString().slice(0,10),clientId:leg.clientId,tripId:t.id,legId:leg.id,amount:num(leg.income),due,status:'Unpaid',journeyLeg:true};
+      state.invoices.unshift(inv);leg.invoiceId=inv.id;leg.invoiceStatus='Unpaid';
+      const legs=ensureTripLegs(state,t);if(legs.every(x=>x.invoiceId)){t.stage=Math.max(num(t.stage),5);t.status='Invoiced';t.invoiceIds=legs.map(x=>x.invoiceId);const tr=(state.trucks||[]).find(x=>x.id===t.truckId);if(tr)tr.status='Available';const dr=(state.drivers||[]).find(x=>x.id===t.driverId);if(dr)dr.status='Available'}
+      return{invoice:inv,trip:t,leg,existing:false}
+    });
+    res.status(changed.result.existing?200:201).json(changed.result)
   }catch(e){res.status(e.status||500).json({error:e.message})}
 });
 
