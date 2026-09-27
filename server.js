@@ -7,14 +7,24 @@ function supplierKey(value){return String(value||'').toLowerCase().normalize('NF
 function receiptSupplier(raw){
   const text=String(raw||'');
   const known=[
-    [/\bVIVO\s*ENERGY(?:\s*NAMIBIA)?\b/i,'VIVO Energy Namibia'],[/\bOKAHANDJA\s*TRUCK\s*STOP\b/i,'Okahandja Truck Stop'],[/\bPUMA\b/i,'Puma'],[/\bSHELL\b/i,'Shell'],[/\bENGEN\b/i,'Engen'],[/\bTOTAL(?:ENERGIES)?\b/i,'TotalEnergies'],[/\bBP\b/i,'BP'],
+    [/\bVIVO\s*ENERGY(?:\s*NAMIBIA)?\b/i,'VIVO Energy Namibia'],[/\bOKAHANDJA\s*TRUCK\s*STOP\b/i,'Okahandja Truck Stop'],
+    [/\bPUMA\b/i,'Puma'],[/\bSHELL\b/i,'Shell'],[/\bENGEN\b/i,'Engen'],[/\bTOTAL(?:ENERGIES)?\b/i,'TotalEnergies'],[/\bBP\b/i,'BP'],
     [/\bKFC\b/i,'KFC'],[/\bHUNGRY\s*LION\b/i,'Hungry Lion'],[/\bWIMPY\b/i,'Wimpy'],[/\bSTEERS\b/i,'Steers'],[/\bSPUR\b/i,'Spur'],[/\bNANDO'?S\b/i,"Nando's"],[/\bDEBONAIRS\b/i,'Debonairs'],
     [/\bSHOPRITE\b/i,'Shoprite'],[/\bCHECKERS\b/i,'Checkers'],[/\bPICK\s*N\s*PAY\b/i,'Pick n Pay'],[/\bWOERMANN\b/i,'Woermann Brock'],[/\bSPAR\b/i,'SPAR']
   ];
   for(const [re,name] of known)if(re.test(text))return name;
-  const generic=/^(tax\s*)?(invoice|receipt|cash\s*sale|customer\s*copy|duplicate|original|vat|date|time|total|subtotal|change|cashier|thank\s*you|tel|telephone|address)\b/i;
-  const lines=text.split(/\r?\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(x=>x.length>=3&&x.length<=80);
-  return lines.find(x=>/[a-z]{3}/i.test(x)&&!generic.test(x)&&!/^[\d\W]+$/.test(x))||null;
+  const generic=/^(tax\s*)?(invoice|receipt|cash\s*sale|customer\s*copy|duplicate|original|vat|date|time|total|subtotal|change|cashier|thank\s*you|tel|telephone|address|item|qty|price|amount|code|rate|payment)\b/i;
+  const lines=text.split(/\r?\n/).map(x=>x.replace(/[“”"']/g,'').replace(/\s+/g,' ').trim()).filter(x=>x.length>=3&&x.length<=70);
+  const believable=line=>{
+    if(generic.test(line)||/^[\d\W]+$/.test(line))return false;
+    const letters=(line.match(/[A-Za-z]/g)||[]).length,digits=(line.match(/\d/g)||[]).length,punct=(line.match(/[^A-Za-z0-9\s&.-]/g)||[]).length;
+    const words=line.split(/\s+/).filter(Boolean),realWords=words.filter(w=>/[A-Za-z]{3,}/.test(w)),singleLetters=words.filter(w=>/^[A-Za-z]$/.test(w)).length;
+    if(letters<4||realWords.length<1)return false;
+    if(punct>2||singleLetters>2)return false;
+    if(digits>letters*1.2)return false;
+    return letters/Math.max(1,line.length)>.42;
+  };
+  return lines.find(believable)||null;
 }
 function classifyReceipt(raw,supplier,state={},facts={}){
   const text=(String(supplier||'')+'\n'+String(raw||'')).toLowerCase(),key=supplierKey(supplier),rules=state.supplierCategoryRules||{},has=re=>re.test(text);
