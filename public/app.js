@@ -1008,7 +1008,39 @@ forms.payment=[['invoiceId','Invoice','invoice'],['date','Payment date','date',t
 function options(type){return {truck:db.trucks.map(x=>[x.id,x.registration]),trailer:db.trailers.map(x=>[x.id,x.registration]),driver:db.drivers.map(x=>[x.id,x.name]),client:db.clients.map(x=>[x.id,x.name]),route:db.routes.map(x=>[x.id,x.name]),trip:db.trips.map(x=>[x.id,`${x.number} · ${route(x.routeId)}`]),invoice:db.invoices.filter(x=>invoiceBalance(x)>.005).map(x=>[x.id,`${x.number} · ${client(x.clientId)} · ${money(invoiceBalance(x))} due`])}[type]||[]}
 function openForm(type,prefill={}){formType=type;const list=forms[type];if(!list)return notify(`Open ${type} from its linked workflow`);$('modalTitle').textContent=`Add ${type}`;$('entryForm').innerHTML=`<div class="form-grid">${list.map(([key,label,kind,def,vals])=>{const value=prefill[key]??def??'',opts=kind==='select'?(vals||[]).map(v=>[String(v),String(v)]):options(kind);if(opts.length)return `<div class="field"><label>${label}</label><select name="${key}"><option value="">Select…</option>${opts.map(([v,l])=>`<option value="${esc(v)}" ${String(v)===String(value)?'selected':''}>${esc(l)}</option>`).join('')}</select></div>`;if(kind==='textarea')return `<div class="field full"><label>${label}</label><textarea name="${key}" rows="3">${esc(value)}</textarea></div>`;return `<div class="field"><label>${label}</label><input name="${key}" type="${kind}" step="any" value="${esc(value)}"></div>`}).join('')}<div class="form-actions"><button type="button" class="ghost" id="cancelForm">Cancel</button><button class="primary">Save & link record</button></div></div>`;$('modal').classList.remove('hidden');$('cancelForm').onclick=()=>$('modal').classList.add('hidden')}
 async function saveForm(e){e.preventDefault();const o={id:uid(formType)};new FormData($('entryForm')).forEach((v,k)=>o[k]=v);['tons','pallets','startKm','income','litres','price','odometer','cost','nextService','fittedKm','currentKm','amount','days','overtime','base','incentive','deductions','distance','rate','terms','unitRate','loadLat','loadLon','offloadLat','offloadLon','approachKm','arrivalKm','namibiaKm'].forEach(k=>{if(k in o)o[k]=num(o[k])});if(o.crossBorder)o.crossBorder=o.crossBorder==='true';if('roundTrip' in o)o.roundTrip=o.roundTrip==='true';const map={trip:'trips',diesel:'diesel',expense:'expenses',tripIssue:'tripIssues',payment:'payments',inspection:'inspections',incident:'incidents',permit:'permits',maintenance:'maintenance',tyre:'tyres',invoice:'invoices',advance:'advances',payroll:'payroll',client:'clients',route:'routes'},key=map[formType];if(formType==='trip'){try{const result=await api('/api/admin/trips',{method:'POST',body:o});const state=await api('/api/state');if(state.payload&&Object.keys(state.payload).length){db=merge(state.payload);localStorage.setItem(STORE,JSON.stringify(db))}$('modal').classList.add('hidden');render();notify((result.trip?.number||'Trip')+' saved and assigned to '+driver(result.trip?.driverId));return}catch(err){notify(err.message);return}}if(formType==='diesel'){o.verified=false;const t=get('trips',o.tripId);if(t.id)t.dieselCost=sum(linked('diesel','tripId',t.id),x=>num(x.litres)*num(x.price))+num(o.litres)*num(o.price)}if(formType==='expense'){o.status=o.receiptNo?'Review':'Receipt missing';o.reimbursable=true}if(formType==='tripIssue')o.status='Open';if(formType==='invoice'){o.status='Unpaid';o.paidAmount=0;o.balance=o.amount}if(formType==='payment'){const inv=get('invoices',o.invoiceId),balance=invoiceBalance(inv);if(!inv.id||o.amount<=0)return notify('Select an invoice and enter a valid payment amount');if(o.amount>balance+.005)return notify(`Payment exceeds the outstanding balance of ${money(balance)}`)}if(formType==='inspection'){o.items={tyres:true,lights:true,brakes:true,fluids:true,documents:true,load:true};o.score=o.defects?80:100;o.status=o.defects?'Failed':'Passed'}if(formType==='incident')o.status='Open';if(formType==='permit')o.status='Active';db[key].unshift(o);if(formType==='payment')refreshInvoiceStatus(get('invoices',o.invoiceId));$('modal').classList.add('hidden');commit(formType==='payment'?`Payment of ${money(o.amount)} recorded for ${get('invoices',o.invoiceId).number}`:`${formType} record created`,formType,o.id)}
-function advanceTrip(id){const t=get('trips',id);if(t.stage===4&&!t.pod)return notify('Upload POD before invoicing');if(t.stage<5){t.stage++;t.status={2:'Loading',3:'In transit',4:'Delivered',5:'Invoiced'}[t.stage];if(t.stage===3){get('trucks',t.truckId).status='On trip';get('drivers',t.driverId).status='On trip'}if(t.stage===4)db.tasks.unshift({id:uid('task'),title:`Upload POD for ${t.number}`,ownerRole:'Driver',linkedType:'trip',linkedId:t.id,due:today(),priority:'High',status:'Open'});if(t.stage===5){const inv={id:uid('inv'),number:`INV-${1000+db.invoices.length+1}`,date:today(),clientId:t.clientId,tripId:t.id,amount:t.income,due:'',status:'Unpaid'};db.invoices.unshift(inv);t.invoiceId=inv.id;get('trucks',t.truckId).status='Available';get('drivers',t.driverId).status='Available'}}commit(`${t.number} moved to ${t.status}`,'trip',t.id)}
+async function advanceTrip(id){
+  let t=get('trips',id);if(!t.id)return;
+  const legs=tripLegs(t);
+  if(num(t.stage)===4){
+    if(legs.some(x=>!x.pod)&&!t.pod)return notify('POD is required for every journey leg before invoicing');
+    const uninvoiced=legs.filter(x=>!x.invoiceId);
+    if(legs.length>1&&uninvoiced.length){
+      openTrip(id);return notify('Create the invoice for each journey leg/client separately')
+    }
+    if(legs.length===1&&!legs[0].invoiceId){
+      try{
+        const r=await api('/api/admin/trips/'+encodeURIComponent(id)+'/legs/'+encodeURIComponent(legs[0].id)+'/invoice',{method:'POST'});
+        await refreshCentralState(false);notify((r.invoice?.number||'Invoice')+' created');return
+      }catch(e){return notify(e.message)}
+    }
+    await refreshCentralState(false);return
+  }
+  if(num(t.stage)>=5){
+    t=get('trips',id);t.status='Closed';t.stage=6;
+    get('trucks',t.truckId).status='Available';get('drivers',t.driverId).status='Available';
+    commit(t.number+' journey closed','trip',t.id);return
+  }
+  t.stage=Math.max(1,num(t.stage))+1;
+  t.status={2:'Loading',3:'In transit',4:'Delivered'}[t.stage]||t.status;
+  const active=activeJourneyLeg(t);
+  if(active){
+    if(t.stage===2)active.status='Loading';
+    if(t.stage===3)active.status='In transit';
+    if(t.stage===4){active.status='At offloading';if(!db.tasks.some(x=>x.linkedId===t.id&&x.legId===active.id&&/POD/i.test(x.title)&&x.status==='Open'))db.tasks.unshift({id:uid('task'),title:'Upload POD for '+t.number+(legs.length>1?' · '+active.label:''),ownerRole:'Driver',linkedType:'trip',linkedId:t.id,legId:active.id,due:today(),priority:'High',status:'Open'})}
+  }
+  if(t.stage===3){get('trucks',t.truckId).status='On trip';get('drivers',t.driverId).status='On trip'}
+  commit(t.number+' moved to '+t.status,'trip',t.id)
+}
 function legAllocatedCost(t,leg){
   const allFuel=linked('diesel','tripId',t.id),allExp=linked('expenses','tripId',t.id),totalDist=Math.max(1,journeyDistance(t)),share=Math.max(0,num(leg.distance))/totalDist;
   const directFuel=sum(allFuel.filter(x=>x.legId===leg.id),fuelRecordCost),unassignedFuel=sum(allFuel.filter(x=>!x.legId),fuelRecordCost);
