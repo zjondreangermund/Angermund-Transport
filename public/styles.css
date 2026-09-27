@@ -112,3 +112,73 @@ header{min-height:82px;height:auto}.header-actions{align-items:center}
 @media(max-width:1100px){.role-picker span{display:none}.split-3{grid-template-columns:1fr 1fr}.workflow{grid-template-columns:1fr 1fr}.stage:after{display:none}}
 @media(max-width:760px){.role-picker{max-width:150px}.role-picker select{min-width:0;width:122px}.page-heading p{display:none}.hero{align-items:flex-start;flex-direction:column}.workflow,.split-3{grid-template-columns:1fr}.header-actions{gap:4px}.header-actions .primary{padding:9px}.header-actions>.ghost{display:none}}
 .login-screen{position:fixed;inset:0;z-index:100;background:radial-gradient(circle at 60% 10%,#153d68,transparent 42%),#06101d;display:grid;place-items:center;padding:20px}.login-screen.hidden{display:none}.login-card{width:min(410px,100%);background:linear-gradient(145deg,#11243a,#091827);border:1px solid #28517a;border-radius:18px;padding:30px;box-shadow:0 30px 80px rgba(0,0,0,.45)}.login-card img{width:65px}.login-card h1{margin:12px 0 0}.login-card p{color:var(--muted);margin:3px 0 22px}.login-card label{display:grid;gap:6px;color:var(--muted);margin:13px 0}.login-card button{width:100%;margin-top:8px}.login-card small{display:block;color:var(--red);margin-top:10px}.map{height:520px;border-radius:14px;border:1px solid var(--line);overflow:hidden;background:#081523}.tracking-layout{display:grid;grid-template-columns:2.2fr 1fr;gap:16px}.vehicle-live{padding:12px;border:1px solid var(--line);border-radius:10px;margin:8px 0}.vehicle-live.active{border-color:var(--blue);background:rgba(47,140,255,.08)}.notification-list{max-height:560px;overflow:auto}.notification-row{padding:13px;border-bottom:1px solid var(--line)}.notification-row.unread{background:rgba(47,140,255,.08)}.provider-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px}.provider{padding:13px;border:1px solid var(--line);border-radius:10px}.provider.on{border-color:rgba(56,217,150,.45)}@media(max-width:900px){.tracking-layout{grid-template-columns:1fr}.map{height:430px}.provider-grid{grid-template-columns:1fr 1fr}}
+
+/* Driver Easy Mode */
+body.driver-mode{background:linear-gradient(180deg,#06111e,#091a2b 55%,#06111e);padding-bottom:78px}
+body.driver-mode #sidebar{display:none}
+body.driver-mode header{left:0;min-height:68px;padding:10px 14px;background:rgba(6,17,30,.96)}
+body.driver-mode header .mobile-menu,
+body.driver-mode .role-picker,
+body.driver-mode #backupBtn,
+body.driver-mode #quickTripBtn{display:none!important}
+body.driver-mode header h1{font-size:18px}
+body.driver-mode header .page-heading p{display:none}
+body.driver-mode main{margin-left:0;padding:84px 12px 104px;max-width:720px;margin-right:auto;margin-left:auto}
+.driver-shell{display:grid;gap:14px}
+.driver-welcome{display:flex;justify-content:space-between;align-items:center;padding:4px 3px}
+.driver-welcome small{color:var(--muted);font-size:10px;letter-spacing:1.4px}
+.driver-welcome h1{margin:1px 0 0;font-size:22px}
+.driver-online{font-size:11px;font-weight:800;padding:7px 10px;border-radius:20px;border:1px solid var(--line)}
+.driver-online.on{color:var(--green);background:rgba(56,217,150,.08);border-color:rgba(56,217,150,.25)}
+.driver-online.off{color:var(--amber);background:rgba(255,189,74,.08);border-color:rgba(255,189,74,.25)}
+.driver-trip-card{background:linear-gradient(155deg,#112a43,#0b1c2e);border:1px solid #2b4c69;border-radius:20px;padding:18px;box-shadow:0 18px 45px rgba(0,0,0,.25)}
+.driver-trip-top{display:flex;justify-content:space-between;align-items:flex-start;gap:12px}
+.driver-trip-top small{color:var(--cyan);font-size:10px;letter-spacing:1.3px;font-weight:800}
+.driver-trip-top h2{margin:4px 0 0;font-size:20px}
+.driver-route{font-size:25px;line-height:1.15;font-weight:900;margin:24px 0 10px}
+.driver-trip-meta{display:grid;gap:7px;color:#b9cce0;font-size:13px;margin-bottom:18px}
+.driver-next{width:100%;min-height:128px;border:0;border-radius:18px;background:linear-gradient(135deg,#1578ee,#39a5ff);color:white;padding:18px;display:grid;place-items:center;box-shadow:0 12px 28px rgba(33,137,255,.28);touch-action:manipulation}
+.driver-next>span{font-size:31px;line-height:1}
+.driver-next strong{font-size:24px;letter-spacing:.3px;margin-top:4px}
+.driver-next small{font-size:12px;color:#e6f4ff;margin-top:3px}
+.driver-next:active{transform:scale(.985)}
+.driver-next:disabled{background:linear-gradient(135deg,#16885f,#38d996);opacity:1}
+.driver-quick-actions{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:13px}
+.driver-quick-actions button,.driver-quick-actions a{min-height:92px;border:1px solid #294861;border-radius:15px;background:#091a2a;color:white;text-decoration:none;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px}
+.driver-quick-actions span{font-size:24px}
+.driver-quick-actions strong{font-size:14px}
+.driver-quick-actions small{color:var(--muted);font-size:10px}
+.driver-quick-actions button:active,.driver-quick-actions a:active{background:#112a43;transform:scale(.985)}
+.driver-small-status{display:flex;justify-content:space-between;gap:10px;flex-wrap:wrap;margin-top:14px;color:var(--muted);font-size:11px}
+.driver-no-trip{text-align:center;background:#0d2033;border:1px solid var(--line);border-radius:20px;padding:38px 20px}
+.driver-no-trip>div{font-size:48px}
+.driver-no-trip h2{font-size:24px;margin:9px 0 5px}
+.driver-no-trip p{color:var(--muted)}
+.driver-no-trip a,.driver-call-big{display:block;text-decoration:none;background:linear-gradient(135deg,#1478ee,#3c97ff);color:white;border-radius:14px;padding:16px;font-weight:900;margin-top:18px}
+.driver-reminder{background:rgba(255,189,74,.1);border:1px solid rgba(255,189,74,.28);color:#ffd88a;border-radius:13px;padding:12px 14px}
+.driver-bottom{position:fixed;z-index:25;left:50%;bottom:0;transform:translateX(-50%);width:min(720px,100%);height:72px;background:rgba(6,17,30,.97);backdrop-filter:blur(14px);border-top:1px solid #28435b;display:grid;grid-template-columns:repeat(3,1fr);padding-bottom:env(safe-area-inset-bottom)}
+.driver-bottom button{border:0;background:transparent;color:#91a8be;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:2px;font-size:19px}
+.driver-bottom button span{font-size:10px;font-weight:800;letter-spacing:.5px}
+.driver-bottom button.active{color:var(--cyan)}
+.driver-check,.driver-help{text-align:center;display:grid;gap:12px;padding:8px 0}
+.driver-check-icon,.driver-avatar{font-size:50px}
+.driver-check h2,.driver-help h2{margin:0;font-size:23px}
+.driver-check p,.driver-help p{margin:0;color:var(--muted)}
+.driver-good,.driver-found,.driver-save{border:0;border-radius:14px;min-height:60px;color:white;font-weight:900;font-size:17px}
+.driver-good,.driver-save{background:linear-gradient(135deg,#139567,#38d996)}
+.driver-found{background:rgba(255,189,74,.14);border:1px solid rgba(255,189,74,.38);color:#ffd88a}
+.driver-inline{display:flex;gap:9px}
+.driver-inline>*{flex:1}
+#driverDefectBox{display:grid;gap:10px;text-align:left;padding-top:8px}
+.driver-simple-form,.driver-problem{display:grid;gap:14px;margin-top:16px}
+.driver-simple-form label,.driver-problem label{display:grid;gap:6px;color:#b5c8da;font-weight:700}
+.driver-simple-form input,.driver-simple-form select,.driver-problem textarea{font-size:17px;min-height:50px}
+.driver-photo-ok{padding:11px 13px;border-radius:11px;background:rgba(56,217,150,.1);border:1px solid rgba(56,217,150,.28);color:#7ef0bb;font-weight:800}
+.driver-modal-actions{display:grid;grid-template-columns:1fr 1.5fr;gap:9px;margin-top:5px}
+.driver-problem-grid{display:grid;grid-template-columns:1fr 1fr;gap:9px}
+.driver-problem-type{min-height:64px;border:1px solid #294861;border-radius:13px;background:#091a2a;color:white;font-weight:800;text-align:left;padding:12px}
+.driver-problem-type.selected{border-color:var(--amber);background:rgba(255,189,74,.13);box-shadow:0 0 0 1px rgba(255,189,74,.2)}
+.driver-help .ghost{margin-top:4px}
+body.driver-mode .modal-card{border-radius:20px;padding:18px}
+body.driver-mode .toast{left:12px;right:12px;bottom:86px;text-align:center}
+@media(min-width:700px){.driver-quick-actions{grid-template-columns:repeat(4,1fr)}.driver-route{font-size:30px}}
