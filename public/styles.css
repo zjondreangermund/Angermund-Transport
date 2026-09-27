@@ -339,3 +339,30 @@ body.driver-mode .toast{left:12px;right:12px;bottom:86px;text-align:center}
 .upload-posted{background:rgba(56,217,150,.10);border:1px solid rgba(56,217,150,.28);color:#7ef0bb}
 .upload-file-only{background:rgba(255,189,74,.10);border:1px solid rgba(255,189,74,.28);color:#ffd88a}
 @media(max-width:600px){.driver-upload-actions{grid-column:1/-1;width:100%}.driver-upload-actions button{flex:1}}
+
+/* MDC & month-end payroll */
+.mdc-preview{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px;margin:14px 0;padding:12px;border:1px solid var(--line);border-radius:12px;background:#081827}
+.mdc-preview>div{display:flex;justify-content:space-between;gap:12px;padding:8px 10px;border-bottom:1px solid rgba(255,255,255,.05)}
+.mdc-preview span{color:var(--muted);font-size:12px}
+.mdc-preview b{font-size:13px}
+.mdc-preview .mdc-total{grid-column:1/-1;border:1px solid rgba(56,217,150,.28);background:rgba(56,217,150,.06);border-radius:10px}
+.mdc-preview .mdc-total b{color:#7ef0bb;font-size:19px}
+.mdc-preview small{grid-column:1/-1;color:#ffd88a;padding:2px 8px 4px}
+.payroll-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.payroll-controls input{min-height:40px}
+.payslip-summary{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px;margin-bottom:14px}
+.payslip-summary>div{padding:12px;border:1px solid var(--line);border-radius:11px;background:#081827}
+.payslip-summary span{display:block;color:var(--muted);font-size:11px;margin-bottom:4px}
+.payslip-summary b{font-size:15px}
+.payslip-lines{display:grid;gap:7px;margin:14px 0;padding:12px;border:1px solid var(--line);border-radius:11px;background:#081827}
+.payslip-lines>div{display:flex;justify-content:space-between;gap:12px;padding:5px 0;border-bottom:1px dashed rgba(255,255,255,.07)}
+.payslip-lines>div:last-child{border-bottom:0}
+.payslip-lines span{color:var(--muted)}
+@media(max-width:760px){
+  .mdc-preview{grid-template-columns:1fr}
+  .mdc-preview .mdc-total,.mdc-preview small{grid-column:1}
+  .payslip-summary{grid-template-columns:1fr 1fr}
+  .payroll-controls{width:100%}
+  .payroll-controls input,.payroll-controls button{flex:1}
+}
+@media(max-width:480px){.payslip-summary{grid-template-columns:1fr}}
