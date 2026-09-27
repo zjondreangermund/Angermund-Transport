@@ -184,28 +184,29 @@ function driverPassedInspection(tripId){return db.inspections.some(x=>x.tripId==
 function driverNextStep(t){
   if(!t.driverAcceptedAt)return{key:'accept',icon:'✓',label:'ACCEPT TRIP',sub:'I have received this assignment'};
   if(!driverPassedInspection(t.id))return{key:'inspection',icon:'🚛',label:'DO VEHICLE CHECK',sub:'Tyres · lights · brakes · fluids · documents · load'};
-  const r=get('routes',t.routeId),auto=routeAutoGpsReady(r),g=t.geo||{};
+  const legs=tripLegs(t),leg=activeJourneyLeg(t),r=get('routes',leg?.routeId||t.routeId),auto=routeAutoGpsReady(r),g=leg?.geo||t.geo||{};
+  if(leg&&String(leg.status)==='At offloading'&&!leg.pod)return{key:'pod',icon:'📷',label:'TAKE POD PHOTO',sub:'Photograph the signed proof for this load'};
   if(auto){
     if(!g.loadDepartedAt&&num(t.stage)<3){
-      if(g.loadArrivedAt)return{key:'geo',icon:'📍',label:'AT LOADING POINT',sub:'GPS will start the trip automatically when you leave'};
-      if(g.loadApproachAt)return{key:'geo',icon:'📍',label:'APPROACHING LOADING',sub:'Automatic GPS is watching the loading zone'};
-      return{key:'geo',icon:'📡',label:'GPS AUTO ACTIVE',sub:'Approach and arrival at loading will be detected automatically'};
+      if(g.loadArrivedAt)return{key:'geo',icon:'📍',label:'AT LOADING POINT',sub:'GPS will start this leg automatically when you leave'};
+      if(g.loadApproachAt)return{key:'geo',icon:'📍',label:'APPROACHING LOADING',sub:'Automatic GPS is watching this leg’s loading zone'};
+      return{key:'geo',icon:'📡',label:'GPS AUTO ACTIVE',sub:'Approach and arrival for this leg are automatic'};
     }
     if(!g.offloadArrivedAt){
-      if(g.offloadApproachAt)return{key:'geo',icon:'📍',label:'APPROACHING OFFLOAD',sub:'Arrival will be recorded automatically'};
+      if(g.offloadApproachAt)return{key:'geo',icon:'📍',label:'APPROACHING OFFLOAD',sub:'Arrival for this leg will be recorded automatically'};
       return{key:'geo',icon:'📡',label:'IN TRANSIT · GPS ACTIVE',sub:'Offloading approach and arrival are automatic'};
     }
     if(!g.offloadDepartedAt)return{key:'geo',icon:'📍',label:'AT OFFLOADING',sub:'Departure will be recorded automatically'};
-    if(routeUsesRoundTrip(r)&&!g.returnArrivedAt){
+    if(legs.length===1&&routeUsesRoundTrip(r)&&!g.returnArrivedAt){
       if(g.returnApproachAt)return{key:'geo',icon:'🏠',label:'APPROACHING RETURN POINT',sub:'Return arrival will be recorded automatically'};
       return{key:'geo',icon:'↩',label:'RETURN JOURNEY · GPS ACTIVE',sub:'The app is watching the return to loading point'};
     }
   }
-  if(num(t.stage)<3)return{key:'start',icon:'▶',label:'START TRIP',sub:'Begin driving this assigned route'};
-  if(num(t.stage)===3)return{key:'arrive',icon:'📍',label:'I HAVE ARRIVED',sub:'Confirm arrival at delivery'};
-  if(num(t.stage)>=4&&!t.pod)return{key:'pod',icon:'📷',label:'TAKE POD PHOTO',sub:'Photograph the signed proof of delivery'};
-  if(t.pod&&!t.driverComplete)return{key:'finish',icon:'✓',label:'FINISH TRIP',sub:'All done — send trip to the office'};
-  return{key:'complete',icon:'✓',label:'TRIP COMPLETE',sub:'Office has your trip information'};
+  if(num(t.stage)<3)return{key:'start',icon:'▶',label:legs.length>1?'START THIS LEG':'START TRIP',sub:leg?`Begin ${leg.label||'this load'} · ${route(leg.routeId)}`:'Begin driving this assigned route'};
+  if(num(t.stage)===3)return{key:'arrive',icon:'📍',label:'I HAVE ARRIVED',sub:'Confirm arrival for this load'};
+  if(!leg?.pod&&num(t.stage)>=3)return{key:'pod',icon:'📷',label:'TAKE POD PHOTO',sub:'Photograph the signed proof for this load'};
+  if(t.pod&&!t.driverComplete)return{key:'finish',icon:'✓',label:'FINISH JOURNEY',sub:'All journey legs are complete — send to office'};
+  return{key:'complete',icon:'✓',label:'JOURNEY COMPLETE',sub:'Office has your trip information'};
 }
 async function driverMainStep(t){const n=driverNextStep(t);if(n.key==='accept')return sendDriverAction(t.id,'accept',{},'Trip accepted');if(n.key==='inspection')return openDriverInspection(t);if(n.key==='start'){gpsCheckIn();return sendDriverAction(t.id,'start',{},'Trip started')}if(n.key==='arrive'){gpsCheckIn();return sendDriverAction(t.id,'arrive',{},'Arrival recorded')}if(n.key==='pod')return driverCapture('pod',file=>sendDriverPhotoAction(t.id,'pod',file,'pod',{},'POD received'));if(n.key==='finish')return sendDriverAction(t.id,'finish',{},'✅ Trip finished')}
 function openDriverInspection(t){$('modalTitle').textContent='Quick vehicle check';$('entryForm').innerHTML='<div class="driver-check"><div class="driver-check-icon">🚛</div><h2>Is the truck safe to drive?</h2><p>Check tyres, lights, brakes, fluids, documents and the load.</p><button type="button" class="driver-good" id="driverAllGood">✓ ALL GOOD</button><button type="button" class="driver-found" id="driverFoundProblem">⚠ I FOUND A PROBLEM</button><button type="button" class="ghost" id="cancelForm">Cancel</button><div id="driverDefectBox" class="hidden"><label>Tell the office what is wrong</label><textarea id="driverDefectText" rows="4" placeholder="Type it or use the microphone…"></textarea><div class="driver-inline"><button type="button" class="ghost" id="driverSpeak">🎤 SPEAK</button><button type="button" class="danger" id="driverSendDefect">SEND PROBLEM</button></div></div></div>';$('modal').classList.remove('hidden');$('cancelForm').onclick=()=>$('modal').classList.add('hidden');$('driverAllGood').onclick=async()=>{$('modal').classList.add('hidden');await sendDriverAction(t.id,'inspection',{defects:''},'Vehicle check passed')};$('driverFoundProblem').onclick=()=>{$('driverDefectBox').classList.remove('hidden');$('driverFoundProblem').classList.add('hidden')};$('driverSpeak').onclick=()=>driverSpeechTo($('driverDefectText'));$('driverSendDefect').onclick=async()=>{const defects=$('driverDefectText').value.trim();if(!defects)return notify('Tell the office what is wrong');$('modal').classList.add('hidden');await sendDriverAction(t.id,'inspection',{defects},'Problem sent to office');await sendDriverAction(t.id,'problem',{type:'Vehicle defect',description:defects},'Problem sent to office')}}
@@ -490,7 +491,7 @@ function driverPortal(){
   const did=preview?(driverPreviewId||currentDriver()):currentDriver();
   const d=get('drivers',did);
   const mine=db.trips.filter(t=>t.driverId===did&&!t.driverComplete&&!['Closed','Invoiced'].includes(t.status)).sort(driverTripSort);
-  const t=mine[0];
+  const t=mine[0],legs=t?tripLegs(t):[],leg=t?activeJourneyLeg(t):null;
   const next=t?driverNextStep(t):null;
   const pending=db.tasks.filter(x=>x.ownerRole==='Driver'&&x.status==='Open'&&(!t||x.linkedId===t.id)).length;
   const selector=preview?`<div class="driver-preview-bar">
@@ -511,6 +512,7 @@ function driverPortal(){
     <button type="button" id="driverHelpBtn">👤<span>Help</span></button>
     <button type="button" id="driverLogoutBottom">↪<span>Log out</span></button>
   </nav>`:'';
+  const podSaved=leg?.pod||(!leg&&t?.pod);
   return `<div class="driver-shell">
     ${selector}
     <section class="driver-welcome">
@@ -521,20 +523,20 @@ function driverPortal(){
       </div>
     </section>
     ${t?`<section class="driver-trip-card">
-      <div class="driver-trip-top"><div><small>CURRENT TRIP</small><h2>${esc(t.number)} · ${esc(truck(t.truckId))}</h2></div>${badge(t.status)}</div>
-      <div class="driver-route">${esc(route(t.routeId))}</div>
-      <div class="driver-trip-meta"><span>📦 ${esc(t.load||'Load')}</span><span>🏢 ${esc(client(t.clientId))}</span></div>
+      <div class="driver-trip-top"><div><small>${legs.length>1?`CURRENT LEG ${num(leg?.sequence)}/${legs.length}`:'CURRENT TRIP'}</small><h2>${esc(t.number)} · ${esc(truck(t.truckId))}</h2></div>${badge(leg?.status||t.status)}</div>
+      <div class="driver-route">${esc(route(leg?.routeId||t.routeId))}</div>
+      <div class="driver-trip-meta"><span>📦 ${esc(leg?.load||t.load||'Load')}</span><span>🏢 ${esc(client(leg?.clientId||t.clientId))}</span></div>
+      ${legs.length>1?`<div class="driver-leg-progress">${legs.map(x=>`<span class="${x.id===leg?.id?'current':x.pod?'done':''}">${x.sequence}</span>`).join('')}</div>`:''}
       <button class="driver-next" data-driver-main="${next.key}" data-trip="${t.id}" ${(preview||next.key==='complete'||next.key==='geo')?'disabled':''}>
         <span>${next.icon}</span><strong>${next.label}</strong><small>${preview?'Preview only · log in as driver to use this button':next.sub}</small>
       </button>
       ${quick}
-      <div class="driver-small-status"><span>📍 Location updates automatically</span><span>${t.pod?'✅ POD saved':'📷 POD still required'}</span></div>
+      <div class="driver-small-status"><span>📍 Location updates automatically</span><span>${podSaved?'✅ This leg POD saved':'📷 POD required for this leg'}</span></div>
     </section>`:`<section class="driver-no-trip"><div>✅</div><h2>No active trip</h2><p>${esc(d.name||'This driver')} has no active trip at the moment.</p>${preview?'<button class="primary nav-to" data-page="driverAccounts">Manage driver login</button>':'<a href="tel:+264811299942">📞 CALL OFFICE</a>'}</section>`}
-    ${pending?`<div class="driver-reminder">🔔 ${pending} action${pending===1?'':'s'} still required for this trip</div>`:''}
+    ${pending?`<div class="driver-reminder">🔔 ${pending} action${pending===1?'':'s'} still required for this journey</div>`:''}
     ${bottom}
   </div>`;
 }
-
 function uploadKindLabel(kind){
   const k=String(kind||'document').toLowerCase();
   if(k.includes('pod'))return 'POD';
