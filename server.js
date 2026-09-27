@@ -813,7 +813,7 @@ app.post('/api/admin/driver-uploads/:id/post',auth,roles('admin','manager','disp
       const already=[...(state.diesel||[]),...(state.expenses||[])].some(x=>(x.receiptUploadIds||[x.receiptUploadId]).filter(Boolean).includes(meta.id));
       if(already){const e=Error('This upload is already posted to a trip');e.status=409;throw e}
       const t=(state.trips||[]).find(x=>x.id===meta.tripId);if(!t){const e=Error('Trip linked to this upload was not found');e.status=404;throw e}
-      const did=meta.driverId||t.driverId,now=new Date().toISOString(),date=now.slice(0,10),mk=p=>p+'_'+crypto.randomUUID();
+      const did=meta.driverId||t.driverId,leg=activeTripLegServer(t),now=new Date().toISOString(),date=now.slice(0,10),mk=p=>p+'_'+crypto.randomUUID();
       if(action==='diesel'){
         const litres=num(data.litres),total=num(data.total),price=num(data.price)||(litres>0&&total>0?total/litres:0);
         if(litres<=0){const e=Error('Enter diesel litres');e.status=400;throw e}
