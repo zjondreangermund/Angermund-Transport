@@ -668,6 +668,61 @@ function clients(){
   return '<section class="grid-2"><div class="panel"><div class="toolbar"><h2>Clients</h2><button class="primary add-record" data-type="client">+ Client</button></div>'+table(['Client','Terms','Contact','Status','Trips','Revenue'],db.clients,x=>[x.name,num(x.terms)+' days',x.contact,x.status,db.trips.filter(t=>t.clientId===x.id).length,money(sum(db.trips.filter(t=>t.clientId===x.id),t=>t.income))])+'</div><div class="panel"><div class="toolbar"><div><h2>Standard routes</h2><p class="muted-copy">Set loading and offloading GPS zones once; trips on that route then update automatically.</p></div><button class="primary add-record" data-type="route">+ Route</button></div><div class="table-wrap"><table><thead><tr><th>Route</th><th>Distance</th><th>Standard rate</th><th>Type</th><th>Automatic GPS</th><th></th></tr></thead><tbody>'+routeRows+'</tbody></table></div></div></section>';
 }
 function invoices(){db.invoices.forEach(refreshInvoiceStatus);const outstanding=sum(db.invoices,invoiceBalance),received=sum(db.payments,x=>x.amount);return `<section class="kpis">${kpi('Invoiced',money(sum(db.invoices,x=>x.amount)),'Total issued')}${kpi('Outstanding',money(outstanding),`${db.invoices.filter(x=>invoiceBalance(x)>.005).length} invoice(s)`)}${kpi('Payments received',money(received),`${db.payments.length} payment(s)`,'positive')}${kpi('Uninvoiced deliveries',db.trips.filter(t=>t.stage>=4&&!t.invoiceId).length,'Revenue at risk','warning')}</section><div class="panel"><div class="toolbar"><h2>Invoices & debtors</h2><div><button class="ghost export" data-kind="invoice">Export Excel</button> <button class="primary add-record" data-type="invoice">+ Add</button></div></div><div class="table-wrap"><table><thead><tr><th>Invoice</th><th>Client / Trip</th><th>Amount</th><th>Received</th><th>Balance</th><th>Due</th><th>Status</th><th></th></tr></thead><tbody>${db.invoices.map(i=>`<tr><td><b>${esc(i.number)}</b><br><small>${esc(i.date)}</small></td><td>${esc(client(i.clientId))}<br><small>${esc(get('trips',i.tripId).number||'—')}</small></td><td>${money(i.amount)}</td><td>${money(invoicePaid(i.id))}</td><td><b>${money(invoiceBalance(i))}</b></td><td>${esc(i.due||'—')}</td><td>${badge(i.status)}</td><td><button class="link-button open-invoice" data-id="${i.id}">Open</button>${invoiceBalance(i)>.005?` · <button class="link-button pay-invoice" data-id="${i.id}">Record payment</button>`:''}</td></tr>`).join('')||'<tr><td colspan="8" class="empty">No invoices</td></tr>'}</tbody></table></div></div>`}
+function defaultMdcKm(t){
+  const r=get('routes',t?.routeId);
+  if(!t?.id)return 0;
+  return r.crossBorder?(num(t.namibiaKm)||num(r.namibiaKm)):(num(t.distance)||num(r.distance));
+}
+function roadCharges(){
+  const rows=(db.expenses||[]).filter(x=>x.mdc===true||/mass distance charge/i.test(String(x.category||'')));
+  const selected=mdcTripPrefill||db.trips[0]?.id||'',rate=num(db.settings.mdcRatePer100km)||73.30;
+  return '<section class="kpis">'
+    +kpi('Default MDC rate',money(rate)+' / 100 km','Editable in Settings')
+    +kpi('MDC records',rows.length,'Linked to trips')
+    +kpi('MDC spend',money(sum(rows,x=>x.amount)),'Included in trip cost')
+    +kpi('Current month',money(sum(rows.filter(x=>String(x.date||'').startsWith(today().slice(0,7))),x=>x.amount)),'Recorded this month')
+    +'</section><section class="grid-2"><div class="panel"><h2>MDC charge generator</h2>'
+    +'<div class="notice"><b>Namibian road distance only.</b> Local routes default to the trip distance. For cross-border trips, enter only the kilometres travelled on Namibian roads.</div>'
+    +'<div class="form-grid" id="mdcForm"><div class="field full"><label>Trip</label><select id="mdcTrip">'+db.trips.map(t=>'<option value="'+t.id+'" '+(t.id===selected?'selected':'')+'>'+esc(t.number)+' · '+esc(route(t.routeId))+' · '+esc(truck(t.truckId))+'</option>').join('')+'</select></div>'
+    +'<div class="field"><label>Namibian road distance (km)</label><input id="mdcKm" type="number" step="0.1" min="0"></div>'
+    +'<div class="field"><label>MDC rate per 100 km</label><input id="mdcRate" type="number" step="0.01" min="0" value="'+rate+'"></div>'
+    +'<div class="field full"><label>RFA / logbook reference <small>(optional)</small></label><input id="mdcReference" placeholder="Permit, statement or logbook reference"></div></div>'
+    +'<div id="mdcPreview" class="mdc-preview"></div><button class="primary" id="saveMdcCharge">✓ RECORD MDC TO TRIP</button></div>'
+    +'<div class="panel"><h2>How it posts</h2><p>The generator creates one linked <b>Mass distance charge (MDC)</b> expense for the selected trip. Re-running the same trip updates that MDC record instead of creating duplicates.</p>'
+    +'<div class="policy"><h3>Heavy articulated default</h3><p>Angermund default: <b>'+money(rate)+' / 100 km</b>. Change it in Settings whenever the RFA tariff changes.</p></div>'
+    +'<div class="policy"><h3>Trip P&amp;L</h3><p>MDC is included automatically under route expenses, total trip cost and contribution.</p></div></div></section>'
+    +'<section class="panel" style="margin-top:18px"><h2>Recorded MDC charges</h2>'
+    +table(['Date','Trip','Truck','Namibia km','Rate / 100 km','Charge','Reference'],rows,x=>[x.date,get('trips',x.tripId).number||'—',truck(x.truckId),num(x.mdcKm).toLocaleString(),money(x.mdcRatePer100km),money(x.amount),x.receiptNo||'—'])
+    +'</section>';
+}
+function renderMdcCalculation(){
+  const t=get('trips',$('mdcTrip')?.value),r=get('routes',t.routeId),km=num($('mdcKm')?.value),rate=num($('mdcRate')?.value),amount=km/100*rate;
+  if(!$('mdcPreview'))return;
+  $('mdcPreview').innerHTML='<div><span>Trip</span><b>'+esc(t.number||'—')+'</b></div>'
+    +'<div><span>Route</span><b>'+esc(route(t.routeId))+'</b></div>'
+    +'<div><span>Truck</span><b>'+esc(truck(t.truckId))+'</b></div>'
+    +'<div><span>Namibia km</span><b>'+km.toLocaleString()+' km</b></div>'
+    +'<div class="mdc-total"><span>MDC charge</span><b>'+money(amount)+'</b></div>'
+    +(r.crossBorder?'<small>Cross-border trip: only the Namibian-road portion is charged here.</small>':'');
+}
+function wireRoadCharges(){
+  const setTrip=()=>{
+    const t=get('trips',$('mdcTrip')?.value);
+    if($('mdcKm'))$('mdcKm').value=defaultMdcKm(t)||'';
+    renderMdcCalculation();
+  };
+  if($('mdcTrip')){$('mdcTrip').onchange=setTrip;setTrip()}
+  if($('mdcKm'))$('mdcKm').oninput=renderMdcCalculation;
+  if($('mdcRate'))$('mdcRate').oninput=renderMdcCalculation;
+  if($('saveMdcCharge'))$('saveMdcCharge').onclick=async()=>{
+    const tripId=$('mdcTrip').value,namibiaKm=num($('mdcKm').value),ratePer100km=num($('mdcRate').value),reference=$('mdcReference').value.trim();
+    if(!tripId||namibiaKm<=0)return notify('Enter the Namibian road distance');
+    try{
+      const r=await api('/api/mdc/record',{method:'POST',body:{tripId,namibiaKm,ratePer100km,reference,date:today()}});
+      mdcTripPrefill='';await refreshCentralState(false);notify('MDC '+money(r.record.amount)+' recorded to '+r.trip.number)
+    }catch(e){notify(e.message)}
+  };
+}
 function payroll(){const settlements=db.trips.filter(t=>t.stage>=3).map(t=>{const s=tripSettlement(t);return{trip:t.number,truck:truck(t.truckId),driver:driver(t.driverId),...s,receipts:linked('expenses','tripId',t.id).filter(x=>x.receiptNo).length,status:!s.fuel.ready?'Awaiting diesel':t.settlementStatus||'Pending'}});return `<section class="grid-2"><div class="panel"><h2>Driver diesel incentive rules</h2><div class="metric-line"><span>Below 2.3 km/L</span><b>N$0.30/km</b></div><div class="metric-line"><span>2.30–2.39 km/L</span><b>N$0.40/km</b></div><div class="metric-line"><span>2.40+ km/L</span><b>N$0.50/km</b></div><div class="metric-line"><span>South Africa route</span><b>N$0.60/km</b></div><div class="metric-line"><span>No distance or diesel captured</span><b>N$0.00</b></div></div><div class="panel"><h2>Settlement formula</h2><p><b>Incentive = trip distance × earned rate per km.</b> Then approved route expenses are added and unreconciled advances are deducted. Expenses without receipts remain under review.</p><p><small>km/L = distance ÷ litres · L/km = litres ÷ distance · L/100 km = L/km × 100</small></p></div></section><section class="panel" style="margin-top:18px"><h2>Trip-by-trip driver settlements</h2>${table(['Trip / Truck','Driver','Distance / diesel','km/L','L/km','L/100 km','Rate & calculation','Incentive','Approved expenses','Advances','Receipts','Amount due','Status'],settlements,x=>[`${x.trip} · ${x.truck}`,x.driver,`${x.fuel.distance.toLocaleString()} km / ${x.fuel.litres.toLocaleString()} L`,x.fuel.ready?x.fuel.kmPerL.toFixed(2):'—',x.fuel.ready?x.fuel.litresPerKm.toFixed(3):'—',x.fuel.ready?x.fuel.litresPer100Km.toFixed(1):'—',x.rate?`${money(x.rate)}/km · ${x.fuel.distance.toLocaleString()} × ${x.rate.toFixed(2)}`:'Not calculated',money(x.incentive),money(x.reimbursable),money(x.advances),x.receipts,money(x.due),x.status])}</section><section class="grid-2" style="margin-top:18px">${dataTable('Driver advances','advance',['Date','Driver','Trip','Type','Amount','Status'],db.advances,x=>[x.date,driver(x.driverId),get('trips',x.tripId).number||'—',x.type,money(x.amount),x.status])}${dataTable('Route expenses & receipts','expense',['Date','Trip','Category','Supplier','Amount','Receipt','Status'],db.expenses,x=>[x.date,get('trips',x.tripId).number||'—',x.category,x.supplier,money(x.amount),x.receiptNo||'Missing',x.status])}</section>`}
 function tasks(){return `<section class="grid-2"><div class="panel"><h2>Work queue</h2>${db.tasks.map(t=>`<div class="approval"><div><b>${esc(t.title)}</b><small style="display:block;color:var(--muted)">${esc(t.ownerRole)} · due ${esc(t.due)} · ${esc(t.priority)}</small></div><div>${badge(t.status)} ${t.status==='Open'?`<button class="small complete-task" data-id="${t.id}">Complete</button>`:''}</div></div>`).join('')}</div><div class="panel"><h2>Approvals</h2>${db.approvals.map(a=>`<div class="approval"><div><b>${esc(a.description)}</b><small style="display:block;color:var(--muted)">${esc(a.type)} · ${esc(a.requester)} · ${money(a.amount)}</small></div><div>${badge(a.status)} ${a.status==='Pending'?`<button class="small approval-action" data-id="${a.id}" data-status="Approved">Approve</button> <button class="danger small approval-action" data-id="${a.id}" data-status="Rejected">Reject</button>`:''}</div></div>`).join('')}</div></section>`}
 function rates(){return `<section class="grid-2"><div class="panel"><h2>Diesel-linked quotation</h2><div class="form-grid" id="rateForm"><div class="field"><label>Route</label><select id="rcRoute">${db.routes.map(r=>`<option value="${r.id}">${esc(r.name)}</option>`).join('')}</select></div>${[['rcDistance','Total distance (km)',db.routes[0]?.distance||0,1],['rcKml','Expected km/L',2,.1],['rcDiesel','Diesel price/L',db.settings.dieselPrice,.01],['rcDriver','Driver / allowances',600,1],['rcTolls','Tolls / border / permits',0,1],['rcWear','Tyres & maintenance provision',3500,1],['rcOther','Other / overhead',1500,1],['rcMargin','Profit margin (%)',db.settings.defaultMargin,1],['rcWaiting','Waiting days',0,1]].map(x=>`<div class="field"><label>${x[1]}</label><input id="${x[0]}" type="number" value="${x[2]}" step="${x[3]}"></div>`).join('')}</div></div><div class="panel"><h2>Recommended quotation</h2><div id="rateResult"></div><button class="primary" id="saveQuote">Save quotation task</button></div></section><section class="panel" style="margin-top:18px"><h2>Standing / detention</h2><p>${db.settings.freeStandingHours} free offloading hours, then <b>${money(db.settings.standingFee)}</b> per commenced 24 hours excluding VAT. Weekend/public holiday guide: <b>${money(db.settings.weekendStandingFee)}</b>.</p></section>`}
