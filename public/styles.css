@@ -391,3 +391,35 @@ body.driver-mode .toast{left:12px;right:12px;bottom:86px;text-align:center}
 @media(max-width:900px){.journey-quote-layout{grid-template-columns:1fr}.quote-cost-panel{position:static}.journey-leg-grid{grid-template-columns:1fr 1fr}.journey-summary-bar{grid-template-columns:1fr 1fr}}
 @media(max-width:650px){.journey-leg-toolbar,.border-pack-summary{align-items:stretch;flex-direction:column}.border-pack-summary>div:last-child{text-align:left}.journey-summary-bar{grid-template-columns:1fr}.journey-leg-grid{grid-template-columns:1fr 1fr}.border-pack-item{grid-template-columns:1fr}.border-pack-buttons{justify-content:flex-start}.border-pack-state{order:0}.journey-leg-foot{align-items:flex-start;flex-direction:column}.journey-leg-toolbar>div,.border-pack-actions{width:100%}.journey-leg-toolbar button,.border-pack-actions button{flex:1}}
 @media(max-width:430px){.journey-leg-grid{grid-template-columns:1fr}}
+
+/* Lock app shell; only wide data tables scroll horizontally */
+html,body{width:100%;max-width:100%;overflow-x:hidden}
+main{min-width:0;max-width:calc(100vw - var(--sidebar));overflow-x:hidden}
+main>*,
+.panel,.kpis,.grid-2,.cards-list,.workflow,.settings-grid,
+.journey-quote-layout,.journey-leg-list,.driver-shell{min-width:0;max-width:100%}
+.panel{overflow:hidden}
+.table-wrap{
+  display:block;
+  width:100%;
+  max-width:100%;
+  min-width:0;
+  overflow-x:auto!important;
+  overflow-y:hidden;
+  -webkit-overflow-scrolling:touch;
+  overscroll-behavior-x:contain;
+  touch-action:pan-x pan-y;
+}
+.table-wrap table{
+  width:max-content;
+  min-width:100%;
+  max-width:none;
+}
+header{max-width:calc(100vw - var(--sidebar));overflow:hidden}
+.header-actions{min-width:0}
+@media(max-width:760px){
+  main{width:100%;max-width:100vw!important;overflow-x:hidden}
+  header{width:100%;max-width:100vw!important}
+  .panel{width:100%;max-width:100%;min-width:0}
+  .table-wrap{margin-right:0}
+}
