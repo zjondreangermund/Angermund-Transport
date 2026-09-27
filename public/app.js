@@ -50,6 +50,17 @@ function journeyLoadLabel(t){
   if(legs.length===1)return legs[0].load||'—';
   return legs.map(x=>x.load||'Load').join(' → ')
 }
+function reverseRouteId(routeId){
+  const r=get('routes',routeId);if(!r.id)return db.routes[0]?.id||'';
+  if(r.roundTrip||String(r.name||'').includes('↔'))return r.id;
+  const parts=String(r.name||'').split(/→|->/).map(x=>x.trim()).filter(Boolean);
+  if(parts.length>=2){
+    const a=parts[0].toLowerCase(),b=parts[parts.length-1].toLowerCase();
+    const rev=db.routes.find(x=>{const n=String(x.name||'').toLowerCase();return n.includes(b)&&n.includes(a)&&((n.indexOf(b)<n.indexOf(a))||n.includes('↔'))});
+    if(rev)return rev.id
+  }
+  return r.id
+}
 function legPricingLabel(leg){
   const m=String(leg.pricingMethod||'Manual negotiated'),r=num(leg.unitRate);
   if(m==='Per km')return money(r)+'/km';
@@ -891,16 +902,23 @@ function quoteJourneyFinancials(){
   const other=num($('jqDriver')?.value)+num($('jqTolls')?.value)+num($('jqWear')?.value)+num($('jqOther')?.value)+standing,totalCost=diesel+mdc+other,margin=Math.min(90,num($('jqMargin')?.value))/100,recommended=totalCost/(1-margin),profit=quotedIncome-totalCost;
   return{distance,namibiaKm,quotedIncome,diesel,mdc,standing,totalCost,recommended,profit,margin}
 }
+function updateJourneyQuoteResult(){
+  readQuoteLegRows();
+  document.querySelectorAll('.quote-leg').forEach(el=>{
+    const q=journeyQuoteLegs.find(x=>x.id===el.dataset.qleg),result=el.querySelector('.quote-leg-result');if(!q||!result)return;
+    const r=get('routes',q.routeId);result.innerHTML='<span>'+esc(route(q.routeId))+' · '+num(r.distance).toLocaleString()+' km</span><b>'+money(quoteLegIncome(q))+'</b>'
+  });
+  const x=quoteJourneyFinancials();
+  if($('journeyQuoteResult'))$('journeyQuoteResult').innerHTML=`<div class="metric-line"><span>Total journey distance</span><b>${x.distance.toLocaleString()} km</b></div><div class="metric-line"><span>Namibian road km</span><b>${x.namibiaKm.toLocaleString()} km</b></div><div class="metric-line"><span>Estimated diesel</span><b>${money(x.diesel)}</b></div><div class="metric-line"><span>MDC</span><b>${money(x.mdc)}</b></div><div class="metric-line"><span>Standing</span><b>${money(x.standing)}</b></div><div class="metric-line"><span>Journey operating cost</span><b>${money(x.totalCost)}</b></div><div class="metric-line"><span>Recommended minimum income</span><b>${money(x.recommended)}</b></div><div class="metric-line"><span>Quoted leg income</span><b>${money(x.quotedIncome)}</b></div><div class="metric-line"><span>Expected journey contribution</span><b class="${x.profit>=0?'positive':'negative'}">${money(x.profit)}</b></div>`
+}
 function renderJourneyQuote(){
   if(!$('journeyQuoteLegs'))return;
-  readQuoteLegRows();
   $('journeyQuoteLegs').innerHTML=journeyQuoteLegs.map(quoteLegRow).join('');
-  wireQuoteLegRows();
-  const x=quoteJourneyFinancials();
-  $('journeyQuoteResult').innerHTML=`<div class="metric-line"><span>Total journey distance</span><b>${x.distance.toLocaleString()} km</b></div><div class="metric-line"><span>Namibian road km</span><b>${x.namibiaKm.toLocaleString()} km</b></div><div class="metric-line"><span>Estimated diesel</span><b>${money(x.diesel)}</b></div><div class="metric-line"><span>MDC</span><b>${money(x.mdc)}</b></div><div class="metric-line"><span>Standing</span><b>${money(x.standing)}</b></div><div class="metric-line"><span>Journey operating cost</span><b>${money(x.totalCost)}</b></div><div class="metric-line"><span>Recommended minimum income</span><b>${money(x.recommended)}</b></div><div class="metric-line"><span>Quoted leg income</span><b>${money(x.quotedIncome)}</b></div><div class="metric-line"><span>Expected journey contribution</span><b class="${x.profit>=0?'positive':'negative'}">${money(x.profit)}</b></div>`
+  wireQuoteLegRows();updateJourneyQuoteResult()
 }
 function wireQuoteLegRows(){
-  document.querySelectorAll('.quote-leg input,.quote-leg select').forEach(x=>x.oninput=()=>{readQuoteLegRows();renderJourneyQuote()});
+  document.querySelectorAll('.quote-leg input,.quote-leg select').forEach(x=>x.oninput=updateJourneyQuoteResult);
+  document.querySelectorAll('.qleg-route').forEach(x=>x.onchange=updateJourneyQuoteResult);
   document.querySelectorAll('.qleg-remove').forEach(b=>b.onclick=()=>{readQuoteLegRows();journeyQuoteLegs=journeyQuoteLegs.filter(x=>x.id!==b.dataset.id);renderJourneyQuote()})
 }
 function rates(){
@@ -924,7 +942,7 @@ function wireRates(){
   wireQuoteLegRows();
   ['jqKml','jqDiesel','jqMdc','jqDriver','jqTolls','jqWear','jqOther','jqWaiting','jqMargin'].forEach(id=>{if($(id))$(id).oninput=renderJourneyQuote});
   if($('addQuoteLeg'))$('addQuoteLeg').onclick=()=>{readQuoteLegRows();const r=db.routes[0]||{};journeyQuoteLegs.push({id:uid('ql'),label:'Additional load',routeId:r.id||'',clientId:'',load:'',tons:0,pallets:0,pricingMethod:'Manual negotiated',unitRate:0,manualAmount:0});renderJourneyQuote()};
-  if($('addQuoteReturn'))$('addQuoteReturn').onclick=()=>{readQuoteLegRows();const last=journeyQuoteLegs[journeyQuoteLegs.length-1],r=db.routes.find(x=>x.id!==last?.routeId)||get('routes',last?.routeId)||db.routes[0]||{};journeyQuoteLegs.push({id:uid('ql'),label:'Return / Backload',routeId:r.id||'',clientId:'',load:'',tons:0,pallets:0,pricingMethod:'Manual negotiated',unitRate:0,manualAmount:0});renderJourneyQuote()};
+  if($('addQuoteReturn'))$('addQuoteReturn').onclick=()=>{readQuoteLegRows();const last=journeyQuoteLegs[journeyQuoteLegs.length-1],r=get('routes',reverseRouteId(last?.routeId))||db.routes[0]||{};journeyQuoteLegs.push({id:uid('ql'),label:'Return / Backload',routeId:r.id||'',clientId:'',load:'',tons:0,pallets:0,pricingMethod:'Manual negotiated',unitRate:0,manualAmount:0});renderJourneyQuote()};
   if($('saveJourneyQuote'))$('saveJourneyQuote').onclick=()=>{readQuoteLegRows();const x=quoteJourneyFinancials();db.quotes??=[];const q={id:uid('quote'),number:'Q-'+(1000+db.quotes.length+1),date:today(),legs:structuredClone(journeyQuoteLegs),distance:x.distance,namibiaKm:x.namibiaKm,quotedIncome:x.quotedIncome,estimatedCost:x.totalCost,recommendedIncome:x.recommended,expectedProfit:x.profit,status:'Draft'};db.quotes.unshift(q);commit('Journey quotation '+q.number+' saved','quote',q.id);notify(q.number+' saved')};
   renderJourneyQuote()
 }
@@ -1161,7 +1179,7 @@ function journeyLegAmountPreview(){
   if($('jlPreview'))$('jlPreview').innerHTML='<span>'+esc(label)+'</span><b>'+money(amount)+'</b>';
 }
 function openJourneyLegForm(tripId,legId='',returnLoad=false){
-  const t=get('trips',tripId),existing=legId?tripLegs(t).find(x=>x.id===legId):null,last=tripLegs(t).slice(-1)[0],defaultRoute=existing?.routeId||(returnLoad?(db.routes.find(r=>r.id!==last?.routeId)?.id||last?.routeId):last?.routeId)||db.routes[0]?.id||'',r=get('routes',defaultRoute);
+  const t=get('trips',tripId),existing=legId?tripLegs(t).find(x=>x.id===legId):null,last=tripLegs(t).slice(-1)[0],defaultRoute=existing?.routeId||(returnLoad?reverseRouteId(last?.routeId):last?.routeId)||db.routes[0]?.id||'',r=get('routes',defaultRoute);
   const leg=existing||{label:returnLoad?'Return / Backload':'Additional load',routeId:defaultRoute,clientId:'',load:'',tons:0,pallets:0,distance:num(r.distance),namibiaKm:num(r.namibiaKm),pricingMethod:'Manual negotiated',unitRate:0,agreedAmount:0,status:'Planned'};
   $('modalTitle').textContent=(existing?'Edit':'Add')+' journey leg · '+t.number;
   $('entryForm').innerHTML=`<div class="journey-leg-form">
