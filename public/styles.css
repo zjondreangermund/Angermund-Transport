@@ -213,3 +213,27 @@ body.driver-mode .toast{left:12px;right:12px;bottom:86px;text-align:center}
 .credential-box b{overflow-wrap:anywhere}
 .credential-box>*:nth-last-child(-n+2){border-bottom:0}
 @media(max-width:900px){.driver-account-row{grid-template-columns:1fr}.driver-account-actions{justify-content:flex-start}.driver-preview-bar{align-items:flex-start;flex-direction:column}.driver-preview-controls{width:100%}.driver-preview-controls select{width:100%}}
+
+/* Smart driver slip classification */
+.driver-scan-slip{grid-column:1/-1;min-height:108px!important;background:linear-gradient(135deg,#102c47,#123f63)!important;border-color:#31648c!important}
+.driver-scan-slip span{font-size:30px!important}
+.driver-scan-loading{text-align:center;display:grid;gap:10px;padding:30px 8px}
+.driver-scan-camera{font-size:52px}
+.driver-scan-loading h2{margin:0;font-size:23px}
+.driver-scan-loading p{margin:0;color:var(--muted)}
+.driver-smart-slip{display:grid;gap:14px}
+.driver-detection{display:flex;gap:12px;align-items:flex-start;padding:13px 14px;border-radius:13px;border:1px solid var(--line)}
+.driver-detection>span{font-size:24px}
+.driver-detection strong,.driver-detection small{display:block}
+.driver-detection strong{font-size:16px}
+.driver-detection small{color:var(--muted);margin-top:3px;line-height:1.4}
+.driver-detection.high{background:rgba(56,217,150,.09);border-color:rgba(56,217,150,.34)}
+.driver-detection.medium{background:rgba(255,189,74,.09);border-color:rgba(255,189,74,.34)}
+.driver-detection.low{background:rgba(255,112,112,.08);border-color:rgba(255,112,112,.3)}
+.driver-detection.changed{background:rgba(46,153,255,.09);border-color:rgba(46,153,255,.34)}
+.driver-smart-slip>label,.smart-slip-grid label,.smart-diesel-fields label{display:grid;gap:6px;color:#b5c8da;font-weight:700}
+.driver-smart-slip select,.driver-smart-slip input{font-size:17px;min-height:50px}
+.smart-slip-grid,.smart-diesel-fields{display:grid;grid-template-columns:1fr;gap:11px}
+.smart-diesel-fields{padding:12px;border:1px solid rgba(56,217,150,.24);background:rgba(56,217,150,.05);border-radius:12px}
+.driver-slip-note{font-size:12px;color:var(--muted);padding:9px 11px;background:#081827;border-radius:10px}
+@media(min-width:680px){.smart-slip-grid{grid-template-columns:1fr 1fr}.smart-slip-grid label:last-child{grid-column:1/-1}.smart-diesel-fields{grid-template-columns:repeat(3,1fr)}}
