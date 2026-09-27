@@ -125,14 +125,26 @@ async function refreshCentralState(showMessage=false){
 }
 async function refreshDriverState(){await refreshCentralState(false)}
 async function driverApiAction(job){return api('/api/driver/trips/'+encodeURIComponent(job.tripId)+'/action',{method:'POST',body:{action:job.action,data:job.data||{},clientActionId:job.clientActionId}})}
-async function driverUpload(tripId,kind,file){const fd=new FormData();fd.append('kind',kind);fd.append('document',file,file.name||kind+'.jpg');return api('/api/driver/trips/'+encodeURIComponent(tripId)+'/upload',{method:'POST',body:fd})}
+async function prepareArchiveImage(file,maxDimension=1800,quality=.76){
+  if(!file||!String(file.type||'').startsWith('image/'))return file;
+  try{
+    const bitmap=await createImageBitmap(file),scale=Math.min(1,maxDimension/Math.max(bitmap.width,bitmap.height)),w=Math.max(1,Math.round(bitmap.width*scale)),h=Math.max(1,Math.round(bitmap.height*scale)),canvas=document.createElement('canvas');
+    canvas.width=w;canvas.height=h;
+    const ctx=canvas.getContext('2d',{alpha:false});ctx.fillStyle='#fff';ctx.fillRect(0,0,w,h);ctx.drawImage(bitmap,0,0,w,h);bitmap.close?.();
+    const blob=await new Promise((resolve,reject)=>canvas.toBlob(b=>b?resolve(b):reject(new Error('Could not compress image')),'image/jpeg',quality));
+    const base=String(file.name||'capture').replace(/\.[^.]+$/,'');
+    return new File([blob],base+'.jpg',{type:'image/jpeg',lastModified:Date.now()})
+  }catch{return file}
+}
+async function driverUpload(tripId,kind,file){const archived=await prepareArchiveImage(file);const fd=new FormData();fd.append('kind',kind);fd.append('document',archived,archived.name||kind+'.jpg');return api('/api/driver/trips/'+encodeURIComponent(tripId)+'/upload',{method:'POST',body:fd})}
 async function queueDriverJob(job){await driverQueuePut(job);notify('✅ Saved on this phone — will send when signal returns')}
 async function sendDriverAction(tripId,action,data={},success='Saved'){const job={id:driverJobId('job'),type:'action',tripId,action,data,clientActionId:driverJobId(action),createdAt:new Date().toISOString()};if(!navigator.onLine){await queueDriverJob(job);return{queued:true}}try{const r=await driverApiAction(job);await refreshDriverState();notify(success);return r}catch(e){if(/fetch|network|offline|load failed/i.test(String(e.message||''))){await queueDriverJob(job);return{queued:true}}notify(e.message);throw e}}
 async function driverReceiptAction(tripId,files,action,data,clientActionId){
-  const clean=(files||[]).filter(Boolean).slice(0,2),fd=new FormData();
+  const clean=(files||[]).filter(Boolean).slice(0,2);
   if(!clean.length)throw new Error('Receipt photo required');
-  fd.append('action',action);fd.append('data',JSON.stringify(data||{}));fd.append('clientActionId',clientActionId||driverJobId(action));
-  clean.forEach((file,i)=>fd.append('documents',file,file.name||((i?'supporting-':'')+action+'.jpg')));
+  const archived=await Promise.all(clean.map(file=>prepareArchiveImage(file)));
+  const fd=new FormData();fd.append('action',action);fd.append('data',JSON.stringify(data||{}));fd.append('clientActionId',clientActionId||driverJobId(action));
+  archived.forEach((file,i)=>fd.append('documents',file,file.name||((i?'supporting-':'')+action+'.jpg')));
   return api('/api/driver/trips/'+encodeURIComponent(tripId)+'/receipt',{method:'POST',body:fd});
 }
 async function sendDriverPhotoAction(tripId,kind,file,action,data={},success='Saved'){
@@ -794,7 +806,7 @@ function openPackDocumentUpload(tripId,kind,legId,title){
   $('modalTitle').textContent='Add to border pack · '+title;
   $('entryForm').innerHTML=`<div class="form-grid"><div class="field full"><label>Document / reference</label><input id="packReference" placeholder="Reference number or 'Paper copy confirmed'"></div><div class="field full"><label>Upload file <small>(PDF or photo, optional if reference is entered)</small></label><input id="packFile" type="file" accept="image/*,.pdf,application/pdf"></div><div class="form-actions full"><button type="button" class="ghost" id="cancelForm">Cancel</button><button class="primary">Save to trip pack</button></div></div>`;
   $('modal').classList.remove('hidden');$('cancelForm').onclick=()=>$('modal').classList.add('hidden');
-  $('entryForm').onsubmit=async e=>{e.preventDefault();const fd=new FormData(),file=$('packFile').files?.[0],reference=$('packReference').value.trim();if(!file&&!reference)return notify('Upload a file or enter a reference');fd.append('kind',kind);fd.append('reference',reference);if(legId)fd.append('legId',legId);if(file)fd.append('document',file,file.name);try{await api('/api/trips/'+encodeURIComponent(tripId)+'/documents',{method:'POST',body:fd});$('modal').classList.add('hidden');crossBorderDocsLoadedFor='';await loadCrossBorderDocs(tripId);notify(title+' added to '+get('trips',tripId).number)}catch(err){notify(err.message)}}
+  $('entryForm').onsubmit=async e=>{e.preventDefault();const fd=new FormData(),file=$('packFile').files?.[0],reference=$('packReference').value.trim();if(!file&&!reference)return notify('Upload a file or enter a reference');fd.append('kind',kind);fd.append('reference',reference);if(legId)fd.append('legId',legId);if(file){const archived=await prepareArchiveImage(file,2000,.78);fd.append('document',archived,archived.name)}try{await api('/api/trips/'+encodeURIComponent(tripId)+'/documents',{method:'POST',body:fd});$('modal').classList.add('hidden');crossBorderDocsLoadedFor='';await loadCrossBorderDocs(tripId);notify(title+' added to '+get('trips',tripId).number)}catch(err){notify(err.message)}}
 }
 function viewPackDocument(id){window.open('/api/trip-documents/'+encodeURIComponent(id)+'?token='+encodeURIComponent(authToken),'_blank')}
 async function deletePackDocument(id){if(!confirm('Remove this item from the trip pack?'))return;try{await api('/api/trip-documents/'+encodeURIComponent(id),{method:'DELETE'});crossBorderDocsLoadedFor='';await loadCrossBorderDocs(crossBorderPackTripId);notify('Removed from trip pack')}catch(e){notify(e.message)}}
