@@ -486,6 +486,70 @@ async function readOpsState(){if(pool){const row=(await q('SELECT payload FROM a
 function driverTrip(state,req){const did=req.user.driverId;if(!did){const e=Error('Driver account is not linked to a driver profile');e.status=400;throw e}const trip=(state.trips||[]).find(x=>x.id===req.params.tripId);if(!trip){const e=Error('Trip not found');e.status=404;throw e}if(trip.driverId!==did){const e=Error('This trip is not assigned to you');e.status=403;throw e}return{trip,did}}
 async function mutateOpsState(mutator){if(pool){const c=await pool.connect();try{await c.query('BEGIN');const row=(await c.query('SELECT payload,revision FROM app_state WHERE id=1 FOR UPDATE')).rows[0]||{payload:{},revision:0};const state=row.payload||{};const result=await mutator(state);const updated=(await c.query('UPDATE app_state SET payload=$1,revision=revision+1,updated_at=now() WHERE id=1 RETURNING revision,updated_at',[state])).rows[0];await c.query('COMMIT');emit('state',{revision:updated.revision,updatedAt:updated.updated_at});return{result,revision:updated.revision}}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}const state=memory.state||{};const result=await mutator(state);memory.state=state;const revision=Date.now();emit('state',{revision});return{result,revision}}
 
+
+app.post('/api/mdc/record',auth,roles('admin','manager','dispatcher','finance'),async(req,res)=>{
+  try{
+    const body=req.body&&typeof req.body==='object'?req.body:{},tripId=String(body.tripId||''),namibiaKm=num(body.namibiaKm),reference=String(body.reference||'');
+    if(!tripId||namibiaKm<=0)return res.status(400).json({error:'Trip and Namibian road distance are required'});
+    const changed=await mutateOpsState(async state=>{
+      state.expenses??=[];state.settings??={};
+      const t=(state.trips||[]).find(x=>x.id===tripId);if(!t){const e=Error('Trip not found');e.status=404;throw e}
+      const rate=num(body.ratePer100km)||num(state.settings.mdcRatePer100km)||73.30,amount=Number((namibiaKm/100*rate).toFixed(2)),now=new Date().toISOString(),date=String(body.date||now.slice(0,10));
+      let rec=state.expenses.find(x=>x.tripId===t.id&&x.mdc===true);
+      const values={date,tripId:t.id,truckId:t.truckId,driverId:t.driverId,category:'Mass distance charge (MDC)',supplier:'Road Fund Administration',amount,receiptNo:reference,notes:namibiaKm.toFixed(1)+' Namibian km × N$'+rate.toFixed(2)+' / 100 km',status:'Approved',reimbursable:false,mdc:true,mdcKm:namibiaKm,mdcRatePer100km:rate,systemGenerated:true,updatedAt:now};
+      if(rec)Object.assign(rec,values);else{rec={id:'expense_'+crypto.randomUUID(),...values,createdAt:now};state.expenses.unshift(rec)}
+      state.settings.mdcRatePer100km=rate;recalcTripCosts(state,t);
+      state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:now,actor:req.user.name||req.user.email||req.user.role,action:'MDC '+(rec.createdAt?'recorded':'updated')+' for '+t.number+' · N$'+amount.toFixed(2),linkedType:'trip',linkedId:t.id});state.audit=state.audit.slice(0,100);
+      return{record:rec,trip:{id:t.id,number:t.number,actualTripCost:t.actualTripCost,actualProfit:t.actualProfit}}
+    });
+    res.status(201).json(changed.result)
+  }catch(e){res.status(e.status||500).json({error:e.message})}
+});
+app.post('/api/payroll/generate',auth,roles('admin','manager','finance'),async(req,res)=>{
+  try{
+    const period=String(req.body?.period||monthPeriod(new Date()));
+    periodBounds(period);
+    const changed=await mutateOpsState(async state=>{
+      const rows=generatePayrollPeriod(state,period,false),now=new Date().toISOString();
+      state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:now,actor:req.user.name||req.user.email||req.user.role,action:'Payroll drafts generated/refreshed for '+period,linkedType:'payroll',linkedId:period});state.audit=state.audit.slice(0,100);
+      return rows
+    });
+    res.json({period,rows:changed.result})
+  }catch(e){res.status(e.status||500).json({error:e.message})}
+});
+app.patch('/api/payroll/profiles/:driverId',auth,roles('admin','manager','finance'),async(req,res)=>{
+  try{
+    const did=String(req.params.driverId),body=req.body&&typeof req.body==='object'?req.body:{};
+    const changed=await mutateOpsState(async state=>{
+      const d=(state.drivers||[]).find(x=>x.id===did);if(!d){const e=Error('Driver not found');e.status=404;throw e}
+      const p=payrollProfile(state,did);
+      for(const key of ['baseSalary','payeDefault','sscDefault','overtimeRate','standardDays','otherDeductionDefault'])if(body[key]!==undefined)p[key]=num(body[key]);
+      if(body.taxNumber!==undefined)p.taxNumber=String(body.taxNumber||'');
+      if(body.autoGenerate!==undefined)p.autoGenerate=Boolean(body.autoGenerate);
+      p.updatedAt=new Date().toISOString();p.updatedBy=req.user.sub;
+      return p
+    });
+    res.json(changed.result)
+  }catch(e){res.status(e.status||500).json({error:e.message})}
+});
+app.patch('/api/payroll/:id',auth,roles('admin','manager','finance'),async(req,res)=>{
+  try{
+    const id=String(req.params.id),body=req.body&&typeof req.body==='object'?req.body:{};
+    const changed=await mutateOpsState(async state=>{
+      state.payroll??=[];const row=state.payroll.find(x=>x.id===id);if(!row){const e=Error('Payslip not found');e.status=404;throw e}
+      const driver=(state.drivers||[]).find(x=>x.id===row.employeeId);if(!driver){const e=Error('Driver not found');e.status=404;throw e}
+      for(const key of ['days','overtimeHours','overtimeRate','base','paye','ssc','deductions'])if(body[key]!==undefined)row[key]=num(body[key]);
+      const wantedStatus=body.status!==undefined?String(body.status):row.status;
+      Object.assign(row,calculatePayrollRecord(state,driver,row.period,row));
+      if(['Draft','Approved','Paid'].includes(wantedStatus))row.status=wantedStatus;
+      if(row.status==='Approved'&&!row.approvedAt)row.approvedAt=new Date().toISOString();
+      if(row.status==='Paid'&&!row.paidAt)row.paidAt=new Date().toISOString();
+      row.updatedAt=new Date().toISOString();row.updatedBy=req.user.sub;
+      return row
+    });
+    res.json(changed.result)
+  }catch(e){res.status(e.status||500).json({error:e.message})}
+});
 app.post('/api/admin/trips',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
   try{
     const body=req.body&&typeof req.body==='object'?req.body:{};
@@ -709,5 +773,17 @@ app.post('/api/export/:kind',auth,async(req,res)=>{const title=String(req.body.t
 app.post('/api/documents/scan',auth,upload.single('document'),async(req,res)=>{if(!req.file)return res.status(400).json({error:'Document image required'});const id=crypto.randomUUID(),row={id,user_id:req.user.sub,filename:req.file.originalname,status:'processing'};if(pool)await q('INSERT INTO scan_jobs(id,user_id,filename,status) VALUES($1,$2,$3,$4)',[id,row.user_id,row.filename,row.status]);else memory.scanJobs.push({...row,rawText:null,extracted:null,confidence:null,error:null,createdAt:new Date().toISOString(),completedAt:null});res.status(202).json({id,status:'processing'});(async()=>{try{const result=await recognizeReceiptBest(req.file.buffer),state=await readOpsState().catch(()=>({})),extractions=result.results.map(r=>extractReceiptFields(r.text,state)),extracted=mergeReceiptExtractions(extractions),raw=result.results.map(r=>'['+r.label+']\n'+r.text).join('\n\n--- OCR PASS ---\n\n'),confidence=result.best.confidence;if(pool)await q('UPDATE scan_jobs SET status=$2,raw_text=$3,extracted=$4,confidence=$5,completed_at=now() WHERE id=$1',[id,'review',raw,extracted,confidence]);else{const m=memory.scanJobs.find(x=>x.id===id);if(m)Object.assign(m,{status:'review',rawText:raw,extracted,confidence,completedAt:new Date().toISOString()})}emit('scan',{id,status:'review',extracted,confidence,ocrMode:'merged'})}catch(e){if(pool)await q('UPDATE scan_jobs SET status=$2,error=$3,completed_at=now() WHERE id=$1',[id,'failed',e.message]);else{const m=memory.scanJobs.find(x=>x.id===id);if(m)Object.assign(m,{status:'failed',error:e.message,completedAt:new Date().toISOString()})}emit('scan',{id,status:'failed',error:e.message})}})()});
 app.get('/api/documents/scans/:id',auth,async(req,res)=>{const row=pool?(await q('SELECT id,filename,status,raw_text AS "rawText",extracted,confidence,error,created_at AS "createdAt",completed_at AS "completedAt" FROM scan_jobs WHERE id=$1',[req.params.id]))[0]:memory.scanJobs.find(x=>x.id===req.params.id);if(!row)return res.status(404).json({error:'Scan not found'});res.json(row)});
 app.post('/api/notifications/test',auth,roles('admin','manager'),async(req,res)=>res.status(201).json(await createNotification({type:'test',severity:'info',title:'Angermund Transport test alert',message:'Notification providers are connected and working.'})));
+
+async function ensureMonthEndPayroll(){
+  try{
+    const na=new Date(Date.now()+2*60*60*1000),y=na.getUTCFullYear(),m=na.getUTCMonth(),day=na.getUTCDate(),last=new Date(Date.UTC(y,m+1,0)).getUTCDate();
+    let period=null;if(day===last)period=y+'-'+String(m+1).padStart(2,'0');else if(day<=3){const p=new Date(Date.UTC(y,m-1,1));period=p.getUTCFullYear()+'-'+String(p.getUTCMonth()+1).padStart(2,'0')}
+    if(!period)return;
+    const snapshot=await readOpsState(),drivers=snapshot.drivers||[],rows=snapshot.payroll||[];
+    const missing=drivers.some(d=>payrollProfile(snapshot,d.id).autoGenerate!==false&&!rows.some(x=>x.period===period&&x.employeeId===d.id));
+    if(!missing)return;
+    await mutateOpsState(state=>generatePayrollPeriod(state,period,true))
+  }catch(e){console.error('Month-end payroll check failed',e.message)}
+}
 app.get('/login',(req,res)=>{res.setHeader('Cache-Control','no-store, no-cache, must-revalidate');res.sendFile(path.join(root,'index.html'))});app.use(express.static(root,{maxAge:'1h',setHeaders:(res,file)=>{if(file.endsWith('.html')||file.endsWith('/app.js')||file.endsWith('/styles.css')||file.endsWith('/sw.js'))res.setHeader('Cache-Control','no-store, no-cache, must-revalidate')}}));app.use((req,res)=>res.sendFile(path.join(root,'index.html')));
-initDb().then(()=>{if(process.argv.includes('--init-only'))return pool?.end();app.listen(PORT,()=>console.log(`Angermund Transport V3 running on port ${PORT}`))}).catch(e=>{console.error('Startup failed',e);process.exit(1)});
+initDb().then(()=>{if(process.argv.includes('--init-only'))return pool?.end();app.listen(PORT,()=>console.log(`Angermund Transport V3 running on port ${PORT}`));setTimeout(ensureMonthEndPayroll,15000);setInterval(ensureMonthEndPayroll,6*60*60*1000)}).catch(e=>{console.error('Startup failed',e);process.exit(1)});
