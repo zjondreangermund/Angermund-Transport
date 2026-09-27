@@ -49,7 +49,18 @@ function archiveStoredFile(file){
     if(pdf)return{buffer:pdf,mimeType:'application/pdf',filename:name.replace(/\.[^.]+$/,'')+'.pdf',originalSize:file.buffer.length,size:pdf.length,convertedToPdf:true}
   }
   return{buffer:file.buffer,mimeType:file.mimetype||'application/octet-stream',filename:name,originalSize:file.buffer.length,size:file.buffer.length,convertedToPdf:false}
+}function receiptOcrBuffer(buffer,mimeType=''){
+  if(!Buffer.isBuffer(buffer))return buffer;
+  if(!/pdf/i.test(String(mimeType||'')))return buffer;
+  const marker=Buffer.from('/DCTDecode','ascii'),mi=buffer.indexOf(marker);if(mi<0)return buffer;
+  let start=buffer.indexOf(Buffer.from('stream\n','ascii'),mi);let skip=7;
+  if(start<0){start=buffer.indexOf(Buffer.from('stream\r\n','ascii'),mi);skip=8}
+  if(start<0)return buffer;start+=skip;
+  const end=buffer.indexOf(Buffer.from('\nendstream','ascii'),start);
+  if(end<0)return buffer;
+  const jpeg=buffer.subarray(start,end);return jpeg.length>4&&jpeg[0]===0xff&&jpeg[1]===0xd8?jpeg:buffer
 }
+
 function supplierKey(value){return String(value||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,' ').trim()}
 function receiptSupplier(raw){
   const text=String(raw||'');
@@ -838,10 +849,10 @@ app.post('/api/trips/:tripId/documents',auth,roles('admin','manager','dispatcher
     if(!t)return res.status(404).json({error:'Trip not found'});
     const kind=String(req.body.kind||'other').slice(0,80),reference=String(req.body.reference||'').slice(0,200),legId=String(req.body.legId||'').slice(0,120);
     if(!req.file&&!reference)return res.status(400).json({error:'Upload a document or enter its reference'});
-    const id=crypto.randomUUID(),createdAt=new Date().toISOString(),filename=req.file?.originalname||'',mimeType=req.file?.mimetype||'',content=req.file?.buffer||null;
+    const id=crypto.randomUUID(),createdAt=new Date().toISOString(),archived=archiveStoredFile(req.file),filename=archived?.filename||'',mimeType=archived?.mimeType||'',content=archived?.buffer||null;
     if(pool)await q('INSERT INTO trip_documents(id,user_id,trip_id,leg_id,kind,reference,filename,mime_type,content,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[id,req.user.sub,t.id,legId||null,kind,reference,filename||null,mimeType||null,content,createdAt]);
     else memory.tripDocuments.push({id,userId:req.user.sub,tripId:t.id,legId,kind,reference,filename,mimeType,content,createdAt});
-    res.status(201).json({id,userId:req.user.sub,tripId:t.id,legId,kind,reference,filename,mimeType,size:req.file?.size||0,createdAt})
+    res.status(201).json({id,userId:req.user.sub,tripId:t.id,legId,kind,reference,filename,mimeType,size:archived?.size||0,originalSize:archived?.originalSize||0,convertedToPdf:Boolean(archived?.convertedToPdf),createdAt})
   }catch(e){res.status(500).json({error:e.message})}
 });
 app.get('/api/trip-documents/:id',auth,roles('admin','manager','dispatcher','finance','driver'),async(req,res)=>{
@@ -862,10 +873,10 @@ app.post('/api/driver/trips/:tripId/upload',auth,roles('driver'),upload.single('
   try{
     if(!req.file)return res.status(400).json({error:'Photo or document required'});
     const state=await readOpsState();driverTrip(state,req);
-    const kind=String(req.body.kind||'document').slice(0,30),id=crypto.randomUUID(),createdAt=new Date().toISOString();
-    if(pool)await q('INSERT INTO driver_uploads(id,user_id,trip_id,kind,filename,mime_type,content,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[id,req.user.sub,req.params.tripId,kind,req.file.originalname||'photo.jpg',req.file.mimetype||'application/octet-stream',req.file.buffer,createdAt]);
-    else memory.uploads.push({id,userId:req.user.sub,driverId:req.user.driverId||null,userName:req.user.name||'',tripId:req.params.tripId,kind,filename:req.file.originalname||'photo.jpg',mimeType:req.file.mimetype||'application/octet-stream',content:req.file.buffer,createdAt});
-    const meta={id,userId:req.user.sub,driverId:req.user.driverId||null,userName:req.user.name||'',tripId:req.params.tripId,kind,filename:req.file.originalname||'photo.jpg',mimeType:req.file.mimetype||'application/octet-stream',size:req.file.size||req.file.buffer.length,createdAt};
+    const kind=String(req.body.kind||'document').slice(0,30),id=crypto.randomUUID(),createdAt=new Date().toISOString(),archived=archiveStoredFile(req.file);
+    if(pool)await q('INSERT INTO driver_uploads(id,user_id,trip_id,kind,filename,mime_type,content,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8)',[id,req.user.sub,req.params.tripId,kind,archived.filename,archived.mimeType,archived.buffer,createdAt]);
+    else memory.uploads.push({id,userId:req.user.sub,driverId:req.user.driverId||null,userName:req.user.name||'',tripId:req.params.tripId,kind,filename:archived.filename,mimeType:archived.mimeType,content:archived.buffer,createdAt});
+    const meta={id,userId:req.user.sub,driverId:req.user.driverId||null,userName:req.user.name||'',tripId:req.params.tripId,kind,filename:archived.filename,mimeType:archived.mimeType,size:archived.size,originalSize:archived.originalSize,convertedToPdf:archived.convertedToPdf,createdAt};
     emit('driver-upload',meta);
     res.status(201).json(meta)
   }catch(e){res.status(e.status||500).json({error:e.message})}
@@ -887,7 +898,7 @@ app.post('/api/admin/driver-uploads/:id/scan',auth,roles('admin','manager','disp
   try{
     const u=pool?(await q('SELECT du.id,du.user_id AS "userId",u.driver_id AS "driverId",u.name AS "userName",du.trip_id AS "tripId",du.kind,du.filename,du.mime_type AS "mimeType",du.content FROM driver_uploads du LEFT JOIN users u ON u.id=du.user_id WHERE du.id=$1',[req.params.id]))[0]:memory.uploads.find(x=>x.id===req.params.id);
     if(!u)return res.status(404).json({error:'Upload not found'});
-    const result=await recognizeReceiptBest(u.content),state=await readOpsState(),extractions=result.results.map(r=>extractReceiptFields(r.text,state)),extracted=mergeReceiptExtractions(extractions);
+    const source=receiptOcrBuffer(u.content,u.mimeType),result=await recognizeReceiptBest(source),state=await readOpsState(),extractions=result.results.map(r=>extractReceiptFields(r.text,state)),extracted=mergeReceiptExtractions(extractions);
     res.json({upload:{id:u.id,driverId:u.driverId||null,userName:u.userName||'',tripId:u.tripId,kind:u.kind,filename:u.filename,mimeType:u.mimeType},extracted,confidence:result.best.confidence})
   }catch(e){res.status(500).json({error:e.message})}
 });
