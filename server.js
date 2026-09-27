@@ -474,8 +474,7 @@ function serverFuelMetrics(state,t){
   return{distance,litres,ready,kmPerL:ready?distance/litres:0}
 }
 function serverSouthAfricaTrip(state,t){
-  const r=(state.routes||[]).find(x=>x.id===t.routeId);
-  return /south africa|durban|johannesburg|rosslyn|cape town|ottery|gauteng/i.test(String(r?.name||'')+' '+String(r?.notes||''))
+  const legs=ensureTripLegs(state,t);return legs.some(l=>{const r=(state.routes||[]).find(x=>x.id===l.routeId);return /south africa|durban|johannesburg|rosslyn|cape town|ottery|gauteng/i.test(String(r?.name||'')+' '+String(r?.notes||''))})
 }
 function serverIncentiveRate(state,t){
   const m=serverFuelMetrics(state,t);if(!m.ready)return 0;
@@ -484,7 +483,7 @@ function serverIncentiveRate(state,t){
   if(m.kmPerL>=2.3)return .40;
   return .30
 }
-function serverIncentiveFor(state,t){return num(t.distance)*serverIncentiveRate(state,t)}
+function serverIncentiveFor(state,t){return serverTripLegSummary(state,t).distance*serverIncentiveRate(state,t)}
 function payrollProfile(state,driverId){
   state.payProfiles??=[];
   let p=state.payProfiles.find(x=>x.driverId===driverId);
