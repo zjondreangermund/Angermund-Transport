@@ -3,6 +3,53 @@ const {Pool}=require('pg');const {createWorker}=require('tesseract.js');
 const app=express(),root=path.join(__dirname,'public'),upload=multer({storage:multer.memoryStorage(),limits:{fileSize:12*1024*1024}});
 const PORT=process.env.PORT||3000,JWT_SECRET=process.env.JWT_SECRET||'development-only-change-before-production',DATABASE_URL=process.env.DATABASE_URL;
 const num=value=>Number(value||0);
+
+function jpegDimensions(buf){
+  if(!Buffer.isBuffer(buf)||buf.length<4||buf[0]!==0xff||buf[1]!==0xd8)return null;
+  let i=2;
+  while(i+9<buf.length){
+    if(buf[i]!==0xff){i++;continue}
+    while(i<buf.length&&buf[i]===0xff)i++;
+    const marker=buf[i++];if(marker===0xd8||marker===0xd9)continue;
+    if(i+1>=buf.length)break;
+    const len=buf.readUInt16BE(i);if(len<2||i+len>buf.length)break;
+    if([0xc0,0xc1,0xc2,0xc3,0xc5,0xc6,0xc7,0xc9,0xca,0xcb,0xcd,0xce,0xcf].includes(marker)){
+      return{height:buf.readUInt16BE(i+3),width:buf.readUInt16BE(i+5)}
+    }
+    i+=len
+  }
+  return null
+}
+function jpegToPdfBuffer(jpeg){
+  const dim=jpegDimensions(jpeg);if(!dim)return null;
+  const pageW=595.28,pageH=841.89,margin=18,scale=Math.min((pageW-margin*2)/dim.width,(pageH-margin*2)/dim.height),drawW=dim.width*scale,drawH=dim.height*scale,x=(pageW-drawW)/2,y=(pageH-drawH)/2;
+  const content=Buffer.from(`q
+${drawW.toFixed(2)} 0 0 ${drawH.toFixed(2)} ${x.toFixed(2)} ${y.toFixed(2)} cm
+/Im0 Do
+Q
+`,'ascii');
+  const parts=[Buffer.from('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n','binary')],offsets=[0];let total=parts[0].length;
+  const add=(n,chunks)=>{offsets[n]=total;const head=Buffer.from(n+' 0 obj\n','ascii'),tail=Buffer.from('\nendobj\n','ascii');parts.push(head,...chunks,tail);total+=head.length+chunks.reduce((a,b)=>a+b.length,0)+tail.length};
+  add(1,[Buffer.from('<< /Type /Catalog /Pages 2 0 R >>','ascii')]);
+  add(2,[Buffer.from('<< /Type /Pages /Kids [3 0 R] /Count 1 >>','ascii')]);
+  add(3,[Buffer.from(`<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pageW} ${pageH}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>`,'ascii')]);
+  add(4,[Buffer.from(`<< /Type /XObject /Subtype /Image /Width ${dim.width} /Height ${dim.height} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${jpeg.length} >>\nstream\n`,'ascii'),jpeg,Buffer.from('\nendstream','ascii')]);
+  add(5,[Buffer.from(`<< /Length ${content.length} >>\nstream\n`,'ascii'),content,Buffer.from('endstream','ascii')]);
+  const xrefAt=total,xref=['xref','0 6','0000000000 65535 f '];
+  for(let n=1;n<=5;n++)xref.push(String(offsets[n]).padStart(10,'0')+' 00000 n ');
+  xref.push('trailer','<< /Size 6 /Root 1 0 R >>','startxref',String(xrefAt),'%%EOF','');
+  parts.push(Buffer.from(xref.join('\n'),'ascii'));
+  return Buffer.concat(parts)
+}
+function archiveStoredFile(file){
+  if(!file)return null;
+  const mime=String(file.mimetype||'').toLowerCase(),name=String(file.originalname||'document');
+  if(mime==='image/jpeg'||mime==='image/jpg'){
+    const pdf=jpegToPdfBuffer(file.buffer);
+    if(pdf)return{buffer:pdf,mimeType:'application/pdf',filename:name.replace(/\.[^.]+$/,'')+'.pdf',originalSize:file.buffer.length,size:pdf.length,convertedToPdf:true}
+  }
+  return{buffer:file.buffer,mimeType:file.mimetype||'application/octet-stream',filename:name,originalSize:file.buffer.length,size:file.buffer.length,convertedToPdf:false}
+}
 function supplierKey(value){return String(value||'').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,' ').trim()}
 function receiptSupplier(raw){
   const text=String(raw||'');
