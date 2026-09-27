@@ -52,7 +52,17 @@ function driverQueueDb(){return new Promise((resolve,reject)=>{const r=indexedDB
 async function driverQueuePut(job){const d=await driverQueueDb();return new Promise((resolve,reject)=>{const tx=d.transaction('jobs','readwrite');tx.objectStore('jobs').put(job);tx.oncomplete=()=>{d.close();resolve()};tx.onerror=()=>{d.close();reject(tx.error)}})}
 async function driverQueueList(){const d=await driverQueueDb();return new Promise((resolve,reject)=>{const tx=d.transaction('jobs','readonly'),r=tx.objectStore('jobs').getAll();r.onsuccess=()=>{d.close();resolve(r.result||[])};r.onerror=()=>{d.close();reject(r.error)}})}
 async function driverQueueDelete(id){const d=await driverQueueDb();return new Promise((resolve,reject)=>{const tx=d.transaction('jobs','readwrite');tx.objectStore('jobs').delete(id);tx.oncomplete=()=>{d.close();resolve()};tx.onerror=()=>{d.close();reject(tx.error)}})}
-async function refreshDriverState(){const state=await api('/api/state');if(state.payload&&Object.keys(state.payload).length){db=merge(state.payload);localStorage.setItem(STORE,JSON.stringify(db));render()}}
+async function refreshCentralState(showMessage=false){
+  const state=await api('/api/state');
+  if(state.payload&&Object.keys(state.payload).length){
+    db=merge(state.payload);
+    localStorage.setItem(STORE,JSON.stringify(db));
+    render();
+    if(showMessage)notify('Live data refreshed');
+  }
+  return state;
+}
+async function refreshDriverState(){await refreshCentralState(false)}
 async function driverApiAction(job){return api('/api/driver/trips/'+encodeURIComponent(job.tripId)+'/action',{method:'POST',body:{action:job.action,data:job.data||{},clientActionId:job.clientActionId}})}
 async function driverUpload(tripId,kind,file){const fd=new FormData();fd.append('kind',kind);fd.append('document',file,file.name||kind+'.jpg');return api('/api/driver/trips/'+encodeURIComponent(tripId)+'/upload',{method:'POST',body:fd})}
 async function queueDriverJob(job){await driverQueuePut(job);notify('✅ Saved on this phone — will send when signal returns')}
