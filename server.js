@@ -913,6 +913,53 @@ function driverTrip(state,req){const did=req.user.driverId;if(!did){const e=Erro
 async function mutateOpsState(mutator){if(pool){const c=await pool.connect();try{await c.query('BEGIN');const row=(await c.query('SELECT payload,revision FROM app_state WHERE id=1 FOR UPDATE')).rows[0]||{payload:{},revision:0};const state=row.payload||{};const result=await mutator(state);const updated=(await c.query('UPDATE app_state SET payload=$1,revision=revision+1,updated_at=now() WHERE id=1 RETURNING revision,updated_at',[state])).rows[0];await c.query('COMMIT');emit('state',{revision:updated.revision,updatedAt:updated.updated_at});return{result,revision:updated.revision}}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}const state=memory.state||{};const result=await mutator(state);memory.state=state;const revision=Date.now();emit('state',{revision});return{result,revision}}
 
 
+const CANONICAL_FLEET=[
+  {id:'trk_ang2',fleetName:'Ang 2',registration:'N 228751 W'},
+  {id:'trk_ang3',fleetName:'Ang 3',registration:'N 228757 W'},
+  {id:'trk_ang4',fleetName:'Ang 4',registration:'N 60518 W'},
+  {id:'trk_ang5',fleetName:'Ang 5',registration:'N 48332 W'},
+  {id:'trk_ang10',fleetName:'Ang 10',registration:'N 57660 W'},
+  {id:'trk_ang11',fleetName:'Ang 11',registration:'N 78215 W'},
+  {id:'trk_ang12',fleetName:'Ang 12',registration:'N 46928 W'}
+];
+const CANONICAL_FLEET_VERSION='2026-09-28-ang-fleet-v1';
+function fleetKey(v){return String(v||'').toLowerCase().replace(/[^a-z0-9]+/g,'')}
+function referencedTruckIds(state){
+  const ids=new Set(),add=v=>{if(v)ids.add(String(v))};
+  for(const key of ['trips','diesel','expenses','tripIssues','maintenance','tyres','inspections','incidents'])for(const x of state[key]||[])add(x.truckId);
+  for(const p of state.permits||[])if(p.ownerType==='truck')add(p.ownerId);
+  for(const t of state.tasks||[])if(t.linkedType==='truck')add(t.linkedId);
+  return ids
+}
+async function ensureCanonicalFleet(){
+  const changed=await mutateOpsState(state=>{
+    if(state.canonicalFleetVersion===CANONICAL_FLEET_VERSION&&Array.isArray(state.trucks)&&state.trucks.length===CANONICAL_FLEET.length)return{skipped:true,count:state.trucks.length};
+    state.trucks??=[];state.archivedTrucks??=[];
+    const prior=[...state.trucks],refs=referencedTruckIds(state),used=new Set();
+    const active=CANONICAL_FLEET.map(spec=>{
+      const match=prior.find(x=>!used.has(x.id)&&(fleetKey(x.registration)===fleetKey(spec.registration)||fleetKey(x.fleetName)===fleetKey(spec.fleetName)));
+      if(match){
+        used.add(match.id);
+        return {...match,fleetName:spec.fleetName,registration:spec.registration,type:match.type||'Truck',status:/out of service|workshop|on trip|on duty|available/i.test(String(match.status||''))?match.status:'Available',gps:match.trackerId?'Tracker linked':(match.gps||'Not linked')};
+      }
+      return {...spec,make:'',type:'Truck',status:'Available',odometer:0,serviceDue:0,licenseExpiry:'',roadworthyExpiry:'',trackerId:'',trackerModel:'',gps:'Not linked'}
+    });
+    const archiveById=new Map((state.archivedTrucks||[]).map(x=>[String(x.id),x]));
+    for(const old of prior){
+      if(used.has(old.id)||active.some(x=>x.id===old.id))continue;
+      if(refs.has(String(old.id)))archiveById.set(String(old.id),{...old,status:'Archived',archivedAt:new Date().toISOString()});
+    }
+    state.trucks=active;
+    state.archivedTrucks=[...archiveById.values()].filter(x=>!active.some(a=>a.id===x.id));
+    state.canonicalFleetVersion=CANONICAL_FLEET_VERSION;
+    state.audit??=[];
+    state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:'System',action:'Fleet synchronized to 7 Angermund trucks · Ang 2, 3, 4, 5, 10, 11, 12',linkedType:'fleet',linkedId:CANONICAL_FLEET_VERSION});
+    state.audit=state.audit.slice(0,100);
+    return{skipped:false,count:active.length,archived:state.archivedTrucks.length}
+  });
+  return changed.result
+}
+
 async function applyWorkforceEnvImport(){
   const version=String(process.env.WORKFORCE_IMPORT_VERSION||'').trim();
   if(!version)return {skipped:true};
@@ -1581,4 +1628,4 @@ async function ensureMonthEndPayroll(){
 }
 app.get('/download/android',(req,res)=>res.redirect(302,'https://github.com/zjondreangermund/Angermund-Transport/releases/download/android-latest/Angermund-Transport.apk'));
 app.get('/login',(req,res)=>{res.setHeader('Cache-Control','no-store, no-cache, must-revalidate');res.sendFile(path.join(root,'index.html'))});app.use(express.static(root,{maxAge:'1h',setHeaders:(res,file)=>{if(file.endsWith('.html')||file.endsWith('/app.js')||file.endsWith('/styles.css')||file.endsWith('/sw.js'))res.setHeader('Cache-Control','no-store, no-cache, must-revalidate')}}));app.use((req,res)=>res.sendFile(path.join(root,'index.html')));
-initDb().then(async()=>{if(process.argv.includes('--init-only'))return pool?.end();const imported=await applyWorkforceEnvImport();if(!imported?.skipped)console.log('Workforce import applied',imported);const linked=await reconcileWorkforceUserLinks();if(linked.linkedDrivers||linked.linkedStaff)console.log('Workforce user links reconciled',linked);app.listen(PORT,()=>console.log(`Angermund Transport V3 running on port ${PORT}`));setTimeout(ensureMonthEndPayroll,15000);setInterval(ensureMonthEndPayroll,6*60*60*1000);setTimeout(ensureOperationalAlerts,20000);setInterval(ensureOperationalAlerts,10*60*1000)}).catch(e=>{console.error('Startup failed',e);process.exit(1)});
+initDb().then(async()=>{if(process.argv.includes('--init-only'))return pool?.end();const fleet=await ensureCanonicalFleet();if(!fleet?.skipped)console.log('Canonical fleet applied',fleet);const imported=await applyWorkforceEnvImport();if(!imported?.skipped)console.log('Workforce import applied',imported);const linked=await reconcileWorkforceUserLinks();if(linked.linkedDrivers||linked.linkedStaff)console.log('Workforce user links reconciled',linked);app.listen(PORT,()=>console.log(`Angermund Transport V3 running on port ${PORT}`));setTimeout(ensureMonthEndPayroll,15000);setInterval(ensureMonthEndPayroll,6*60*60*1000);setTimeout(ensureOperationalAlerts,20000);setInterval(ensureOperationalAlerts,10*60*1000)}).catch(e=>{console.error('Startup failed',e);process.exit(1)});
