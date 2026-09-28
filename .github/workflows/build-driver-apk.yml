@@ -32,26 +32,16 @@ jobs:
           python3 - <<'PY'
           from PIL import Image
           im=Image.open("public/angermund-logo.png").convert("RGB")
-          print("LOGO_SIZE",im.size)
-          counts=[]
-          for x in range(im.width):
-              n=0
-              for y in range(im.height):
-                  r,g,b=im.getpixel((x,y))
-                  if b>80 and b>r*1.12 and b>g*1.02:
-                      n+=1
-              counts.append(n)
-          runs=[]
-          s=None
-          for x,n in enumerate(counts+[0]):
-              if n>3 and s is None:s=x
-              if (n<=3 or x==len(counts)) and s is not None:
-                  if x-s>2:runs.append((s,x-1,max(counts[s:x]),sum(counts[s:x])))
-                  s=None
-          print("BLUE_X_RUNS",runs)
-          # Print valley candidates after the left logo mark.
-          for x in range(350,900,20):
-              print("XCOUNT",x,sum(counts[x:x+20]))
+          def isblue(p):
+              r,g,b=p
+              return b>80 and b>r*1.12 and b>g*1.02
+          for ymax in [120,180,220,260,300]:
+              pts=[(x,y) for y in range(ymax) for x in range(900) if isblue(im.getpixel((x,y)))]
+              xs=[p[0] for p in pts]; ys=[p[1] for p in pts]
+              print("TOP_BOUND",ymax,(min(xs),min(ys),max(xs),max(ys)) if xs else None)
+          for xmax in [560,600,620,640,660,680,700]:
+              n=sum(1 for y in range(im.height) for x in range(xmax,xmax+10) if isblue(im.getpixel((x,y))))
+              print("STRIP",xmax,n)
           PY
 
       - name: Build installable debug APK
