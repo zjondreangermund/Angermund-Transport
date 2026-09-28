@@ -900,6 +900,37 @@ function driverTrip(state,req){const did=req.user.driverId;if(!did){const e=Erro
 async function mutateOpsState(mutator){if(pool){const c=await pool.connect();try{await c.query('BEGIN');const row=(await c.query('SELECT payload,revision FROM app_state WHERE id=1 FOR UPDATE')).rows[0]||{payload:{},revision:0};const state=row.payload||{};const result=await mutator(state);const updated=(await c.query('UPDATE app_state SET payload=$1,revision=revision+1,updated_at=now() WHERE id=1 RETURNING revision,updated_at',[state])).rows[0];await c.query('COMMIT');emit('state',{revision:updated.revision,updatedAt:updated.updated_at});return{result,revision:updated.revision}}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}const state=memory.state||{};const result=await mutator(state);memory.state=state;const revision=Date.now();emit('state',{revision});return{result,revision}}
 
 
+async function applyWorkforceEnvImport(){
+  const version=String(process.env.WORKFORCE_IMPORT_VERSION||'').trim();
+  const parts=['WORKFORCE_EMPLOYEES_B64','WORKFORCE_DRIVERS_B64','WORKFORCE_PAYPROFILES_B64','WORKFORCE_PAYROLL_B64'];
+  if(!version||parts.some(k=>!process.env[k]))return {skipped:true};
+  const decode=k=>JSON.parse(Buffer.from(process.env[k],'base64').toString('utf8'));
+  const employees=decode(parts[0]),drivers=decode(parts[1]),payProfiles=decode(parts[2]),payroll=decode(parts[3]);
+  if(employees.length!==24||drivers.length!==10||payProfiles.length!==24||payroll.length!==24)throw Error('Workforce import count validation failed');
+  const driverIds=new Set(drivers.map(x=>String(x.id)));
+  const changed=await mutateOpsState(state=>{
+    if(state.workforceImportVersion===version)return {skipped:true,count:(state.employees||[]).length};
+    state.employees=employees;
+    state.drivers=drivers;
+    state.payProfiles=payProfiles;
+    state.payroll=payroll;
+    state.settings??={};state.settings.currentDriver=drivers[0]?.id||'';
+    state.tasks=(state.tasks||[]).map(t=>t.assignedDriverId&&!driverIds.has(String(t.assignedDriverId))?{...t,assignedDriverId:''}:t);
+    state.permits=(state.permits||[]).filter(p=>p.ownerType!=='driver'||driverIds.has(String(p.ownerId)));
+    state.workforceImportVersion=version;
+    state.workforceImportPeriod='2026-08';
+    state.audit??=[];
+    state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:'System',action:'Workforce replaced from August 2026 salary workbook · 24 workers / 10 drivers',linkedType:'workforce',linkedId:version});
+    state.audit=state.audit.slice(0,100);
+    return {skipped:false,employees:employees.length,drivers:drivers.length,payProfiles:payProfiles.length,payroll:payroll.length}
+  });
+  if(pool&&!changed.result.skipped){
+    const keep=drivers.map(x=>String(x.id));
+    await q("UPDATE users SET active=false WHERE role='driver' AND driver_id IS NOT NULL AND NOT (driver_id = ANY($1::text[]))",[keep]);
+  }
+  return changed.result
+}
+
 app.post('/api/mdc/record',auth,roles('admin','manager','dispatcher','finance'),async(req,res)=>{
   try{
     const body=req.body&&typeof req.body==='object'?req.body:{},tripId=String(body.tripId||''),namibiaKm=num(body.namibiaKm),reference=String(body.reference||'');
@@ -1503,4 +1534,4 @@ async function ensureMonthEndPayroll(){
 }
 app.get('/download/android',(req,res)=>res.redirect(302,'https://github.com/zjondreangermund/Angermund-Transport/releases/download/android-latest/Angermund-Transport.apk'));
 app.get('/login',(req,res)=>{res.setHeader('Cache-Control','no-store, no-cache, must-revalidate');res.sendFile(path.join(root,'index.html'))});app.use(express.static(root,{maxAge:'1h',setHeaders:(res,file)=>{if(file.endsWith('.html')||file.endsWith('/app.js')||file.endsWith('/styles.css')||file.endsWith('/sw.js'))res.setHeader('Cache-Control','no-store, no-cache, must-revalidate')}}));app.use((req,res)=>res.sendFile(path.join(root,'index.html')));
-initDb().then(()=>{if(process.argv.includes('--init-only'))return pool?.end();app.listen(PORT,()=>console.log(`Angermund Transport V3 running on port ${PORT}`));setTimeout(ensureMonthEndPayroll,15000);setInterval(ensureMonthEndPayroll,6*60*60*1000);setTimeout(ensureOperationalAlerts,20000);setInterval(ensureOperationalAlerts,10*60*1000)}).catch(e=>{console.error('Startup failed',e);process.exit(1)});
+initDb().then(async()=>{if(process.argv.includes('--init-only'))return pool?.end();const imported=await applyWorkforceEnvImport();if(!imported?.skipped)console.log('Workforce import applied',imported);app.listen(PORT,()=>console.log(`Angermund Transport V3 running on port ${PORT}`));setTimeout(ensureMonthEndPayroll,15000);setInterval(ensureMonthEndPayroll,6*60*60*1000);setTimeout(ensureOperationalAlerts,20000);setInterval(ensureOperationalAlerts,10*60*1000)}).catch(e=>{console.error('Startup failed',e);process.exit(1)});
