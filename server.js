@@ -569,7 +569,12 @@ function serverFuelMetrics(state,t){
 function serverSouthAfricaTrip(state,t){
   const legs=ensureTripLegs(state,t);return legs.some(l=>{const r=(state.routes||[]).find(x=>x.id===l.routeId);return /south africa|durban|johannesburg|rosslyn|cape town|ottery|gauteng/i.test(String(r?.name||'')+' '+String(r?.notes||''))})
 }
-function serverTripRate(state,t,configured){return num(configured)>0?num(configured):(serverSouthAfricaTrip(state,t)?.60:.30)}
+function serverTripRate(state,t,configured){
+  if(num(configured)>0)return num(configured);
+  if(serverSouthAfricaTrip(state,t))return .60;
+  const efficiency=serverFuelMetrics(state,t).kmPerL;
+  return efficiency>=2.4?.50:efficiency>=2.3?.40:.30
+}
 function serverIncentiveFor(state,t){
   const m=serverFuelMetrics(state,t),target=num(payrollProfile(state,t.driverId).minimumBonusKml)||2.0;
   if(!m.ready||m.pricePerL<=0||m.kmPerL<=target)return 0;
