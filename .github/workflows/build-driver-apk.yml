@@ -26,22 +26,21 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Inspect original Angermund icon
+      - name: Prepare exact original A icon
         run: |
           python3 -m pip install pillow -q
           python3 - <<'PY'
           from PIL import Image
-          im=Image.open("public/angermund-logo.png").convert("RGB")
-          def isblue(p):
-              r,g,b=p
-              return b>80 and b>r*1.12 and b>g*1.02
-          for ymax in [120,180,220,260,300]:
-              pts=[(x,y) for y in range(ymax) for x in range(900) if isblue(im.getpixel((x,y)))]
-              xs=[p[0] for p in pts]; ys=[p[1] for p in pts]
-              print("TOP_BOUND",ymax,(min(xs),min(ys),max(xs),max(ys)) if xs else None)
-          for xmax in [560,600,620,640,660,680,700]:
-              n=sum(1 for y in range(im.height) for x in range(xmax,xmax+10) if isblue(im.getpixel((x,y))))
-              print("STRIP",xmax,n)
+          import base64, io, hashlib
+          src=Image.open("public/angermund-logo.png").convert("RGBA")
+          mark=src.crop((0,0,724,724)).resize((512,512),Image.Resampling.LANCZOS)
+          buf=io.BytesIO()
+          mark.save(buf,format="PNG",optimize=True)
+          data=buf.getvalue()
+          print("ORIGINAL_A_SIZE",mark.size,"BYTES",len(data),"SHA256",hashlib.sha256(data).hexdigest())
+          print("ORIGINAL_A_B64_BEGIN")
+          print(base64.b64encode(data).decode("ascii"))
+          print("ORIGINAL_A_B64_END")
           PY
 
       - name: Build installable debug APK
