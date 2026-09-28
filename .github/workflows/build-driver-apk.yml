@@ -31,30 +31,28 @@ jobs:
           python3 -m pip install pillow -q
           python3 - <<'PY'
           from PIL import Image
-          for path in [
-              "android-driver/app/src/main/res/drawable/angermund_icon.png",
-              "public/angermund-logo.png"
-          ]:
-              im=Image.open(path).convert("RGB")
-              print("\nICON_SOURCE",path,"SIZE",im.size)
-              w=64
-              h=max(1,round(im.height*w/im.width))
-              sm=im.resize((w,h))
-              chars=[]
-              for yy in range(h):
-                  row=[]
-                  for xx in range(w):
-                      r,g,b=sm.getpixel((xx,yy))
-                      if max(r,g,b)<45: c=" "
-                      elif r>190 and g>190 and b>190: c="#"
-                      elif b>120 and b>r*1.15: c="B"
-                      elif r>140 and g>140 and b<120: c="Y"
-                      else: c="."
-                      row.append(c)
-                  chars.append("".join(row))
-              print("\n".join(chars))
+          im=Image.open("public/angermund-logo.png").convert("RGB")
+          print("LOGO_SIZE",im.size)
+          counts=[]
+          for x in range(im.width):
+              n=0
+              for y in range(im.height):
+                  r,g,b=im.getpixel((x,y))
+                  if b>80 and b>r*1.12 and b>g*1.02:
+                      n+=1
+              counts.append(n)
+          runs=[]
+          s=None
+          for x,n in enumerate(counts+[0]):
+              if n>3 and s is None:s=x
+              if (n<=3 or x==len(counts)) and s is not None:
+                  if x-s>2:runs.append((s,x-1,max(counts[s:x]),sum(counts[s:x])))
+                  s=None
+          print("BLUE_X_RUNS",runs)
+          # Print valley candidates after the left logo mark.
+          for x in range(350,900,20):
+              print("XCOUNT",x,sum(counts[x:x+20]))
           PY
-
 
       - name: Build installable debug APK
         run: gradle -p android-driver :app:assembleDebug --stacktrace
