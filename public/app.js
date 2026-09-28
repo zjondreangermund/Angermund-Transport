@@ -1376,6 +1376,40 @@ async function removeJourneyLeg(tripId,legId){
 async function invoiceJourneyLeg(tripId,legId){
   try{const r=await api('/api/admin/trips/'+encodeURIComponent(tripId)+'/legs/'+encodeURIComponent(legId)+'/invoice',{method:'POST'});await refreshCentralState(false);openTrip(tripId);notify((r.invoice?.number||'Invoice')+' created for '+client(r.leg?.clientId))}catch(e){notify(e.message)}
 }
+
+async function openDriverUploadFile(uploadId){
+  if(!uploadId)return notify('No receipt file is linked to this record');
+  const popup=window.open('','_blank');
+  try{
+    const res=await fetch('/api/driver/uploads/'+encodeURIComponent(uploadId),{headers:{Authorization:'Bearer '+authToken},cache:'no-store'});
+    if(!res.ok){const d=await res.json().catch(()=>({}));throw Error(d.error||'Could not open receipt')}
+    const blob=await res.blob(),url=URL.createObjectURL(blob);
+    if(popup)popup.location.href=url;else window.open(url,'_blank');
+    setTimeout(()=>URL.revokeObjectURL(url),120000)
+  }catch(e){if(popup)popup.close();notify(e.message)}
+}
+function openDieselReview(recordId){
+  const x=(db.diesel||[]).find(r=>r.id===recordId);if(!x)return notify('Diesel record not found');
+  const t=get('trips',x.tripId),uploadId=x.receiptUploadId||(x.receiptUploadIds||[])[0]||'';
+  $('modalTitle').textContent='Review diesel · '+(t.number||'Trip');
+  $('entryForm').innerHTML='<div class="notice"><b>Check the captured values against the receipt.</b><br>Correct anything that OCR/driver capture got wrong, then approve. Trip totals recalculate immediately.</div>'
+    +'<div class="form-grid"><div class="field"><label>Litres</label><input id="drLitres" type="number" step="0.01" value="'+num(x.litres)+'"></div>'
+    +'<div class="field"><label>Receipt total</label><input id="drTotal" type="number" step="0.01" value="'+num(x.printedTotal||fuelRecordCost(x))+'"></div>'
+    +'<div class="field"><label>Price / litre</label><input id="drPrice" type="number" step="0.0001" value="'+num(x.price)+'"></div>'
+    +'<div class="field"><label>Odometer</label><input id="drOdo" type="number" step="1" value="'+num(x.odometer)+'"></div>'
+    +'<div class="field"><label>Supplier</label><input id="drSupplier" value="'+esc(x.supplier||'')+'"></div>'
+    +'<div class="field"><label>Slip / receipt no.</label><input id="drSlip" value="'+esc(x.slip||'')+'"></div></div>'
+    +'<div class="diesel-review-summary"><span>Status</span><b>'+(x.verified?'Verified':'Awaiting review')+'</b><span>Driver</span><b>'+esc(driver(x.driverId))+'</b><span>Trip</span><b>'+esc(t.number||'—')+'</b></div>'
+    +'<div class="form-actions"><button type="button" class="ghost" id="cancelForm">Close</button>'+(uploadId?'<button type="button" class="ghost" id="viewDieselReceipt">View receipt</button>':'')+'<button type="button" class="ghost" id="saveDieselCorrection">Save correction</button><button type="button" class="primary" id="approveDiesel">✓ Approve & verify</button>'+(['admin','finance'].includes(role)?'<button type="button" class="danger" id="deleteDiesel">Delete record</button>':'')+'</div>';
+  $('modal').classList.remove('hidden');
+  const body=verified=>({litres:num($('drLitres').value),printedTotal:num($('drTotal').value),price:num($('drPrice').value),odometer:num($('drOdo').value),supplier:$('drSupplier').value.trim(),slip:$('drSlip').value.trim(),verified});
+  const save=async verified=>{try{await api('/api/admin/diesel/'+encodeURIComponent(recordId),{method:'PATCH',body:body(verified)});$('modal').classList.add('hidden');await refreshCentralState(false);openTrip(x.tripId);notify(verified?'Diesel slip verified':'Diesel values corrected')}catch(e){notify(e.message)}};
+  $('cancelForm').onclick=()=>openTrip(x.tripId);
+  if($('viewDieselReceipt'))$('viewDieselReceipt').onclick=()=>openDriverUploadFile(uploadId);
+  $('saveDieselCorrection').onclick=()=>save(Boolean(x.verified));
+  $('approveDiesel').onclick=()=>save(true);
+  if($('deleteDiesel'))$('deleteDiesel').onclick=async()=>{if(!confirm('Delete this diesel record from '+(t.number||'the trip')+'? The archived receipt file will be kept in Driver Uploads.'))return;try{await api('/api/admin/diesel/'+encodeURIComponent(recordId),{method:'DELETE'});$('modal').classList.add('hidden');await refreshCentralState(false);openTrip(x.tripId);notify('Diesel record deleted and trip totals recalculated')}catch(e){notify(e.message)}};
+}
 function openTrip(id){
   const t=get('trips',id),legs=tripLegs(t),fuel=linked('diesel','tripId',id),expenses=linked('expenses','tripId',id),issues=linked('tripIssues','tripId',id),settlement=tripSettlement(t),m=settlement.fuel;
   const dieselSpend=tripDieselSpend(t),expenseSpend=tripRouteExpenseSpend(t),totalCost=tripCost(t),contribution=tripProfit(t);
@@ -1398,7 +1432,7 @@ function openTrip(id){
       <div><h3>Invoice control</h3><p>${legs.filter(x=>x.invoiceId).length}/${legs.length} leg invoices created.<br>${legs.length>1?'Each client/load invoices separately.':'Single-load journeys can use the normal invoice flow.'}</p></div>
     </div>
     <h3>Diesel slips</h3>
-    ${fuel.length?fuel.map(x=>`<div class="approval"><span><b>${num(x.litres).toFixed(2)} L · ${money(fuelRecordCost(x))}</b><small>${esc(x.supplier||'Unknown supplier')} · ${money(x.price)}/L${x.legId?' · Leg '+num(legs.find(l=>l.id===x.legId)?.sequence):''} · Slip: ${esc(x.slip||'—')}</small></span><span>${x.verified?badge('Verified'):badge('Review')}</span></div>`).join(''):'<div class="empty">No diesel captured</div>'}
+    ${fuel.length?fuel.map(x=>`<div class="approval diesel-review-row"><div class="diesel-review-copy"><b>${num(x.litres).toFixed(2)} L · ${money(fuelRecordCost(x))}</b><small>${esc(x.supplier||'Unknown supplier')} · ${money(x.price)}/L${x.legId?' · Leg '+num(legs.find(l=>l.id===x.legId)?.sequence):''} · Slip: ${esc(x.slip||'—')}</small></div><div class="diesel-review-actions">${x.verified?badge('Verified'):badge('Review')}${['admin','manager','finance'].includes(role)?`<button type="button" class="link-button review-diesel" data-id="${x.id}">${x.verified?'Edit':'Review'}</button>`:''}</div></div>`).join(''):'<div class="empty">No diesel captured</div>'}
     <h3>Route expenses & receipts</h3>
     ${expenses.length?expenses.map(x=>`<div class="approval"><span><b>${esc(x.category)} · ${money(x.amount)}</b><small>${esc(x.supplier||'')} ${x.legId?'· Leg '+num(legs.find(l=>l.id===x.legId)?.sequence)+' ':''}· Receipt: ${esc(x.receiptNo||'MISSING')}</small></span><span>${badge(x.status)} ${x.status==='Review'&&['admin','manager','finance'].includes(role)?`<button type="button" class="link-button approve-trip-expense" data-id="${x.id}">Approve</button>`:''}</span></div>`).join(''):'<div class="empty">No route expenses captured</div>'}
     <h3>What went wrong on this journey</h3>
@@ -1423,7 +1457,7 @@ function openTrip(id){
   $('addExpenseModal').onclick=()=>openForm('expense',{tripId:id,truckId:t.truckId,driverId:t.driverId});
   $('addMdcModal').onclick=()=>{$('modal').classList.add('hidden');mdcTripPrefill=id;go('roadCharges')};
   $('addIssueModal').onclick=()=>openForm('tripIssue',{tripId:id,truckId:t.truckId,driverId:t.driverId});
-  document.querySelectorAll('.approve-trip-expense').forEach(b=>b.onclick=()=>{get('expenses',b.dataset.id).status='Approved';commit(`Receipt approved for ${t.number}`,'expense',b.dataset.id);openTrip(id)});
+  document.querySelectorAll('.review-diesel').forEach(b=>b.onclick=()=>openDieselReview(b.dataset.id));document.querySelectorAll('.approve-trip-expense').forEach(b=>b.onclick=()=>{get('expenses',b.dataset.id).status='Approved';commit(`Receipt approved for ${t.number}`,'expense',b.dataset.id);openTrip(id)});
   $('advanceFromModal').onclick=()=>{$('modal').classList.add('hidden');advanceTrip(t.id)}
 }
 function rateResult(){const v=id=>num($(id).value),distance=v('rcDistance'),litres=distance/Math.max(.1,v('rcKml')),diesel=litres*v('rcDiesel'),mdc=v('rcNamibiaKm')/100*v('rcMdcRate'),standing=v('rcWaiting')*db.settings.standingFee,cost=diesel+mdc+v('rcDriver')+v('rcTolls')+v('rcWear')+v('rcOther')+standing,margin=Math.min(90,v('rcMargin'))/100,rate=cost/(1-margin),vat=rate*db.settings.vat/100;$('rateResult').innerHTML=`<div class="metric-line"><span>Diesel required</span><b>${litres.toFixed(1)} L</b></div><div class="metric-line"><span>Diesel cost</span><b>${money(diesel)}</b></div><div class="metric-line"><span>MDC charge</span><b>${money(mdc)}</b></div><div class="metric-line"><span>Standing charges</span><b>${money(standing)}</b></div><div class="metric-line"><span>Total cost</span><b>${money(cost)}</b></div><div class="metric-line"><span>Rate excl. VAT</span><b class="positive">${money(rate)}</b></div><div class="metric-line"><span>VAT</span><b>${money(vat)}</b></div><div class="metric-line"><span>Quote incl. VAT</span><b>${money(rate+vat)}</b></div><div class="metric-line"><span>Expected profit</span><b>${money(rate-cost)}</b></div>`}
