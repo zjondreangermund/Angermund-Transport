@@ -50,6 +50,8 @@ public class MainActivity extends Activity {
     private Uri cameraUri;
     private String pendingJwt = "";
     private long lastExitBackAt = 0;
+    private volatile boolean registeringDevice = false;
+    private volatile boolean gpsRequested = false;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
 
     @Override
@@ -120,35 +122,57 @@ public class MainActivity extends Activity {
 
     private void startStoredServiceIfEnabled() {
         SharedPreferences p = prefs();
-        if (p.getBoolean("enabled", false) && !p.getString("device_token", "").isEmpty() && hasForegroundLocation()) {
-            startForegroundService(new Intent(this, LocationService.class));
+        if (!p.getBoolean("enabled", false) || p.getString("device_token", "").isEmpty()) return;
+        try { startForegroundService(new Intent(this, NotificationService.class)); } catch (Exception ignored) {}
+        if (p.getBoolean("gps_enabled", false) && hasForegroundLocation()) {
+            try { startForegroundService(new Intent(this, LocationService.class)); } catch (Exception ignored) {}
         }
     }
 
-    private void registerAndStart(String jwt) {
+    private void ensureRegistered(String jwt, boolean enableGps) {
         if (jwt == null || jwt.isEmpty()) return;
+        if (enableGps) gpsRequested = true;
+        SharedPreferences p = prefs();
+        String existingToken = p.getString("device_token", "");
+        if (!existingToken.isEmpty()) {
+            p.edit().putBoolean("enabled", true).putBoolean("gps_enabled", p.getBoolean("gps_enabled", false) || enableGps).apply();
+            startStoredServiceIfEnabled();
+            if (enableGps) promptBackgroundLocation();
+            return;
+        }
+        if (registeringDevice) return;
+        registeringDevice = true;
         io.execute(() -> {
             try {
-                SharedPreferences p = prefs();
-                String deviceId = p.getString("device_id", "");
+                SharedPreferences pref = prefs();
+                String deviceId = pref.getString("device_id", "");
                 if (deviceId.isEmpty()) {
                     deviceId = UUID.randomUUID().toString();
-                    p.edit().putString("device_id", deviceId).apply();
+                    pref.edit().putString("device_id", deviceId).apply();
                 }
                 JSONObject body = new JSONObject();
                 body.put("deviceId", deviceId);
                 body.put("name", Build.MANUFACTURER + " " + Build.MODEL);
                 body.put("platform", "android-" + Build.VERSION.SDK_INT);
                 String result = postJson("/api/mobile/register", body.toString(), "Bearer " + jwt, null);
-                String deviceToken = new JSONObject(result).getString("deviceToken");
-                p.edit().putString("device_token", deviceToken).putBoolean("enabled", true).apply();
+                JSONObject response = new JSONObject(result);
+                String deviceToken = response.getString("deviceToken");
+                SharedPreferences.Editor edit = pref.edit()
+                        .putString("device_token", deviceToken)
+                        .putBoolean("enabled", true)
+                        .putBoolean("gps_enabled", gpsRequested || enableGps);
+                if (pref.getString("last_alert_at", "").isEmpty())
+                    edit.putString("last_alert_at", response.optString("serverTime", ""));
+                edit.apply();
                 runOnUiThread(() -> {
-                    startForegroundService(new Intent(this, LocationService.class));
-                    promptBackgroundLocation();
-                    toast("Background GPS enabled");
+                    startStoredServiceIfEnabled();
+                    if (gpsRequested || enableGps) promptBackgroundLocation();
+                    toast((gpsRequested || enableGps) ? "Background alerts & driver tools enabled" : "Background alerts enabled");
                 });
             } catch (Exception e) {
-                runOnUiThread(() -> toast("Could not enable background GPS: " + e.getMessage()));
+                runOnUiThread(() -> toast("Could not enable background alerts: " + e.getMessage()));
+            } finally {
+                registeringDevice = false;
             }
         });
     }
@@ -191,8 +215,9 @@ public class MainActivity extends Activity {
 
     private void revokeAndStop() {
         String token = prefs().getString("device_token", "");
-        prefs().edit().putBoolean("enabled", false).remove("device_token").remove("pending_location").apply();
+        prefs().edit().putBoolean("enabled", false).putBoolean("gps_enabled", false).remove("device_token").remove("pending_location").remove("last_alert_at").apply();
         stopService(new Intent(this, LocationService.class));
+        stopService(new Intent(this, NotificationService.class));
         if (!token.isEmpty()) io.execute(() -> {
             try { postJson("/api/mobile/revoke", "{}", null, token); } catch (Exception ignored) {}
         });
@@ -269,16 +294,16 @@ public class MainActivity extends Activity {
         if (requestCode == REQ_LOCATION && hasForegroundLocation() && !pendingJwt.isEmpty()) {
             String jwt = pendingJwt;
             pendingJwt = "";
-            registerAndStart(jwt);
+            ensureRegistered(jwt, true);
         }
     }
 
     @Override
     protected void onResume() {
         super.onResume();
-        if (prefs().getBoolean("enabled", false) && hasForegroundLocation()) {
+        if (prefs().getBoolean("enabled", false)) {
             startStoredServiceIfEnabled();
-            if (hasBackgroundLocation()) promptBatteryExemption();
+            if (prefs().getBoolean("gps_enabled", false) && hasForegroundLocation() && hasBackgroundLocation()) promptBatteryExemption();
         }
     }
 
@@ -309,25 +334,21 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public void startBackgroundAlerts(String jwt) {
+            runOnUiThread(() -> ensureRegistered(jwt, false));
+        }
+
+        @JavascriptInterface
         public void startBackgroundGps(String jwt) {
             runOnUiThread(() -> {
-                SharedPreferences p = prefs();
-                if (p.getBoolean("enabled", false) && !p.getString("device_token", "").isEmpty()) {
-                    if (hasForegroundLocation()) {
-                        startForegroundService(new Intent(MainActivity.this, LocationService.class));
-                        promptBackgroundLocation();
-                    } else {
-                        pendingJwt = jwt;
-                        requestBasicPermissions();
-                    }
-                    return;
-                }
+                gpsRequested = true;
                 if (!hasForegroundLocation()) {
                     pendingJwt = jwt;
+                    ensureRegistered(jwt, false);
                     requestBasicPermissions();
                     return;
                 }
-                registerAndStart(jwt);
+                ensureRegistered(jwt, true);
             });
         }
 
@@ -340,7 +361,7 @@ public class MainActivity extends Activity {
         public String getGpsStatus() {
             JSONObject o = new JSONObject();
             try {
-                o.put("enabled", prefs().getBoolean("enabled", false));
+                o.put("enabled", prefs().getBoolean("gps_enabled", false));
                 o.put("backgroundPermission", hasBackgroundLocation());
                 o.put("foregroundPermission", hasForegroundLocation());
                 o.put("deviceRegistered", !prefs().getString("device_token", "").isEmpty());
