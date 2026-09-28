@@ -423,3 +423,19 @@ header{max-width:calc(100vw - var(--sidebar));overflow:hidden}
   .panel{width:100%;max-width:100%;min-width:0}
   .table-wrap{margin-right:0}
 }
+
+/* Geofence map picker */
+.geofence-builder{display:grid;gap:12px}
+.geofence-picker-map{width:100%;height:min(52vh,440px);min-height:300px;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#071421;touch-action:none}
+.geofence-map-toolbar{display:flex;gap:10px;align-items:center;justify-content:space-between;flex-wrap:wrap}
+.geofence-map-toolbar span{color:var(--muted);font-size:11px}
+.geofence-radius-row{display:flex;gap:12px;align-items:center}
+.geofence-radius-row input[type=range]{flex:1;min-width:0}
+.geofence-radius-row b{min-width:66px;text-align:right}
+.geofence-point-text{padding:9px 11px;border-radius:9px;background:rgba(56,217,150,.06);border:1px solid rgba(56,217,150,.2);color:#9fdac2;font-size:11px}
+.geofence-builder .leaflet-container{font:inherit}
+@media(max-width:600px){
+  .geofence-picker-map{height:46vh;min-height:280px}
+  .geofence-map-toolbar{align-items:stretch;flex-direction:column}
+  .geofence-map-toolbar button{width:100%}
+}
