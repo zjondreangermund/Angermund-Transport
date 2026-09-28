@@ -1091,6 +1091,17 @@ app.get('/api/gps/latest',auth,async(req,res)=>{const rows=pool?await q('SELECT 
 app.get('/api/gps/history/:vehicleId',auth,async(req,res)=>{const hours=Math.min(168,Math.max(1,num(req.query.hours)||24)),rows=pool?await q('SELECT vehicle_id AS "vehicleId",latitude,longitude,speed,heading,recorded_at AS "recordedAt" FROM gps_positions WHERE vehicle_id=$1 AND recorded_at>now()-($2||\' hours\')::interval ORDER BY recorded_at',[req.params.vehicleId,String(hours)]):memory.gps.filter(x=>x.vehicleId===req.params.vehicleId&&Date.now()-new Date(x.recordedAt)<hours*3600000);res.json(rows)});
 app.get('/api/geofences',auth,async(req,res)=>res.json(pool?await q('SELECT id,name,latitude,longitude,radius_m AS "radiusM",event_types AS "eventTypes",active FROM geofences ORDER BY name'):memory.geofences));
 app.post('/api/geofences',auth,roles('admin','manager','dispatcher'),async(req,res)=>{const f={id:crypto.randomUUID(),name:String(req.body.name||''),latitude:Number(req.body.latitude),longitude:Number(req.body.longitude),radiusM:Number(req.body.radiusM||500),eventTypes:req.body.eventTypes||['enter','exit'],active:true};if(!f.name||!Number.isFinite(f.latitude)||!Number.isFinite(f.longitude))return res.status(400).json({error:'name, latitude and longitude required'});if(pool)await q('INSERT INTO geofences(id,name,latitude,longitude,radius_m,event_types) VALUES($1,$2,$3,$4,$5,$6)',[f.id,f.name,f.latitude,f.longitude,f.radiusM,f.eventTypes]);else memory.geofences.push(f);emit('geofence',f);res.status(201).json(f)});
+app.patch('/api/geofences/:id',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
+  const id=String(req.params.id),name=String(req.body.name||'').trim(),latitude=Number(req.body.latitude),longitude=Number(req.body.longitude),radiusM=Number(req.body.radiusM);
+  if(!name||name.length>160||!Number.isFinite(latitude)||Math.abs(latitude)>90||!Number.isFinite(longitude)||Math.abs(longitude)>180||!Number.isFinite(radiusM)||radiusM<5||radiusM>50000)return res.status(400).json({error:'Enter a name, valid coordinates and a radius from 5 to 50,000 m'});
+  if(pool){
+    const c=await pool.connect();let updated;
+    try{await c.query('BEGIN');const result=await c.query('UPDATE geofences SET name=$2,latitude=$3,longitude=$4,radius_m=$5 WHERE id=$1 RETURNING id,name,latitude,longitude,radius_m AS "radiusM",event_types AS "eventTypes",active',[id,name,latitude,longitude,radiusM]);updated=result.rows[0];if(!updated){await c.query('ROLLBACK');return res.status(404).json({error:'Geofence not found'})}await c.query('DELETE FROM geofence_state WHERE geofence_id=$1',[id]);await c.query('COMMIT')}catch(e){await c.query('ROLLBACK');return res.status(500).json({error:e.message})}finally{c.release()}
+    emit('geofence',updated);return res.json(updated)
+  }
+  const f=memory.geofences.find(x=>x.id===id);if(!f)return res.status(404).json({error:'Geofence not found'});
+  Object.assign(f,{name,latitude,longitude,radiusM,states:{}});emit('geofence',f);res.json(f)
+});
 app.delete('/api/geofences/:id',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
   const id=String(req.params.id);
   if(pool){const rows=await q('DELETE FROM geofences WHERE id=$1 RETURNING id,name',[id]);if(!rows.length)return res.status(404).json({error:'Geofence not found'});emit('geofence-delete',{id,name:rows[0].name});return res.json({success:true,id})}
