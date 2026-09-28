@@ -1062,7 +1062,7 @@ function clientPayProfile(employeeId){
 function payslipGross(p){return p.gross!==undefined?num(p.gross):num(p.base)+num(p.tripPay)+num(p.incentive)+num(p.overtimePay||num(p.overtimeHours||p.overtime)*num(p.overtimeRate))}
 function payslipNet(p){return p.net!==undefined?num(p.net):payslipGross(p)+num(p.reimbursements)-num(p.advances)-num(p.paye)-num(p.ssc)-num(p.deductions)}
 function payroll(){
-  const period=payrollPeriodFilter||today().slice(0,7),rows=(db.payroll||[]).filter(x=>x.period===period).sort((a,b)=>driver(a.employeeId).localeCompare(driver(b.employeeId))),profiles=db.drivers.map(d=>({driver:d,profile:clientPayProfile(d.id)}));
+  const period=payrollPeriodFilter||today().slice(0,7),employees=workforce(),rows=(db.payroll||[]).filter(x=>x.period===period).sort((a,b)=>employeeName(a.employeeId).localeCompare(employeeName(b.employeeId))),profiles=employees.map(e=>({employee:e,profile:clientPayProfile(e.id)}));
   const totalNet=sum(rows,payslipNet),drafts=rows.filter(x=>x.status==='Draft').length,missing=profiles.filter(x=>num(x.profile.baseSalary)<=0).length;
   const payRows=rows.length?rows.map(p=>'<tr><td><b>'+esc(driver(p.employeeId))+'</b><br><small>'+esc(p.taxNumber||clientPayProfile(p.employeeId).taxNumber||'Tax no. not set')+'</small></td>'
     +'<td>'+money(p.base)+'</td><td>'+num(p.tripKm).toLocaleString()+' km</td><td>'+money(p.tripPay)+'</td><td>'+money(p.incentive)+'</td><td>'+money(p.overtimePay)+'</td><td>'+money(p.reimbursements)+'</td><td>'+money(p.advances)+'</td>'
