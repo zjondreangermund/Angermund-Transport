@@ -1547,7 +1547,8 @@ function initGeofencePicker(){
 async function useCurrentGeofenceLocation(showError=true){
   try{
     if($('useCurrentGeofence')){$('useCurrentGeofence').disabled=true;$('useCurrentGeofence').textContent='📍 Getting GPS…'}
-    const p=await currentPhonePosition();setGeofencePickerPoint(p.latitude,p.longitude,true);
+    const selectedBeforeRequest=geofenceDraftPoint;
+    const p=await currentPhonePosition();if(!selectedBeforeRequest&&geofenceDraftPoint)return false;setGeofencePickerPoint(p.latitude,p.longitude,true);
     if($('geofenceAccuracy'))$('geofenceAccuracy').textContent='Phone GPS accuracy: ±'+Math.round(num(p.accuracy))+' m';
     return true
   }catch(e){if(showError)notify('Current location unavailable: '+e.message);return false}
@@ -1560,9 +1561,10 @@ async function addGeofence(){
     +'<div class="form-grid"><div class="field full"><label>Geofence name</label><input id="geofenceName" placeholder="e.g. NBL Windhoek, Home yard, Oshakati depot"></div>'
     +'<div class="field"><label>Radius</label><div class="geofence-radius-row"><input id="geofenceRadius" type="range" min="25" max="5000" step="25" value="500"><b id="geofenceRadiusValue">500 m</b></div></div>'
     +'<div class="field"><label>Quick radius</label><select id="geofenceRadiusPreset"><option value="100">100 m</option><option value="250">250 m</option><option value="500" selected>500 m</option><option value="1000">1 km</option><option value="2000">2 km</option><option value="5000">5 km</option></select></div></div>'
-    +'<div class="geofence-map-toolbar"><button type="button" class="primary" id="useCurrentGeofence">📍 Use my current location</button><span id="geofenceAccuracy"></span></div>'
+    +'<div class="geofence-map-toolbar"><button type="button" class="primary" id="useCurrentGeofence">📍 Use Current Location</button><button type="button" class="ghost" id="pickGeofenceOnMap">Pick on Map</button><span id="geofenceAccuracy"></span></div>'
     +'<div id="geofencePickerMap" class="geofence-picker-map"></div>'
     +'<div id="geofencePointText" class="geofence-point-text">Tap the map to choose the geofence centre.</div>'
+    +'<details><summary>Advanced: enter coordinates manually</summary><div class="form-grid"><div class="field"><label>Latitude</label><input id="geofenceManualLat" type="number" min="-90" max="90" step="any"></div><div class="field"><label>Longitude</label><input id="geofenceManualLon" type="number" min="-180" max="180" step="any"></div></div><button type="button" class="ghost" id="applyGeofenceCoordinates">Place coordinates on map</button></details>'
     +'<div class="driver-modal-actions"><button type="button" class="ghost" id="cancelForm">Cancel</button><button class="primary">✓ SAVE GEOFENCE</button></div></div>';
   $('modal').classList.remove('hidden');
   initGeofencePicker();
@@ -1570,6 +1572,8 @@ async function addGeofence(){
   $('geofenceRadius').oninput=updateRadius;
   $('geofenceRadiusPreset').onchange=e=>{$('geofenceRadius').value=e.target.value;updateRadius()};
   $('useCurrentGeofence').onclick=()=>useCurrentGeofenceLocation(true);
+  $('pickGeofenceOnMap').onclick=()=>{geofencePickerMap?.invalidateSize();$('geofencePickerMap').scrollIntoView({behavior:'smooth',block:'center'});$('geofencePointText').textContent='Tap the exact spot on the map, or drag the marker to move it.'};
+  $('applyGeofenceCoordinates').onclick=()=>{const lat=Number($('geofenceManualLat').value),lon=Number($('geofenceManualLon').value);if(!$('geofenceManualLat').value||!$('geofenceManualLon').value||!Number.isFinite(lat)||!Number.isFinite(lon)||Math.abs(lat)>90||Math.abs(lon)>180)return notify('Enter valid latitude and longitude');setGeofencePickerPoint(lat,lon,true)};
   $('cancelForm').onclick=()=>{destroyGeofencePicker();$('modal').classList.add('hidden')};
   $('entryForm').onsubmit=async e=>{
     e.preventDefault();
@@ -1581,7 +1585,7 @@ async function addGeofence(){
       destroyGeofencePicker();$('modal').classList.add('hidden');await loadTracking();notify(name+' geofence saved')
     }catch(err){notify(err.message)}
   };
-  setTimeout(()=>useCurrentGeofenceLocation(false),180)
+  setTimeout(()=>{if(!geofenceDraftPoint&&$('geofencePickerMap'))useCurrentGeofenceLocation(false)},180)
 }
 function vapidKeyBytes(value){
   const pad='='.repeat((4-(value.length%4))%4),base64=(value+pad).replace(/-/g,'+').replace(/_/g,'/');
