@@ -469,7 +469,7 @@ async function linkTripLegGeofences(tripId,legId){
   const existingLoad=!loadPointOk?all.find(f=>f.active!==false&&[route.loadName,client?.name].filter(Boolean).some(n=>geofenceNameMatches(f.name,n))):null;
   const existingOff=!offPointOk?all.find(f=>f.active!==false&&[route.offloadName,route.name].filter(Boolean).some(n=>geofenceNameMatches(f.name,n))&&(!existingLoad||f.id!==existingLoad.id)):null;
   const load=existingLoad||await ensureOperationalGeofence({name:String(route.loadName||client?.name||'Loading point'),latitude:routeLoadLat,longitude:routeLoadLon,kind:'loading',radiusM:Math.max(250,num(route.loadingRadiusM)||500),aliases:[client?.name,route.name]});
-  const offload=existingOff||await ensureOperationalGeofence({name:String(route.offloadName||route.name||'Offloading point'),latitude:routeOffLat,longitude:routeOffLon,kind:'offloading',radiusM:Math.max(250,num(route.offloadingRadiusM)||500),aliases:[route.offloadName]});
+  const offload=existingOff||await ensureOperationalGeofence({name:String(route.offloadName||'Offloading point'),latitude:routeOffLat,longitude:routeOffLon,kind:'offloading',radiusM:Math.max(250,num(route.offloadingRadiusM)||500),aliases:[route.offloadName]});
   const linked=await mutateOpsState(state=>{
     const trip=(state.trips||[]).find(x=>x.id===tripId);if(!trip)return null;
     const tripLegsNow=ensureTripLegs(state,trip),target=tripLegsNow.find(x=>x.id===leg.id);if(!target)return null;
@@ -922,7 +922,9 @@ app.post('/api/admin/trips/:tripId/legs',auth,roles('admin','manager','dispatche
       state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:req.user.name||req.user.email||req.user.role,action:'Added '+leg.label+' to '+t.number+' · '+leg.load+' · N$'+leg.income.toFixed(2),linkedType:'trip',linkedId:t.id});state.audit=state.audit.slice(0,100);
       return{trip:t,leg}
     });
-    res.status(201).json(changed.result)
+    const geo=await linkTripLegGeofences(changed.result.trip.id,changed.result.leg.id);
+    const latest=await readOpsState(),trip=(latest.trips||[]).find(x=>x.id===changed.result.trip.id)||changed.result.trip,leg=ensureTripLegs(latest,trip).find(x=>x.id===changed.result.leg.id)||changed.result.leg;
+    res.status(201).json({trip,leg,geofences:geo,revision:geo?.revision||changed.revision})
   }catch(e){res.status(e.status||500).json({error:e.message})}
 });
 app.patch('/api/admin/trips/:tripId/legs/:legId',auth,roles('admin','manager','dispatcher','finance'),async(req,res)=>{
@@ -940,7 +942,9 @@ app.patch('/api/admin/trips/:tripId/legs/:legId',auth,roles('admin','manager','d
       leg.income=Number(calculateLegIncome(leg).toFixed(2));leg.updatedAt=new Date().toISOString();syncTripFromLegs(state,t);recalcTripCosts(state,t);
       return{trip:t,leg}
     });
-    res.json(changed.result)
+    const geo=await linkTripLegGeofences(changed.result.trip.id,changed.result.leg.id);
+    const latest=await readOpsState(),trip=(latest.trips||[]).find(x=>x.id===changed.result.trip.id)||changed.result.trip,leg=ensureTripLegs(latest,trip).find(x=>x.id===changed.result.leg.id)||changed.result.leg;
+    res.json({trip,leg,geofences:geo,revision:geo?.revision||changed.revision})
   }catch(e){res.status(e.status||500).json({error:e.message})}
 });
 app.delete('/api/admin/trips/:tripId/legs/:legId',auth,roles('admin','manager','dispatcher','finance'),async(req,res)=>{
