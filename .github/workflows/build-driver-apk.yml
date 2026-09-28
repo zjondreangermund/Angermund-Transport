@@ -1,5 +1,8 @@
 name: Build Angermund Driver APK
 
+permissions:
+  contents: write
+
 on:
   workflow_dispatch:
   push:
@@ -31,3 +34,11 @@ jobs:
           name: Angermund-Driver-APK
           path: android-driver/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      - name: Publish stable Android download
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cp android-driver/app/build/outputs/apk/debug/app-debug.apk Angermund-Transport.apk
+          gh release view android-latest >/dev/null 2>&1 || gh release create android-latest --title "Angermund Transport Android" --notes "Latest installable Android build for Angermund Transport."
+          gh release upload android-latest Angermund-Transport.apk --clobber
