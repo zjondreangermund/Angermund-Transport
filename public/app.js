@@ -1,6 +1,6 @@
 const STORE='angermund_transport_ops_v2',LEGACY_STORE='angermund_transport_erp_v1';
 const $=id=>document.getElementById(id),today=()=>new Date().toISOString().slice(0,10),uid=(p='id')=>`${p}_${Date.now().toString(36)}${Math.random().toString(36).slice(2,6)}`;
-let authToken=localStorage.getItem('angermund_token')||'',sessionUser=null,liveGps=[],geofences=[],serverNotifications=[],providerConfig={},pushDeviceStatus={supported:false,permission:typeof Notification!=='undefined'?Notification.permission:'unsupported',subscribed:false,serverCount:0},mapInstance=null,mapLayers=[],appUsers=[],usersLoaded=false,driverUploads=[],driverUploadsLoaded=false,activeUploadObjectUrl='',driverPreviewId='',driverGeoWatchId=null,lastDriverGpsSentAt=0,lastDriverGpsPoint=null,payrollPeriodFilter=new Date().toISOString().slice(0,7),mdcTripPrefill='',journeyQuoteLegs=[],crossBorderPackTripId='',crossBorderDocs=[],crossBorderDocsLoadedFor='';
+let authToken=localStorage.getItem('angermund_token')||'',sessionUser=null,liveGps=[],geofences=[],serverNotifications=[],providerConfig={},pushDeviceStatus={supported:false,permission:typeof Notification!=='undefined'?Notification.permission:'unsupported',subscribed:false,serverCount:0},mapInstance=null,mapLayers=[],geofencePickerMap=null,geofencePickerMarker=null,geofencePickerCircle=null,geofenceDraftPoint=null,appUsers=[],usersLoaded=false,driverUploads=[],driverUploadsLoaded=false,activeUploadObjectUrl='',driverPreviewId='',driverGeoWatchId=null,lastDriverGpsSentAt=0,lastDriverGpsPoint=null,payrollPeriodFilter=new Date().toISOString().slice(0,7),mdcTripPrefill='',journeyQuoteLegs=[],crossBorderPackTripId='',crossBorderDocs=[],crossBorderDocsLoadedFor='';
 async function api(url,options={}){const headers={...(options.headers||{})};if(authToken)headers.Authorization=`Bearer ${authToken}`;if(options.body&&!(options.body instanceof FormData))headers['Content-Type']='application/json';const res=await fetch(url,{...options,headers,body:options.body&&!(options.body instanceof FormData)&&typeof options.body!=='string'?JSON.stringify(options.body):options.body});const data=await res.json().catch(()=>({}));if(res.status===401){logout();throw Error(data.error||'Session expired')}if(!res.ok)throw Error(data.error||`Request failed (${res.status})`);return data}
 function logout(){stopDriverGpsWatch();authToken='';sessionUser=null;localStorage.removeItem('angermund_token');try{sessionStorage.removeItem('driver_gps_session');sessionStorage.removeItem('driver_gps_denied')}catch{};window.location.replace('/login?logout='+Date.now())}
 async function syncState(){if(!authToken||role==='driver')return;try{await api('/api/state',{method:'PUT',body:db})}catch(e){notify(`Sync pending: ${e.message}`)}}
@@ -1463,7 +1463,80 @@ async function gpsCheckIn(){if(!navigator.geolocation)return notify('GPS is not 
 async function loadTracking(){try{[liveGps,geofences]=await Promise.all([api('/api/gps/latest'),api('/api/geofences')]);if(page==='tracking')render()}catch(e){notify(e.message)}}
 async function loadNotifications(){try{serverNotifications=await api('/api/notifications');$('notificationCount').textContent=serverNotifications.filter(x=>!x.read).length;if(page==='notifications')render()}catch{}}
 function drawMap(){if(page!=='tracking'||!window.L||!$('fleetMap'))return;if(mapInstance){mapInstance.remove();mapInstance=null}mapInstance=L.map('fleetMap').setView([-22.57,17.08],6);if(L.maplibreGL)L.maplibreGL({style:providerConfig.mapStyle||'https://tiles.openfreemap.org/styles/liberty'}).addTo(mapInstance);else $('fleetMap').classList.add('map-provider-fallback');geofences.forEach(f=>L.circle([f.latitude,f.longitude],{radius:f.radiusM,color:'#ffbd4a',fillOpacity:.08}).bindPopup(`<b>${esc(f.name)}</b><br>${num(f.radiusM)} m`).addTo(mapInstance));db.routes.filter(routeAutoGpsReady).forEach(r=>{const approach=(num(r.approachKm)||5)*1000,arrival=(num(r.arrivalKm)||2)*1000;[[r.loadLat,r.loadLon,r.loadName||'Loading point','Loading'],[r.offloadLat,r.offloadLon,r.offloadName||'Offloading point','Offloading']].forEach(([lat,lon,name,type])=>{L.circle([num(lat),num(lon)],{radius:approach,fillOpacity:.025,weight:1,dashArray:'6,6'}).bindPopup(`<b>${esc(name)}</b><br>${esc(type)} approach · ${approach/1000} km`).addTo(mapInstance);L.circle([num(lat),num(lon)],{radius:arrival,fillOpacity:.06,weight:2}).bindPopup(`<b>${esc(name)}</b><br>${esc(type)} arrival · ${arrival/1000} km`).addTo(mapInstance)})});liveGps.forEach(p=>L.marker([p.latitude,p.longitude]).bindPopup(`<b>${esc(truck(p.vehicleId))}</b><br>${num(p.speed).toFixed(0)} km/h`).addTo(mapInstance));if(liveGps.length)mapInstance.fitBounds(liveGps.map(p=>[p.latitude,p.longitude]),{padding:[40,40],maxZoom:14})}
-async function addGeofence(){const name=prompt('Geofence name');if(!name)return;const latitude=Number(prompt('Latitude')),longitude=Number(prompt('Longitude')),radiusM=Number(prompt('Radius in metres','500'));if(!Number.isFinite(latitude)||!Number.isFinite(longitude))return notify('Valid coordinates required');try{await api('/api/geofences',{method:'POST',body:{name,latitude,longitude,radiusM}});await loadTracking()}catch(e){notify(e.message)}}
+function currentPhonePosition(){
+  return new Promise((resolve,reject)=>{
+    if(!navigator.geolocation)return reject(new Error('GPS is not available on this device'));
+    navigator.geolocation.getCurrentPosition(
+      p=>resolve({latitude:p.coords.latitude,longitude:p.coords.longitude,accuracy:p.coords.accuracy}),
+      e=>reject(new Error(e.message||'Could not get current location')),
+      {enableHighAccuracy:true,timeout:20000,maximumAge:5000}
+    )
+  })
+}
+function destroyGeofencePicker(){
+  if(geofencePickerMap){try{geofencePickerMap.remove()}catch{}geofencePickerMap=null}
+  geofencePickerMarker=null;geofencePickerCircle=null;geofenceDraftPoint=null
+}
+function setGeofencePickerPoint(lat,lon,zoom=true){
+  lat=Number(lat);lon=Number(lon);if(!Number.isFinite(lat)||!Number.isFinite(lon)||!geofencePickerMap)return;
+  geofenceDraftPoint={latitude:lat,longitude:lon};
+  if(!geofencePickerMarker)geofencePickerMarker=L.marker([lat,lon],{draggable:true}).addTo(geofencePickerMap);
+  else geofencePickerMarker.setLatLng([lat,lon]);
+  geofencePickerMarker.off('dragend').on('dragend',e=>{const p=e.target.getLatLng();setGeofencePickerPoint(p.lat,p.lng,false)});
+  const radius=Math.max(5,num($('geofenceRadius')?.value)||500);
+  if(!geofencePickerCircle)geofencePickerCircle=L.circle([lat,lon],{radius,weight:2,fillOpacity:.08}).addTo(geofencePickerMap);
+  else geofencePickerCircle.setLatLng([lat,lon]).setRadius(radius);
+  if(zoom)geofencePickerMap.setView([lat,lon],Math.max(geofencePickerMap.getZoom(),15));
+  if($('geofencePointText'))$('geofencePointText').textContent='Selected point ready · '+(radius>=1000?(radius/1000).toFixed(1)+' km':Math.round(radius)+' m')+' radius'
+}
+function initGeofencePicker(){
+  if(!window.L||!$('geofencePickerMap'))return;
+  destroyGeofencePicker();
+  geofencePickerMap=L.map('geofencePickerMap',{zoomControl:true}).setView([-22.57,17.08],12);
+  if(L.maplibreGL)L.maplibreGL({style:providerConfig.mapStyle||'https://tiles.openfreemap.org/styles/liberty'}).addTo(geofencePickerMap);
+  else L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'© OpenStreetMap'}).addTo(geofencePickerMap);
+  geofencePickerMap.on('click',e=>setGeofencePickerPoint(e.latlng.lat,e.latlng.lng,false));
+  setTimeout(()=>geofencePickerMap?.invalidateSize(),120)
+}
+async function useCurrentGeofenceLocation(showError=true){
+  try{
+    if($('useCurrentGeofence')){$('useCurrentGeofence').disabled=true;$('useCurrentGeofence').textContent='📍 Getting GPS…'}
+    const p=await currentPhonePosition();setGeofencePickerPoint(p.latitude,p.longitude,true);
+    if($('geofenceAccuracy'))$('geofenceAccuracy').textContent='Phone GPS accuracy: ±'+Math.round(num(p.accuracy))+' m';
+    return true
+  }catch(e){if(showError)notify('Current location unavailable: '+e.message);return false}
+  finally{if($('useCurrentGeofence')){$('useCurrentGeofence').disabled=false;$('useCurrentGeofence').textContent='📍 Use my current location'}}
+}
+async function addGeofence(){
+  $('modalTitle').textContent='Add geofence';
+  $('entryForm').innerHTML='<div class="geofence-builder">'
+    +'<div class="notice"><b>No coordinates needed.</b> Your phone location is selected automatically. Tap anywhere on the map or drag the pin to choose a different spot.</div>'
+    +'<div class="form-grid"><div class="field full"><label>Geofence name</label><input id="geofenceName" placeholder="e.g. NBL Windhoek, Home yard, Oshakati depot"></div>'
+    +'<div class="field"><label>Radius</label><div class="geofence-radius-row"><input id="geofenceRadius" type="range" min="25" max="5000" step="25" value="500"><b id="geofenceRadiusValue">500 m</b></div></div>'
+    +'<div class="field"><label>Quick radius</label><select id="geofenceRadiusPreset"><option value="100">100 m</option><option value="250">250 m</option><option value="500" selected>500 m</option><option value="1000">1 km</option><option value="2000">2 km</option><option value="5000">5 km</option></select></div></div>'
+    +'<div class="geofence-map-toolbar"><button type="button" class="primary" id="useCurrentGeofence">📍 Use my current location</button><span id="geofenceAccuracy"></span></div>'
+    +'<div id="geofencePickerMap" class="geofence-picker-map"></div>'
+    +'<div id="geofencePointText" class="geofence-point-text">Tap the map to choose the geofence centre.</div>'
+    +'<div class="driver-modal-actions"><button type="button" class="ghost" id="cancelForm">Cancel</button><button class="primary">✓ SAVE GEOFENCE</button></div></div>';
+  $('modal').classList.remove('hidden');
+  initGeofencePicker();
+  const updateRadius=()=>{const radius=Math.max(5,num($('geofenceRadius').value)||500);$('geofenceRadiusValue').textContent=radius>=1000?(radius/1000).toFixed(radius%1000?1:0)+' km':radius+' m';if(geofencePickerCircle)geofencePickerCircle.setRadius(radius);if(geofenceDraftPoint&&$('geofencePointText'))$('geofencePointText').textContent='Selected point ready · '+(radius>=1000?(radius/1000).toFixed(1)+' km':Math.round(radius)+' m')+' radius'};
+  $('geofenceRadius').oninput=updateRadius;
+  $('geofenceRadiusPreset').onchange=e=>{$('geofenceRadius').value=e.target.value;updateRadius()};
+  $('useCurrentGeofence').onclick=()=>useCurrentGeofenceLocation(true);
+  $('cancelForm').onclick=()=>{destroyGeofencePicker();$('modal').classList.add('hidden')};
+  $('entryForm').onsubmit=async e=>{
+    e.preventDefault();
+    const name=$('geofenceName').value.trim(),radiusM=Math.max(5,num($('geofenceRadius').value)||500);
+    if(!name)return notify('Enter a geofence name');
+    if(!geofenceDraftPoint)return notify('Choose the geofence position on the map or use current location');
+    try{
+      await api('/api/geofences',{method:'POST',body:{name,latitude:geofenceDraftPoint.latitude,longitude:geofenceDraftPoint.longitude,radiusM}});
+      destroyGeofencePicker();$('modal').classList.add('hidden');await loadTracking();notify(name+' geofence saved')
+    }catch(err){notify(err.message)}
+  };
+  setTimeout(()=>useCurrentGeofenceLocation(false),180)
+}
 function vapidKeyBytes(value){
   const pad='='.repeat((4-(value.length%4))%4),base64=(value+pad).replace(/-/g,'+').replace(/_/g,'/');
   const raw=atob(base64),out=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)out[i]=raw.charCodeAt(i);return out
