@@ -6,6 +6,11 @@
   "background_color": "#07111f",
   "theme_color": "#0d6efd",
   "icons": [
-    {"src":"angermund-icon.png","sizes":"512x512","type":"image/png","purpose":"any maskable"}
+    {
+      "src": "angermund-app-logo.webp",
+      "sizes": "512x512",
+      "type": "image/webp",
+      "purpose": "any maskable"
+    }
   ]
 }
