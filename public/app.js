@@ -1302,6 +1302,41 @@ function driverAccounts(){
   <section class="panel" style="margin-top:18px"><div class="toolbar"><div><h2>Drivers</h2><p class="muted-copy">Driver profiles link directly to their mobile trip account.</p></div>${role==='admin'?'<button class="primary" id="createDriverAccount">+ Driver login</button>':''}</div>${!usersLoaded?'<div class="empty">Loading accounts…</div>':driverRows}</section>
   <section class="panel" style="margin-top:18px"><div class="toolbar"><div><h2>Site & office staff</h2><p class="muted-copy">Add mechanics, site workers, warehouse, dispatch, finance, managers and admins; each role sees only the tools it needs.</p></div>${role==='admin'?'<button class="primary" id="createStaffAccount">+ Add staff</button>':''}</div>${usersLoaded?(staffRows||'<div class="empty">No staff accounts yet</div>'):'<div class="empty">Loading accounts…</div>'}</section>`
 }
+function openEmployeeForm(employeeId=''){
+  const e=employeeId?employeeRecord(employeeId):null,editing=Boolean(e?.id),v=e||{name:'',jobTitle:'',category:'Site Worker',employeeNumber:'',dateEmployed:'',status:'Active',bankName:'',bankAccountName:'',bankAccount:'',baseSalary:0,payeDefault:0,sscDefault:0};
+  $('modalTitle').textContent=(editing?'Edit':'Add')+' worker';
+  $('entryForm').innerHTML=`<div class="form-grid">
+    <div class="field"><label>Name</label><input id="empName" value="${esc(v.name||'')}" required></div>
+    <div class="field"><label>Job title</label><input id="empTitle" value="${esc(v.jobTitle||v.role||'')}" required></div>
+    <div class="field"><label>Category</label><select id="empCategory">${['Driver','Workshop','Administration','Site Worker'].map(x=>`<option ${x===(v.category||'Site Worker')?'selected':''}>${x}</option>`).join('')}</select></div>
+    <div class="field"><label>Status</label><select id="empStatus">${['Active','Inactive'].map(x=>`<option ${x===(v.status||'Active')?'selected':''}>${x}</option>`).join('')}</select></div>
+    <div class="field"><label>Employee / ID number</label><input id="empNumber" value="${esc(v.employeeNumber||'')}"></div>
+    <div class="field"><label>Date employed</label><input id="empDate" type="date" value="${/^\d{4}-\d{2}-\d{2}$/.test(v.dateEmployed||'')?esc(v.dateEmployed):''}"></div>
+    <div class="field"><label>Basic salary</label><input id="empSalary" type="number" step="0.01" value="${num(v.baseSalary)}"></div>
+    <div class="field"><label>PAYE default</label><input id="empPaye" type="number" step="0.01" value="${num(v.payeDefault)}"></div>
+    <div class="field"><label>SSC default</label><input id="empSsc" type="number" step="0.01" value="${num(v.sscDefault)}"></div>
+    <div class="field"><label>Bank</label><input id="empBank" value="${esc(v.bankName||'')}"></div>
+    <div class="field"><label>Bank account name</label><input id="empBankName" value="${esc(v.bankAccountName||'')}"></div>
+    <div class="field"><label>Bank account number</label><input id="empBankAccount" value="${esc(v.bankAccount||'')}"></div>
+    <div class="form-actions full"><button type="button" class="ghost" id="cancelForm">Cancel</button><button class="primary">${editing?'Save worker':'Add worker'}</button></div>
+  </div>`;
+  $('modal').classList.remove('hidden');$('cancelForm').onclick=()=>$('modal').classList.add('hidden');
+  $('entryForm').onsubmit=e=>{e.preventDefault();const category=$('empCategory').value,name=$('empName').value.trim(),id=editing?v.id:uid(category==='Driver'?'drv':'emp'),values={name,jobTitle:$('empTitle').value.trim(),category,employeeNumber:$('empNumber').value.trim(),dateEmployed:$('empDate').value,status:$('empStatus').value,active:$('empStatus').value==='Active',bankName:$('empBank').value.trim(),bankAccountName:$('empBankName').value.trim(),bankAccount:$('empBankAccount').value.trim(),baseSalary:num($('empSalary').value),payeDefault:num($('empPaye').value),sscDefault:num($('empSsc').value)};
+    if(!name||!values.jobTitle)return notify('Name and job title are required');
+    db.employees??=[];
+    if(editing)Object.assign(v,values);else db.employees.push({id,...values});
+    const existingDriver=get('drivers',id);
+    if(category==='Driver'&&!existingDriver.id)db.drivers.push({id,name,phone:'',license:'',prdpExpiry:'',passportExpiry:'',status:'Available',role:'Driver',score:0,employeeId:id});
+    if(category==='Driver'&&existingDriver.id){existingDriver.name=name;existingDriver.employeeId=id}
+    $('modal').classList.add('hidden');commit((editing?'Worker updated: ':'Worker added: ')+name,'employee',id)
+  };
+}
+function deleteEmployee(employeeId){
+  const e=employeeRecord(employeeId);if(!e?.id)return;
+  if(get('drivers',employeeId).id&&db.trips.some(t=>t.driverId===employeeId))return notify('This driver has trip history. Set the worker to Inactive instead of removing the record.');
+  if(!confirm('Remove '+e.name+' from the worker register?'))return;
+  db.employees=(db.employees||[]).filter(x=>x.id!==employeeId);db.drivers=(db.drivers||[]).filter(x=>x.id!==employeeId);db.payProfiles=(db.payProfiles||[]).filter(x=>(x.employeeId||x.driverId)!==employeeId);commit('Worker removed: '+e.name,'employee',employeeId)
+}
 function openStaffAccountForm(userId=''){
   const u=userId?appUsers.find(x=>x.id===userId):null,editing=Boolean(u),password=temporaryDriverPassword(),roles=['site_worker','workshop','warehouse','dispatcher','finance','manager','admin'];
   $('modalTitle').textContent=(editing?'Edit':'Add')+' staff account';
