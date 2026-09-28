@@ -672,6 +672,12 @@ app.post('/api/users',auth,roles('admin'),async(req,res)=>{
   const validRoles=['admin','manager','dispatcher','driver','warehouse','workshop','finance','site_worker'];
   if(!email||!name||password.length<10||!validRoles.includes(role))return res.status(400).json({error:'Valid name, email, role and a 10+ character password are required'});
   if(role==='driver'&&!driverId)return res.status(400).json({error:'Select the driver profile this login belongs to'});
+  if(role!=='driver'&&staffId){
+    const snapshot=await readOpsState(),employee=workforceEmployee(snapshot,staffId);
+    if(!employee)return res.status(400).json({error:'Select a valid worker profile'});
+    const linked=pool?await q('SELECT id FROM users WHERE staff_id=$1',[staffId]):memory.users.filter(x=>(x.staff_id||x.staffId)===staffId);
+    if(linked.length)return res.status(409).json({error:'This worker already has an app login'});
+  }
   if(role==='driver'&&driverId){
     const linked=pool?(await q('SELECT id FROM users WHERE driver_id=$1',[driverId])):memory.users.filter(x=>(x.driver_id||x.driverId)===driverId);
     if(linked.length)return res.status(409).json({error:'This driver already has a login. Reactivate or reset the existing account instead.'});
@@ -696,11 +702,18 @@ app.patch('/api/users/:id',auth,roles('admin'),async(req,res)=>{
     if(existing.id===req.user.sub&&role!==undefined&&role!=='admin')return res.status(400).json({error:'You cannot remove your own admin role'});
     const finalRole=role===undefined?existing.role:role,finalDriverId=driverId===undefined?(existing.driverId||existing.driver_id||null):driverId;
     if(finalRole==='driver'&&!finalDriverId)return res.status(400).json({error:'Driver role requires a linked driver profile'});
+    const requestedStaffId=staffId===undefined?(existing.staffId||existing.staff_id||null):staffId;
+    if(finalRole!=='driver'&&requestedStaffId){
+      const snapshot=await readOpsState(),employee=workforceEmployee(snapshot,requestedStaffId);
+      if(!employee)return res.status(400).json({error:'Select a valid worker profile'});
+      const dupStaff=pool?await q('SELECT id FROM users WHERE staff_id=$1 AND id<>$2',[requestedStaffId,id]):memory.users.filter(x=>(x.staff_id||x.staffId)===requestedStaffId&&x.id!==id);
+      if(dupStaff.length)return res.status(409).json({error:'That worker is already linked to another app login'});
+    }
     if(finalRole==='driver'&&finalDriverId){
       const dup=pool?await q('SELECT id FROM users WHERE driver_id=$1 AND id<>$2',[finalDriverId,id]):memory.users.filter(x=>(x.driver_id||x.driverId)===finalDriverId&&x.id!==id);
       if(dup.length)return res.status(409).json({error:'That driver is already linked to another login'});
     }
-    const final={name:name===undefined?existing.name:name,email:email===undefined?existing.email:email,role:finalRole,driverId:finalRole==='driver'?finalDriverId:null,staffId:finalRole==='driver'?null:(staffId===undefined?(existing.staffId||existing.staff_id||null):staffId),active:active===undefined?existing.active:active};
+    const final={name:name===undefined?existing.name:name,email:email===undefined?existing.email:email,role:finalRole,driverId:finalRole==='driver'?finalDriverId:null,staffId:finalRole==='driver'?null:requestedStaffId,active:active===undefined?existing.active:active};
     if(!final.name||!final.email)return res.status(400).json({error:'Name and email are required'});
     if(pool){
       const row=(await q('UPDATE users SET name=$2,email=$3,role=$4,driver_id=$5,staff_id=$6,active=$7 WHERE id=$1 RETURNING id,email,name,role,driver_id AS "driverId",staff_id AS "staffId",active,created_at AS "createdAt"',[id,final.name,final.email,final.role,final.driverId,final.staffId,final.active]))[0];
@@ -937,6 +950,32 @@ async function applyWorkforceEnvImport(){
     await q("UPDATE users SET active=false WHERE role='driver' AND driver_id IS NOT NULL AND NOT (driver_id = ANY($1::text[]))",[keep]);
   }
   return changed.result
+}
+
+function workforceNameKey(v){
+  return String(v||'').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,' ').trim().replace(/\s+/g,' ')
+}
+async function reconcileWorkforceUserLinks(){
+  if(!pool)return {linkedDrivers:0,linkedStaff:0};
+  const snapshot=await readOpsState(),employees=workforceEmployees(snapshot),drivers=snapshot.drivers||[];
+  const byName=(arr)=>{const m=new Map();for(const x of arr){const k=workforceNameKey(x.name);if(!k)continue;const a=m.get(k)||[];a.push(x);m.set(k,a)}return m};
+  const empNames=byName(employees),driverNames=byName(drivers),employeeIds=new Set(employees.map(x=>String(x.id))),driverIds=new Set(drivers.map(x=>String(x.id)));
+  const users=await q('SELECT id,name,role,driver_id AS "driverId",staff_id AS "staffId" FROM users');
+  let linkedDrivers=0,linkedStaff=0;
+  for(const u of users){
+    if(u.role==='driver'){
+      if(u.driverId&&driverIds.has(String(u.driverId)))continue;
+      const matches=driverNames.get(workforceNameKey(u.name))||[];
+      if(matches.length===1){await q('UPDATE users SET driver_id=$2,staff_id=NULL WHERE id=$1',[u.id,matches[0].id]);linkedDrivers++}
+      else if(u.driverId&&!driverIds.has(String(u.driverId)))await q('UPDATE users SET driver_id=NULL WHERE id=$1',[u.id]);
+      continue
+    }
+    if(u.staffId&&employeeIds.has(String(u.staffId)))continue;
+    const matches=empNames.get(workforceNameKey(u.name))||[];
+    if(matches.length===1){await q('UPDATE users SET staff_id=$2,driver_id=NULL WHERE id=$1',[u.id,matches[0].id]);linkedStaff++}
+    else if(u.staffId&&!employeeIds.has(String(u.staffId)))await q('UPDATE users SET staff_id=NULL WHERE id=$1',[u.id]);
+  }
+  return {linkedDrivers,linkedStaff}
 }
 
 app.post('/api/mdc/record',auth,roles('admin','manager','dispatcher','finance'),async(req,res)=>{
@@ -1542,4 +1581,4 @@ async function ensureMonthEndPayroll(){
 }
 app.get('/download/android',(req,res)=>res.redirect(302,'https://github.com/zjondreangermund/Angermund-Transport/releases/download/android-latest/Angermund-Transport.apk'));
 app.get('/login',(req,res)=>{res.setHeader('Cache-Control','no-store, no-cache, must-revalidate');res.sendFile(path.join(root,'index.html'))});app.use(express.static(root,{maxAge:'1h',setHeaders:(res,file)=>{if(file.endsWith('.html')||file.endsWith('/app.js')||file.endsWith('/styles.css')||file.endsWith('/sw.js'))res.setHeader('Cache-Control','no-store, no-cache, must-revalidate')}}));app.use((req,res)=>res.sendFile(path.join(root,'index.html')));
-initDb().then(async()=>{if(process.argv.includes('--init-only'))return pool?.end();const imported=await applyWorkforceEnvImport();if(!imported?.skipped)console.log('Workforce import applied',imported);app.listen(PORT,()=>console.log(`Angermund Transport V3 running on port ${PORT}`));setTimeout(ensureMonthEndPayroll,15000);setInterval(ensureMonthEndPayroll,6*60*60*1000);setTimeout(ensureOperationalAlerts,20000);setInterval(ensureOperationalAlerts,10*60*1000)}).catch(e=>{console.error('Startup failed',e);process.exit(1)});
+initDb().then(async()=>{if(process.argv.includes('--init-only'))return pool?.end();const imported=await applyWorkforceEnvImport();if(!imported?.skipped)console.log('Workforce import applied',imported);const linked=await reconcileWorkforceUserLinks();if(linked.linkedDrivers||linked.linkedStaff)console.log('Workforce user links reconciled',linked);app.listen(PORT,()=>console.log(`Angermund Transport V3 running on port ${PORT}`));setTimeout(ensureMonthEndPayroll,15000);setInterval(ensureMonthEndPayroll,6*60*60*1000);setTimeout(ensureOperationalAlerts,20000);setInterval(ensureOperationalAlerts,10*60*1000)}).catch(e=>{console.error('Startup failed',e);process.exit(1)});
