@@ -82,7 +82,39 @@ function tripSettlement(t){const reimbursable=sum(linked('expenses','tripId',t.i
 const invoicePaid=id=>sum(linked('payments','invoiceId',id),x=>x.amount),invoiceBalance=i=>Math.max(0,num(i.amount)-invoicePaid(i.id));
 function refreshInvoiceStatus(i){const paid=invoicePaid(i.id),balance=Math.max(0,num(i.amount)-paid);i.paidAmount=paid;i.balance=balance;i.status=balance<=.005?'Paid':paid>0?'Part Paid':i.due&&daysUntil(i.due)<0?'Overdue':'Unpaid';if(i.status==='Paid')i.paidDate=linked('payments','invoiceId',i.id)[0]?.date||today();return i.status}
 const currentDriver=()=>role==='driver'&&sessionUser?.driverId?sessionUser.driverId:(db.settings.currentDriver||db.drivers[0]?.id);
-const navGroups=[['Operate',[['command','⌂','Command Centre'],['dispatch','⇄','Dispatch Board'],['trips','↗','Trips & Loads'],['driverPortal','◉','Driver Workspace'],['tasks','✓','Tasks & Approvals']]],['Live Control',[['tracking','⌖','Live GPS & Geofences'],['notifications','🔔','Alerts & Notifications'],['driverUploads','📎','Driver Uploads']]],['Fleet',[['fleet','▣','Fleet & GPS'],['inspections','☑','Inspections'],['diesel','◉','Diesel Control'],['workshop','⚙','Workshop & Service'],['tyres','◎','Tyre Register'],['documents','▤','Documents & Permits'],['incidents','!','Incidents & Discipline']]],['Business',[['clients','♧','Clients & Routes'],['invoices','▥','Invoices & Debtors'],['roadCharges','🛣','MDC & Road Charges'],['payroll','$','Payroll & Payslips'],['rates','⌁','Rates & Quotations'],['reports','▥','Reports & P&L']]],['System',[['automation','✦','Smart Inbox'],['knowledge','?','Roles & Requirements'],['driverAccounts','👤','Driver Accounts'],['settings','⚙','Settings & Data']]]];
+const navGroups=[
+  ['Operations',[
+    ['command','⌂','Command Centre'],
+    ['dispatch','⇄','Dispatch Board'],
+    ['trips','↗','Trips & Loads'],
+    ['fleet','▣','Fleet & Vehicles'],
+    ['driverAccounts','👥','Drivers & Staff'],
+    ['clients','♧','Clients & Routes'],
+    ['diesel','⛽','Diesel Control'],
+    ['invoices','▥','Invoices & Payments'],
+    ['payroll','💵','Payroll & Payslips'],
+    ['roadCharges','🛣','MDC & Road Charges'],
+    ['tasks','✓','Tasks & Approvals']
+  ]],
+  ['Live Feed',[
+    ['tracking','⌖','Live GPS & Geofences'],
+    ['notifications','🔔','Alerts & Notifications'],
+    ['driverUploads','📎','Driver Uploads']
+  ]],
+  ['More',[
+    ['driverPortal','◉','Driver Workspace'],
+    ['inspections','☑','Inspections'],
+    ['workshop','⚙','Workshop & Service'],
+    ['tyres','◎','Tyre Register'],
+    ['documents','▤','Documents & Permits'],
+    ['incidents','!','Incidents & Discipline'],
+    ['rates','⌁','Rates & Quotations'],
+    ['reports','▥','Reports & P&L'],
+    ['automation','✦','Smart Document Inbox'],
+    ['knowledge','?','Roles & Requirements'],
+    ['settings','⚙','Settings & Data']
+  ],true]
+];
 const allowed={manager:['command','dispatch','trips','tasks','tracking','notifications','driverUploads','fleet','inspections','diesel','workshop','tyres','documents','incidents','clients','invoices','roadCharges','payroll','rates','reports','automation','knowledge'],driver:['driverPortal','tracking','notifications','knowledge'],warehouse:['command','dispatch','trips','tasks','notifications','documents','knowledge'],workshop:['command','fleet','inspections','diesel','workshop','tyres','documents','tasks','notifications','driverUploads','knowledge'],finance:['command','trips','clients','invoices','roadCharges','payroll','rates','reports','tasks','notifications','driverUploads','settings'],dispatcher:['command','dispatch','trips','driverPortal','tracking','notifications','driverUploads','fleet','inspections','diesel','documents','incidents','clients','roadCharges','tasks','automation','knowledge']};
 const canView=id=>role==='admin'||(allowed[role]||[]).includes(id);
 let navigationReady=false,lastExitBackAt=0,closingModalFromBack=false;
@@ -119,9 +151,32 @@ function initNavigationHistory(){
     else if(!visible&&history.state?.modal)history.back()
   }).observe($('modal'),{attributes:true,attributeFilter:['class']})
 }
-const hints={command:'Live company risks, movement and financial health',dispatch:'Control every load from booking to invoice',trips:'One source of truth for loads, costs, proof and profit',driverPortal:'Assigned work, safety checks, proof and requirements',tasks:'Work queue, approvals and overdue actions',tracking:'Live positions, route trails and location-based alerts',notifications:'Push, WhatsApp, email and in-app exception alerts',driverUploads:'Receipts, PODs and photos uploaded by drivers',fleet:'Availability, GPS, utilization and compliance',inspections:'Pre-trip, post-trip and defect control',diesel:'Every litre linked to truck, driver and trip',workshop:'Maintenance planning, defects and service costs',tyres:'Tyre life, position, cost and replacement',documents:'Company, driver, vehicle and border compliance',incidents:'Safety, damage, warnings and corrective actions',clients:'Customers, contacts and standard routes',invoices:'Trip-to-invoice control and debtors',roadCharges:'Namibian mass-distance charges linked to each trip',payroll:'Automatic month-end driver payslips, incentives and advances',rates:'Diesel-linked quotes and standing charges',reports:'Linked operational and financial performance',automation:'Verify scans before records are created',knowledge:'Duties, policies and checklists by role',driverAccounts:'Create, link and manage simple driver logins',settings:'Defaults, roles and data protection'};
-function renderNav(){$('nav').innerHTML=navGroups.map(([g,items])=>{const v=items.filter(x=>canView(x[0]));return v.length?`<div class="nav-section">${g}</div>${v.map(([id,icon,label])=>`<button data-page="${id}" class="${page===id?'active':''}"><span>${icon}</span>${label}</button>`).join('')}`:''}).join('');$('nav').querySelectorAll('button').forEach(b=>b.onclick=()=>go(b.dataset.page))}
-function render(){document.body.classList.toggle('driver-mode',role==='driver');if($('mobileSidebarRole'))$('mobileSidebarRole').textContent=roleLabel();if(!canView(page))page=role==='driver'?'driverPortal':'command';renderNav();$('pageTitle').textContent={command:'Command Centre',driverPortal:'Driver Workspace',automation:'Smart Document Inbox',knowledge:'Roles & Requirements',driverAccounts:'Driver Accounts'}[page]||navGroups.flatMap(x=>x[1]).find(x=>x[0]===page)?.[2]||'Operations';$('pageHint').textContent=hints[page]||'';$('roleSelect').value=role;$('quickTripBtn').style.display=['driver','workshop'].includes(role)?'none':'';const driverBar=role==='driver'&&page!=='driverPortal'?'<nav class="driver-bottom"><button class="nav-to" data-page="driverPortal">🚛<span>Trip</span></button><button class="nav-to '+(page==='notifications'?'active':'')+'" data-page="notifications">🔔<span>Alerts</span></button><button type="button" id="driverHelpBtn">👤<span>Help</span></button><button type="button" id="driverLogoutBottom">↪<span>Log out</span></button></nav>':'';$('app').innerHTML=(views[page]||views.command)()+driverBar;wire()}
+const hints={command:'Live company risks, movement and financial health',dispatch:'Control every load from booking to invoice',trips:'One source of truth for loads, costs, proof and profit',driverPortal:'Assigned work, safety checks, proof and requirements',tasks:'Work queue, approvals and overdue actions',tracking:'Live positions, route trails and location-based alerts',notifications:'Push, WhatsApp, email and in-app exception alerts',driverUploads:'Receipts, PODs and photos uploaded by drivers',fleet:'Availability, GPS, utilization and compliance',inspections:'Pre-trip, post-trip and defect control',diesel:'Every litre linked to truck, driver and trip',workshop:'Maintenance planning, defects and service costs',tyres:'Tyre life, position, cost and replacement',documents:'Company, driver, vehicle and border compliance',incidents:'Safety, damage, warnings and corrective actions',clients:'Customers, contacts and standard routes',invoices:'Invoices, payments, balances and debtor control',roadCharges:'Namibian mass-distance charges linked to each trip',payroll:'Automatic month-end driver payslips, incentives and advances',rates:'Diesel-linked quotes and standing charges',reports:'Linked operational and financial performance',automation:'Verify scans before records are created',knowledge:'Duties, policies and checklists by role',driverAccounts:'Drivers, staff profiles and mobile account access',settings:'Defaults, roles and data protection'};
+function renderNav(){
+  const nav=$('nav'),stored=localStorage.getItem('angermund_nav_more_open')==='1';
+  let html='';
+  navGroups.forEach(group=>{
+    const g=group[0],items=group[1],collapsible=Boolean(group[2]),v=items.filter(x=>canView(x[0]));
+    if(!v.length)return;
+    if(!collapsible){
+      html+='<div class="nav-section">'+g+'</div>'+v.map(x=>'<button data-page="'+x[0]+'" class="'+(page===x[0]?'active':'')+'"><span>'+x[1]+'</span><span class="nav-label">'+x[2]+'</span></button>').join('');
+      return;
+    }
+    const activeInside=v.some(x=>x[0]===page),open=activeInside||stored;
+    html+='<button type="button" class="nav-more-toggle '+(open?'open':'')+'" aria-expanded="'+(open?'true':'false')+'"><span>•••</span><span class="nav-label">'+g+'</span><b>⌄</b></button>';
+    html+='<div class="nav-more-items '+(open?'open':'')+'">'+v.map(x=>'<button data-page="'+x[0]+'" class="'+(page===x[0]?'active':'')+'"><span>'+x[1]+'</span><span class="nav-label">'+x[2]+'</span></button>').join('')+'</div>';
+  });
+  nav.innerHTML=html;
+  nav.querySelectorAll('button[data-page]').forEach(b=>b.onclick=()=>go(b.dataset.page));
+  const more=nav.querySelector('.nav-more-toggle');
+  if(more)more.onclick=()=>{
+    const items=nav.querySelector('.nav-more-items'),open=!more.classList.contains('open');
+    more.classList.toggle('open',open);if(items)items.classList.toggle('open',open);
+    more.setAttribute('aria-expanded',String(open));
+    localStorage.setItem('angermund_nav_more_open',open?'1':'0');
+  };
+}
+function render(){document.body.classList.toggle('driver-mode',role==='driver');if($('mobileSidebarRole'))$('mobileSidebarRole').textContent=roleLabel();if(!canView(page))page=role==='driver'?'driverPortal':'command';renderNav();$('pageTitle').textContent={command:'Command Centre',driverPortal:'Driver Workspace',automation:'Smart Document Inbox',knowledge:'Roles & Requirements',driverAccounts:'Drivers & Staff'}[page]||navGroups.flatMap(x=>x[1]).find(x=>x[0]===page)?.[2]||'Operations';$('pageHint').textContent=hints[page]||'';$('roleSelect').value=role;$('quickTripBtn').style.display=['driver','workshop'].includes(role)?'none':'';const driverBar=role==='driver'&&page!=='driverPortal'?'<nav class="driver-bottom"><button class="nav-to" data-page="driverPortal">🚛<span>Trip</span></button><button class="nav-to '+(page==='notifications'?'active':'')+'" data-page="notifications">🔔<span>Alerts</span></button><button type="button" id="driverHelpBtn">👤<span>Help</span></button><button type="button" id="driverLogoutBottom">↪<span>Log out</span></button></nav>':'';$('app').innerHTML=(views[page]||views.command)()+driverBar;wire()}
 const kpi=(l,v,s='',tone='')=>`<div class="kpi"><span>${l}</span><strong class="${tone}">${v}</strong><small>${s}</small></div>`;
 function badge(v){const w=/pending|planned|due|expir|unpaid|part|medium|in transit|open/i.test(v),b=/overdue|failed|critical|out of service|rejected/i.test(v);return `<span class="badge ${b?'negative':w?'warn':''}">${esc(v)}</span>`}
 function complianceAlerts(){const out=[];db.permits.forEach(p=>{const d=daysUntil(p.expiry);if(d<45)out.push({text:`${p.type} for ${p.ownerType==='truck'?truck(p.ownerId):driver(p.ownerId)} ${d<0?'expired':`expires in ${d} days`}`,tone:d<0?'bad':'warn'})});db.drivers.forEach(x=>{const d=daysUntil(x.prdpExpiry);if(d<45)out.push({text:`PrDP for ${x.name} ${d<0?'expired':`expires in ${d} days`}`,tone:d<0?'bad':'warn'})});return out}
