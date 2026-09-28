@@ -312,7 +312,8 @@ async function initDb(){if(pool){await pool.query(`CREATE TABLE IF NOT EXISTS us
 CREATE TABLE IF NOT EXISTS app_state(id integer PRIMARY KEY DEFAULT 1 CHECK(id=1),payload jsonb NOT NULL DEFAULT '{}'::jsonb,revision bigint NOT NULL DEFAULT 0,updated_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS gps_positions(id bigserial PRIMARY KEY,vehicle_id text NOT NULL,driver_id text,trip_id text,latitude double precision NOT NULL,longitude double precision NOT NULL,speed double precision DEFAULT 0,heading double precision DEFAULT 0,accuracy double precision,source text DEFAULT 'driver',recorded_at timestamptz DEFAULT now());
 CREATE INDEX IF NOT EXISTS gps_vehicle_time ON gps_positions(vehicle_id,recorded_at DESC);
-CREATE TABLE IF NOT EXISTS geofences(id uuid PRIMARY KEY,name text NOT NULL,latitude double precision NOT NULL,longitude double precision NOT NULL,radius_m double precision NOT NULL,event_types text[] DEFAULT ARRAY['enter','exit'],active boolean DEFAULT true,created_at timestamptz DEFAULT now());
+CREATE TABLE IF NOT EXISTS geofences(id uuid PRIMARY KEY,name text NOT NULL,latitude double precision NOT NULL,longitude double precision NOT NULL,radius_m double precision NOT NULL,event_types text[] DEFAULT ARRAY['enter','exit'],kind text DEFAULT 'custom',active boolean DEFAULT true,created_at timestamptz DEFAULT now());
+ALTER TABLE geofences ADD COLUMN IF NOT EXISTS kind text DEFAULT 'custom';
 CREATE TABLE IF NOT EXISTS geofence_state(vehicle_id text NOT NULL,geofence_id uuid REFERENCES geofences(id) ON DELETE CASCADE,inside boolean NOT NULL,updated_at timestamptz DEFAULT now(),PRIMARY KEY(vehicle_id,geofence_id));
 CREATE TABLE IF NOT EXISTS notifications(id uuid PRIMARY KEY,type text NOT NULL,severity text DEFAULT 'info',title text NOT NULL,message text NOT NULL,role text,driver_id text,linked_type text,linked_id text,read boolean DEFAULT false,created_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS push_subscriptions(id bigserial PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE CASCADE,subscription jsonb NOT NULL,created_at timestamptz DEFAULT now());
@@ -393,6 +394,30 @@ function routeTripZones(route){
     roundTrip:Boolean(route.roundTrip)||/[↔]|round\s*trip|return/i.test(String(route.name||'')+' '+String(route.notes||''))
   };
 }
+function normalizedGeofenceKind(f){
+  const kind=String(f?.kind||'').trim().toLowerCase(),name=String(f?.name||'').trim().toLowerCase();
+  if(kind==='depot')return 'depot';
+  if(/angermund\s*transport|company\s*depot|main\s*depot|home\s*yard/.test(name))return 'depot';
+  if(kind==='loading'||kind==='offloading'||kind==='custom')return kind;
+  return 'custom'
+}
+function geofenceInside(pos,f,extra=0){
+  if(!pos||!f)return false;
+  const radius=Math.max(5,num(f.radius_m||f.radiusM)||500)+Math.max(0,num(extra));
+  return distance(pos,{latitude:num(f.latitude),longitude:num(f.longitude)})<=radius
+}
+function depotGeofenceForTrip(fences,zones){
+  const depots=(fences||[]).filter(f=>f.active!==false&&normalizedGeofenceKind(f)==='depot');
+  if(!depots.length)return null;
+  return depots.sort((a,b)=>distance(zones.load,{latitude:num(a.latitude),longitude:num(a.longitude)})-distance(zones.load,{latitude:num(b.latitude),longitude:num(b.longitude)}))[0]
+}
+async function previousVehiclePosition(pos){
+  if(pool){
+    return (await q('SELECT latitude,longitude,recorded_at AS "recordedAt" FROM gps_positions WHERE vehicle_id=$1 AND recorded_at<$2 ORDER BY recorded_at DESC LIMIT 1',[pos.vehicleId,pos.recordedAt]))[0]||null
+  }
+  const at=new Date(pos.recordedAt).getTime();
+  return memory.gps.filter(x=>x.vehicleId===pos.vehicleId&&new Date(x.recordedAt).getTime()<at).sort((a,b)=>new Date(b.recordedAt)-new Date(a.recordedAt))[0]||null
+}
 async function tripGeoNotify(trip,title,message,severity='info'){
   await Promise.allSettled([
     createNotification({type:'trip-geofence',severity,title,message,role:'driver',driverId:trip.driverId,linkedType:'trip',linkedId:trip.id}),
@@ -401,7 +426,7 @@ async function tripGeoNotify(trip,title,message,severity='info'){
 }
 function serverTripPriority(t){
   const status=String(t?.status||'').toLowerCase();
-  if(/loading|in transit|at loading|at offloading|awaiting pod|return journey/.test(status))return 500;
+  if(/loading|to loading|loaded|departure pending|in transit|at loading|at offloading|awaiting pod|return journey/.test(status))return 500;
   if(/planned|assigned|booked/.test(status))return 400;
   if(/delivered/.test(status)&&!t.driverComplete)return 200;
   return 100
@@ -412,75 +437,133 @@ async function evaluateTripZones(pos){
   if(!active)return;
   const activeLeg=activeTripLegServer(active),route=(snapshot.routes||[]).find(r=>r.id===(activeLeg?.routeId||active.routeId)),zones=routeTripZones(route),multi=Array.isArray(active.legs)&&active.legs.length>1;
   if(!zones)return;
-  const preliminaryGeo=activeLeg?.geo||active.geo||{},loadM=distance(pos,zones.load),offM=distance(pos,zones.offload),alreadyDeparted=Boolean(preliminaryGeo.loadDepartedAt)||String(activeLeg?.status||'').toLowerCase()==='in transit'||(!multi&&(num(active.stage)>=3||['In transit','At offloading','Return journey','Delivered','Returned'].includes(active.status)));
+
+  const fences=pool?await q('SELECT id,name,latitude,longitude,radius_m AS "radiusM",event_types AS "eventTypes",kind,active FROM geofences WHERE active=true'):memory.geofences.filter(x=>x.active!==false);
+  const depot=depotGeofenceForTrip(fences,zones),prevPos=depot?await previousVehiclePosition(pos):null;
+  const preliminaryGeo=activeLeg?.geo||active.geo||{},loadM=distance(pos,zones.load),offM=distance(pos,zones.offload);
+  const started=Boolean(preliminaryGeo.tripStartedAt||active.startedAt||String(activeLeg?.status||'').toLowerCase()==='in transit'||(!multi&&(num(active.stage)>=3||['In transit','At offloading','Return journey','Delivered','Returned'].includes(active.status))));
+  const depotM=depot?distance(pos,{latitude:num(depot.latitude),longitude:num(depot.longitude)}):Infinity;
+  const prevDepotM=depot&&prevPos?distance(prevPos,{latitude:num(depot.latitude),longitude:num(depot.longitude)}):Infinity;
+  const prevOffM=prevPos?distance(prevPos,zones.offload):Infinity;
+  const depotInside=depot?geofenceInside(pos,depot):false,prevDepotInside=depot&&prevPos?geofenceInside(prevPos,depot):false;
+  const movingTowardOffload=Boolean(prevPos)&&offM+75<prevOffM;
+  const movingTowardDepot=Boolean(prevPos)&&depotM+75<prevDepotM;
+  const directDeparture=Boolean(depot&&preliminaryGeo.loadDepartedAt&&!preliminaryGeo.loadedAtDepotAt&&!started&&!depotInside&&loadM>=zones.departM&&movingTowardOffload&&!movingTowardDepot);
+  const depotReturn=Boolean(depot&&preliminaryGeo.loadDepartedAt&&!started&&depotInside&&!preliminaryGeo.loadedAtDepotAt);
+  const depotExit=Boolean(depot&&preliminaryGeo.loadedAtDepotAt&&!started&&!depotInside&&(prevDepotInside||depotM>(Math.max(5,num(depot.radius_m||depot.radiusM)||500)+100)));
+  const collectionExit=Boolean(depot&&!preliminaryGeo.loadArrivedAt&&!started&&prevDepotInside&&!depotInside&&!preliminaryGeo.collectionDepartedAt);
   const possible=
-    (!alreadyDeparted&&!preliminaryGeo.loadApproachAt&&loadM<=zones.approachM)||
-    (!alreadyDeparted&&!preliminaryGeo.loadArrivedAt&&loadM<=zones.arrivalM)||
+    collectionExit||
+    (!started&&!preliminaryGeo.loadApproachAt&&loadM<=zones.approachM)||
+    (!started&&!preliminaryGeo.loadArrivedAt&&loadM<=zones.arrivalM)||
     (preliminaryGeo.loadArrivedAt&&!preliminaryGeo.loadDepartedAt&&loadM>=zones.departM)||
-    (alreadyDeparted&&!preliminaryGeo.offloadApproachAt&&offM<=zones.approachM)||
-    (alreadyDeparted&&!preliminaryGeo.offloadArrivedAt&&offM<=zones.arrivalM)||
+    depotReturn||depotExit||directDeparture||
+    (started&&!preliminaryGeo.offloadApproachAt&&offM<=zones.approachM)||
+    (started&&!preliminaryGeo.offloadArrivedAt&&offM<=zones.arrivalM)||
     (preliminaryGeo.offloadArrivedAt&&!preliminaryGeo.offloadDepartedAt&&offM>=zones.departM)||
     (!multi&&zones.roundTrip&&preliminaryGeo.offloadDepartedAt&&!preliminaryGeo.returnApproachAt&&loadM<=zones.approachM)||
     (!multi&&zones.roundTrip&&preliminaryGeo.returnApproachAt&&!preliminaryGeo.returnArrivedAt&&loadM<=zones.arrivalM);
   if(!possible)return;
+
   const changed=await mutateOpsState(async state=>{
     const t=(state.trips||[]).find(x=>x.id===active.id),currentLeg=t?activeTripLegServer(t):null,r=(state.routes||[]).find(x=>x.id===(currentLeg?.routeId||active.routeId)),z=routeTripZones(r),multiLeg=Array.isArray(t?.legs)&&t.legs.length>1;
     if(!t||!z)return{events:[]};
     if(currentLeg)currentLeg.geo??={};else t.geo??={};
-    state.tasks??=[];
-    state.trucks??=[];
-    state.drivers??=[];
-    const g=currentLeg?currentLeg.geo:t.geo,now=new Date().toISOString(),lm=distance(pos,z.load),om=distance(pos,z.offload),events=[],km=m=>(m/1000).toFixed(1);if((num(t.stage)>=3||['In transit','At offloading','Return journey','Delivered','Returned'].includes(t.status))&&!g.loadDepartedAt)g.loadDepartedAt=t.startedAt||now;
-    if(!g.loadApproachAt&&lm<=z.approachM){
-      g.loadApproachAt=now;
-      events.push({title:t.number+' approaching loading point',message:pos.vehicleId+' is '+km(lm)+' km from '+z.load.name+'.'});
-    }
-    if(!g.loadArrivedAt&&lm<=z.arrivalM){
-      g.loadArrivedAt=now;g.loadArrivalPosition={latitude:pos.latitude,longitude:pos.longitude};t.stage=Math.max(2,num(t.stage)||1);t.status='At loading';if(currentLeg)currentLeg.status='At loading';
-      events.push({title:t.number+' arrived at loading',message:pos.vehicleId+' arrived at '+z.load.name+' ('+km(lm)+' km from pin).'});
-    }
-    if(g.loadArrivedAt&&!g.loadDepartedAt&&lm>=z.departM){
-      g.loadDepartedAt=now;g.loadDeparturePosition={latitude:pos.latitude,longitude:pos.longitude};t.stage=Math.max(3,num(t.stage)||1);t.status='In transit';t.startedAt=t.startedAt||now;if(currentLeg){currentLeg.status='In transit';currentLeg.startedAt=currentLeg.startedAt||now;}
+    state.tasks??=[];state.trucks??=[];state.drivers??=[];
+    const g=currentLeg?currentLeg.geo:t.geo,now=new Date().toISOString(),lm=distance(pos,z.load),om=distance(pos,z.offload),events=[],km=m=>(m/1000).toFixed(1);
+    const dep=depotGeofenceForTrip(fences,z),depInside=dep?geofenceInside(pos,dep):false,prevDepInside=dep&&prevPos?geofenceInside(prevPos,dep):false;
+    const depM=dep?distance(pos,{latitude:num(dep.latitude),longitude:num(dep.longitude)}):Infinity;
+    const prevDepM=dep&&prevPos?distance(prevPos,{latitude:num(dep.latitude),longitude:num(dep.longitude)}):Infinity;
+    const previousOffM=prevPos?distance(prevPos,z.offload):Infinity;
+    const statusStarted=()=>Boolean(g.tripStartedAt||t.startedAt||String(currentLeg?.status||'').toLowerCase()==='in transit'||(!multiLeg&&(num(t.stage)>=3||['In transit','At offloading','Return journey','Delivered','Returned'].includes(t.status))));
+    const startTrip=(reason,at=now)=>{
+      if(statusStarted())return false;
+      g.tripStartedAt=at;g.tripStartReason=reason;
+      t.stage=Math.max(3,num(t.stage)||1);t.status='In transit';t.startedAt=t.startedAt||at;
+      if(currentLeg){currentLeg.status='In transit';currentLeg.startedAt=currentLeg.startedAt||at}
       const tr=state.trucks.find(x=>x.id===t.truckId);if(tr)tr.status='On trip';
       const dr=state.drivers.find(x=>x.id===t.driverId);if(dr)dr.status='On trip';
-      events.push({title:t.number+' departed loading point',message:pos.vehicleId+' has left '+z.load.name+' and is now '+km(lm)+' km away. Trip changed to In transit.'});
+      return true
+    };
+    if((num(t.stage)>=3||t.startedAt||['In transit','At offloading','Return journey','Delivered','Returned'].includes(t.status))&&!g.tripStartedAt)g.tripStartedAt=t.startedAt||now;
+
+    if(dep&&!g.loadArrivedAt&&!statusStarted()&&!g.collectionDepartedAt&&prevDepInside&&!depInside){
+      g.collectionDepartedAt=now;g.collectionDeparturePosition={latitude:pos.latitude,longitude:pos.longitude};
+      t.stage=Math.max(2,num(t.stage)||1);t.status='To loading';if(currentLeg)currentLeg.status='To loading';
+      events.push({title:t.number+' truck collected',message:pos.vehicleId+' left '+dep.name+' and is heading to the loading point. The transport trip has not started yet.'})
     }
-    if(g.loadDepartedAt&&!g.offloadApproachAt&&om<=z.approachM){
+    if(!statusStarted()&&!g.loadApproachAt&&lm<=z.approachM){
+      g.loadApproachAt=now;
+      events.push({title:t.number+' approaching loading point',message:pos.vehicleId+' is '+km(lm)+' km from '+z.load.name+'.'})
+    }
+    if(!statusStarted()&&!g.loadArrivedAt&&lm<=z.arrivalM){
+      g.loadArrivedAt=now;g.loadArrivalPosition={latitude:pos.latitude,longitude:pos.longitude};g.loadWasAtDepot=Boolean(dep&&depInside);
+      t.stage=Math.max(2,num(t.stage)||1);t.status='At loading';if(currentLeg)currentLeg.status='At loading';
+      events.push({title:t.number+' arrived at loading',message:pos.vehicleId+' arrived at '+z.load.name+' ('+km(lm)+' km from pin).'})
+    }
+    if(g.loadArrivedAt&&!g.loadDepartedAt&&lm>=z.departM){
+      g.loadDepartedAt=now;g.departurePendingAt=now;g.loadDeparturePosition={latitude:pos.latitude,longitude:pos.longitude};g.offloadDistanceAtLoadDepartureKm=Number((om/1000).toFixed(2));
+      if(!dep){
+        if(startTrip('loading-exit',now))events.push({title:t.number+' trip started',message:pos.vehicleId+' left '+z.load.name+'. No company depot geofence is configured, so the trip changed to In transit.'})
+      }else if(g.loadWasAtDepot&&prevDepInside&&!depInside){
+        g.loadedAtDepotAt=g.loadedAtDepotAt||g.loadArrivedAt;
+        if(startTrip('loaded-depot-exit',now))events.push({title:t.number+' departed '+dep.name,message:pos.vehicleId+' left the company depot loaded. This is the actual trip start; status changed to In transit.'})
+      }else{
+        t.stage=Math.max(2,num(t.stage)||1);t.status='Loaded · departure pending';if(currentLeg)currentLeg.status='Loaded · departure pending';
+        events.push({title:t.number+' loading complete',message:pos.vehicleId+' left '+z.load.name+' loaded. The system is waiting to see whether it returns to '+dep.name+' or departs directly.'})
+      }
+    }
+
+    if(dep&&g.loadDepartedAt&&!statusStarted()&&depInside&&!g.loadedAtDepotAt){
+      g.loadedAtDepotAt=now;g.loadedDepotArrivalPosition={latitude:pos.latitude,longitude:pos.longitude};
+      t.stage=Math.max(2,num(t.stage)||1);t.status='Loaded at depot';if(currentLeg)currentLeg.status='Loaded at depot';
+      events.push({title:t.number+' loaded truck back at depot',message:pos.vehicleId+' returned to '+dep.name+' after loading. Trip remains staged and has NOT started.'})
+    }
+    if(dep&&g.loadedAtDepotAt&&!statusStarted()&&!depInside&&(prevDepInside||depM>(Math.max(5,num(dep.radius_m||dep.radiusM)||500)+100))){
+      g.loadedDepotDepartedAt=now;g.loadedDepotDeparturePosition={latitude:pos.latitude,longitude:pos.longitude};
+      if(startTrip('depot-exit-after-loading',now))events.push({title:t.number+' trip started',message:pos.vehicleId+' left '+dep.name+' loaded. This depot exit is the official trip start.'})
+    }
+    if(dep&&g.loadDepartedAt&&!g.loadedAtDepotAt&&!statusStarted()&&!depInside&&lm>=z.departM&&prevPos&&om+75<previousOffM&&!(depM+75<prevDepM)){
+      const actualStart=g.loadDepartedAt||now;g.directDepartureConfirmedAt=now;
+      if(startTrip('direct-from-loading',actualStart))events.push({title:t.number+' direct departure confirmed',message:pos.vehicleId+' continued toward '+z.offload.name+' instead of returning to '+dep.name+'. Trip start time is the loading-point departure time.'})
+    }
+
+    if(statusStarted()&&!g.offloadApproachAt&&om<=z.approachM){
       g.offloadApproachAt=now;
-      events.push({title:t.number+' approaching offloading',message:pos.vehicleId+' is '+km(om)+' km from '+z.offload.name+'.'});
+      events.push({title:t.number+' approaching offloading',message:pos.vehicleId+' is '+km(om)+' km from '+z.offload.name+'.'})
     }
-    if(g.loadDepartedAt&&!g.offloadArrivedAt&&om<=z.arrivalM){
-      g.offloadArrivedAt=now;g.offloadArrivalPosition={latitude:pos.latitude,longitude:pos.longitude};t.status='At offloading';t.arrivedAt=t.arrivedAt||now;if(currentLeg){currentLeg.status='At offloading';currentLeg.arrivedAt=currentLeg.arrivedAt||now;}
-      events.push({title:t.number+' arrived at offloading',message:pos.vehicleId+' arrived at '+z.offload.name+' ('+km(om)+' km from pin).'});
+    if(statusStarted()&&!g.offloadArrivedAt&&om<=z.arrivalM){
+      g.offloadArrivedAt=now;g.offloadArrivalPosition={latitude:pos.latitude,longitude:pos.longitude};t.status='At offloading';t.arrivedAt=t.arrivedAt||now;if(currentLeg){currentLeg.status='At offloading';currentLeg.arrivedAt=currentLeg.arrivedAt||now}
+      events.push({title:t.number+' arrived at offloading',message:pos.vehicleId+' arrived at '+z.offload.name+' ('+km(om)+' km from pin).'})
     }
     if(g.offloadArrivedAt&&!g.offloadDepartedAt&&om>=z.departM){
       g.offloadDepartedAt=now;g.offloadDeparturePosition={latitude:pos.latitude,longitude:pos.longitude};
       if(!multiLeg&&z.roundTrip){
         g.returnStartedAt=now;t.status='Return journey';
-        events.push({title:t.number+' return journey started',message:pos.vehicleId+' has left '+z.offload.name+' and is now '+km(om)+' km away.'});
+        events.push({title:t.number+' return journey started',message:pos.vehicleId+' has left '+z.offload.name+' and is now '+km(om)+' km away.'})
       }else{
-        if(multiLeg){t.status='Awaiting POD';if(currentLeg)currentLeg.status='At offloading'}else{t.stage=Math.max(4,num(t.stage)||1);t.status='Delivered'};
+        if(multiLeg){t.status='Awaiting POD';if(currentLeg)currentLeg.status='At offloading'}else{t.stage=Math.max(4,num(t.stage)||1);t.status='Delivered'}
         if(!state.tasks.some(x=>x.linkedId===t.id&&/POD/i.test(x.title)&&x.status==='Open')){
-          state.tasks.unshift({id:'task_'+crypto.randomUUID(),title:'Upload POD for '+t.number,ownerRole:'Driver',linkedType:'trip',linkedId:t.id,due:now.slice(0,10),priority:'High',status:'Open'});
+          state.tasks.unshift({id:'task_'+crypto.randomUUID(),title:'Upload POD for '+t.number,ownerRole:'Driver',linkedType:'trip',linkedId:t.id,due:now.slice(0,10),priority:'High',status:'Open'})
         }
-        events.push({title:t.number+' left offloading point',message:pos.vehicleId+' has departed '+z.offload.name+'. Delivery marked complete; POD is still required.'});
+        events.push({title:t.number+' left offloading point',message:pos.vehicleId+' has departed '+z.offload.name+'. Delivery marked complete; POD is still required.'})
       }
     }
     if(z.roundTrip&&g.offloadDepartedAt&&!g.returnApproachAt&&lm<=z.approachM){
       g.returnApproachAt=now;
-      events.push({title:t.number+' approaching return point',message:pos.vehicleId+' is '+km(lm)+' km from '+z.load.name+' on the return journey.'});
+      events.push({title:t.number+' approaching return point',message:pos.vehicleId+' is '+km(lm)+' km from '+z.load.name+' on the return journey.'})
     }
     if(z.roundTrip&&g.returnApproachAt&&!g.returnArrivedAt&&lm<=z.arrivalM){
       g.returnArrivedAt=now;g.returnArrivalPosition={latitude:pos.latitude,longitude:pos.longitude};t.stage=Math.max(4,num(t.stage)||1);t.status='Returned';
       if(!state.tasks.some(x=>x.linkedId===t.id&&/POD/i.test(x.title)&&x.status==='Open')&&!t.pod){
-        state.tasks.unshift({id:'task_'+crypto.randomUUID(),title:'Upload POD for '+t.number,ownerRole:'Driver',linkedType:'trip',linkedId:t.id,due:now.slice(0,10),priority:'High',status:'Open'});
+        state.tasks.unshift({id:'task_'+crypto.randomUUID(),title:'Upload POD for '+t.number,ownerRole:'Driver',linkedType:'trip',linkedId:t.id,due:now.slice(0,10),priority:'High',status:'Open'})
       }
-      events.push({title:t.number+' returned',message:pos.vehicleId+' arrived back at '+z.load.name+'. Trip is ready for POD/office closure.'});
+      events.push({title:t.number+' returned',message:pos.vehicleId+' arrived back at '+z.load.name+'. Trip is ready for POD/office closure.'})
     }
     g.lastPositionAt=now;g.lastLoadDistanceKm=Number((lm/1000).toFixed(2));g.lastOffloadDistanceKm=Number((om/1000).toFixed(2));
-    return{events,tripId:t.id,driverId:t.driverId};
+    return{events,tripId:t.id,driverId:t.driverId}
   });
-  for(const e of changed.result?.events||[])await tripGeoNotify({...active,driverId:changed.result.driverId},e.title,e.message,e.severity||'info');
+  for(const e of changed.result?.events||[])await tripGeoNotify({...active,driverId:changed.result.driverId},e.title,e.message,e.severity||'info')
 }
 app.post('/api/auth/login',async(req,res)=>{const email=String(req.body.email||'').toLowerCase(),u=pool?(await q('SELECT * FROM users WHERE email=$1 AND active=true',[email]))[0]:memory.users.find(x=>x.email===email&&x.active);if(!u||!await bcrypt.compare(String(req.body.password||''),u.password_hash))return res.status(401).json({error:'Invalid email or password'});res.json({token:tokenFor(u),user:{id:u.id,email:u.email,name:u.name,role:u.role,driverId:u.driver_id||u.driverId||null}})});
 app.get('/api/session',auth,(req,res)=>res.json({user:req.user}));
@@ -1018,7 +1101,7 @@ app.get('/api/events',auth,(req,res)=>{res.set({'Content-Type':'text/event-strea
 
 function driverMobileTrip(state,driverId){
   const rows=(state.trips||[]).filter(t=>t.driverId===driverId&&!t.driverComplete&&!['Closed','Invoiced'].includes(t.status));
-  const priority=t=>{const x=String(t.status||'').toLowerCase();if(/loading|in transit|at offloading|awaiting pod|return journey/.test(x))return 500;if(/planned|assigned|booked|at loading/.test(x))return 400;if(/delivered/.test(x)&&!t.pod)return 250;if(/delivered/.test(x)&&!t.driverComplete)return 200;return 100};
+  const priority=t=>{const x=String(t.status||'').toLowerCase();if(/loading|to loading|loaded|departure pending|in transit|at offloading|awaiting pod|return journey/.test(x))return 500;if(/planned|assigned|booked|at loading/.test(x))return 400;if(/delivered/.test(x)&&!t.pod)return 250;if(/delivered/.test(x)&&!t.driverComplete)return 200;return 100};
   rows.sort((a,b)=>priority(b)-priority(a)||(new Date(b.createdAt||b.date||0)-new Date(a.createdAt||a.date||0))||String(b.number||'').localeCompare(String(a.number||''),undefined,{numeric:true}));
   return rows[0]||null
 }
@@ -1089,18 +1172,24 @@ app.delete('/api/admin/diesel/:id',auth,roles('admin','manager','finance'),async
 });
 app.get('/api/gps/latest',auth,async(req,res)=>{const rows=pool?await q('SELECT DISTINCT ON(vehicle_id) vehicle_id AS "vehicleId",driver_id AS "driverId",trip_id AS "tripId",latitude,longitude,speed,heading,accuracy,source,recorded_at AS "recordedAt" FROM gps_positions ORDER BY vehicle_id,recorded_at DESC'):Object.values(memory.gps.reduce((a,x)=>(a[x.vehicleId]=x,a),{}));res.json(rows)});
 app.get('/api/gps/history/:vehicleId',auth,async(req,res)=>{const hours=Math.min(168,Math.max(1,num(req.query.hours)||24)),rows=pool?await q('SELECT vehicle_id AS "vehicleId",latitude,longitude,speed,heading,recorded_at AS "recordedAt" FROM gps_positions WHERE vehicle_id=$1 AND recorded_at>now()-($2||\' hours\')::interval ORDER BY recorded_at',[req.params.vehicleId,String(hours)]):memory.gps.filter(x=>x.vehicleId===req.params.vehicleId&&Date.now()-new Date(x.recordedAt)<hours*3600000);res.json(rows)});
-app.get('/api/geofences',auth,async(req,res)=>res.json(pool?await q('SELECT id,name,latitude,longitude,radius_m AS "radiusM",event_types AS "eventTypes",active FROM geofences ORDER BY name'):memory.geofences));
-app.post('/api/geofences',auth,roles('admin','manager','dispatcher'),async(req,res)=>{const f={id:crypto.randomUUID(),name:String(req.body.name||''),latitude:Number(req.body.latitude),longitude:Number(req.body.longitude),radiusM:Number(req.body.radiusM||500),eventTypes:req.body.eventTypes||['enter','exit'],active:true};if(!f.name||!Number.isFinite(f.latitude)||!Number.isFinite(f.longitude))return res.status(400).json({error:'name, latitude and longitude required'});if(pool)await q('INSERT INTO geofences(id,name,latitude,longitude,radius_m,event_types) VALUES($1,$2,$3,$4,$5,$6)',[f.id,f.name,f.latitude,f.longitude,f.radiusM,f.eventTypes]);else memory.geofences.push(f);emit('geofence',f);res.status(201).json(f)});
+app.get('/api/geofences',auth,async(req,res)=>res.json(pool?await q('SELECT id,name,latitude,longitude,radius_m AS "radiusM",event_types AS "eventTypes",kind,active FROM geofences ORDER BY name'):memory.geofences));
+app.post('/api/geofences',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
+  const requested=String(req.body.kind||'custom').toLowerCase(),kind=['depot','loading','offloading','custom'].includes(requested)?requested:'custom';
+  const f={id:crypto.randomUUID(),name:String(req.body.name||''),latitude:Number(req.body.latitude),longitude:Number(req.body.longitude),radiusM:Number(req.body.radiusM||500),eventTypes:req.body.eventTypes||['enter','exit'],kind,active:true};
+  if(!f.name||!Number.isFinite(f.latitude)||!Number.isFinite(f.longitude))return res.status(400).json({error:'name, latitude and longitude required'});
+  if(pool)await q('INSERT INTO geofences(id,name,latitude,longitude,radius_m,event_types,kind) VALUES($1,$2,$3,$4,$5,$6,$7)',[f.id,f.name,f.latitude,f.longitude,f.radiusM,f.eventTypes,f.kind]);else memory.geofences.push(f);
+  emit('geofence',f);res.status(201).json(f)
+});
 app.patch('/api/geofences/:id',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
-  const id=String(req.params.id),name=String(req.body.name||'').trim(),latitude=Number(req.body.latitude),longitude=Number(req.body.longitude),radiusM=Number(req.body.radiusM);
+  const id=String(req.params.id),name=String(req.body.name||'').trim(),latitude=Number(req.body.latitude),longitude=Number(req.body.longitude),radiusM=Number(req.body.radiusM),requested=String(req.body.kind||'custom').toLowerCase(),kind=['depot','loading','offloading','custom'].includes(requested)?requested:'custom';
   if(!name||name.length>160||!Number.isFinite(latitude)||Math.abs(latitude)>90||!Number.isFinite(longitude)||Math.abs(longitude)>180||!Number.isFinite(radiusM)||radiusM<5||radiusM>50000)return res.status(400).json({error:'Enter a name, valid coordinates and a radius from 5 to 50,000 m'});
   if(pool){
     const c=await pool.connect();let updated;
-    try{await c.query('BEGIN');const result=await c.query('UPDATE geofences SET name=$2,latitude=$3,longitude=$4,radius_m=$5 WHERE id=$1 RETURNING id,name,latitude,longitude,radius_m AS "radiusM",event_types AS "eventTypes",active',[id,name,latitude,longitude,radiusM]);updated=result.rows[0];if(!updated){await c.query('ROLLBACK');return res.status(404).json({error:'Geofence not found'})}await c.query('DELETE FROM geofence_state WHERE geofence_id=$1',[id]);await c.query('COMMIT')}catch(e){await c.query('ROLLBACK');return res.status(500).json({error:e.message})}finally{c.release()}
+    try{await c.query('BEGIN');const result=await c.query('UPDATE geofences SET name=$2,latitude=$3,longitude=$4,radius_m=$5,kind=$6 WHERE id=$1 RETURNING id,name,latitude,longitude,radius_m AS "radiusM",event_types AS "eventTypes",kind,active',[id,name,latitude,longitude,radiusM,kind]);updated=result.rows[0];if(!updated){await c.query('ROLLBACK');return res.status(404).json({error:'Geofence not found'})}await c.query('DELETE FROM geofence_state WHERE geofence_id=$1',[id]);await c.query('COMMIT')}catch(e){await c.query('ROLLBACK');return res.status(500).json({error:e.message})}finally{c.release()}
     emit('geofence',updated);return res.json(updated)
   }
   const f=memory.geofences.find(x=>x.id===id);if(!f)return res.status(404).json({error:'Geofence not found'});
-  Object.assign(f,{name,latitude,longitude,radiusM,states:{}});emit('geofence',f);res.json(f)
+  Object.assign(f,{name,latitude,longitude,radiusM,kind,states:{}});emit('geofence',f);res.json(f)
 });
 app.delete('/api/geofences/:id',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
   const id=String(req.params.id);
