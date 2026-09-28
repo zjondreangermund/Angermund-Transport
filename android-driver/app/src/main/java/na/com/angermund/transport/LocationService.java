@@ -155,10 +155,10 @@ public class LocationService extends Service implements LocationListener {
                     JSONObject r = new JSONObject(sb.toString());
                     String trip = r.optString("tripId", "active trip");
                     String vehicle = r.optString("vehicleId", "");
-                    prefs().edit().remove("pending_location").apply();
+                    clearPendingIfSent(payload);
                     handler.post(() -> updateNotification((vehicle.isEmpty() ? "" : vehicle + " · ") + trip + " · last GPS sent"));
                 } else if (code == 204) {
-                    prefs().edit().remove("pending_location").apply();
+                    clearPendingIfSent(payload);
                     handler.post(() -> updateNotification("Waiting for an assigned trip"));
                 } else if (code == 401 || code == 403) {
                     prefs().edit().putBoolean("enabled", false).remove("device_token").apply();
@@ -173,6 +173,11 @@ public class LocationService extends Service implements LocationListener {
                 if (c != null) c.disconnect();
             }
         });
+    }
+
+    private void clearPendingIfSent(String payload) {
+        if (payload.equals(prefs().getString("pending_location", "")))
+            prefs().edit().remove("pending_location").apply();
     }
 
     @Override
