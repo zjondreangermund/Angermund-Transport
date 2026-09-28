@@ -1286,7 +1286,7 @@ async function loadDriverAccounts(force=false){
   try{
     appUsers=await api('/api/users');
     usersLoaded=true;
-    if(page==='driverAccounts')render();
+    if(page==='driverAccounts'||page==='tasks')render();
   }catch(e){notify(e.message)}
 }
 function driverAccounts(){
