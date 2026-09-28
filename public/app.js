@@ -92,6 +92,7 @@ const navGroups=[
     ['clients','♧','Clients & Routes'],
     ['diesel','⛽','Diesel Control'],
     ['invoices','▥','Invoices & Payments'],
+    ['payroll','💵','Payroll & Payslips'],
     ['tasks','✓','Tasks & Approvals']
   ]],
   ['Live Feed',[
@@ -100,7 +101,6 @@ const navGroups=[
     ['driverUploads','📎','Driver Uploads']
   ]],
   ['More',[
-    ['payroll','💵','Payroll & Payslips'],
     ['roadCharges','🛣','MDC & Road Charges'],
     ['driverPortal','◉','Driver Workspace'],
     ['inspections','☑','Inspections'],
