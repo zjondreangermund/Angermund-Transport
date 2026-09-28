@@ -450,3 +450,15 @@ header{max-width:calc(100vw - var(--sidebar));overflow:hidden}
 .diesel-review-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
 .diesel-review-summary{display:grid;grid-template-columns:auto 1fr;gap:7px 14px;margin:12px 0;padding:12px;border:1px solid var(--line);border-radius:10px;background:#081827}.diesel-review-summary span{color:var(--muted)}
 @media(max-width:600px){.geofence-row,.diesel-review-row{align-items:stretch;flex-direction:column}.geofence-row button{width:100%}.diesel-review-actions{justify-content:flex-start}}
+
+/* Original Angermund Transport identity from the company print artwork. */
+body:not(.driver-mode){background:linear-gradient(90deg,rgba(6,16,29,.95),rgba(6,16,29,.89)),url('/angermund-truck.webp') center center / cover fixed #07111f}
+body.driver-mode{background:linear-gradient(180deg,rgba(6,17,30,.96),rgba(9,26,43,.94)),url('/angermund-truck.webp') center / cover fixed #06111e}
+.brand{min-height:76px}.brand img{width:205px;max-width:100%;height:auto;background:#fff;border-radius:8px;padding:5px}
+.login-screen{background:linear-gradient(90deg,rgba(5,15,29,.96),rgba(5,15,29,.76)),url('/angermund-truck.webp') center / cover #06101d}
+.login-card img{width:min(290px,100%);height:auto;background:#fff;border-radius:8px;padding:5px}
+.loading-screen{position:fixed;inset:0;z-index:2000;display:grid;place-items:center;background:linear-gradient(90deg,rgba(5,15,29,.97),rgba(5,15,29,.78)),url('/angermund-truck.webp') center / cover #06101d;transition:opacity .25s}
+.loading-screen.is-ready{opacity:0;pointer-events:none}
+.loading-brand{display:grid;justify-items:center;gap:22px;color:white;font-weight:700;letter-spacing:.12em;text-transform:uppercase;text-shadow:0 2px 10px #000}
+.loading-brand img{width:min(78vw,430px);background:#fff;border-radius:12px;padding:10px}
+@media print{body{background:white!important}}
