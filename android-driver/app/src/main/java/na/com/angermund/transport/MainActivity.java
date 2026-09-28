@@ -117,7 +117,7 @@ public class MainActivity extends Activity {
         if (savedInstanceState == null) webView.loadUrl(START_URL);
         else webView.restoreState(savedInstanceState);
 
-        requestBasicPermissions();
+        requestNotificationPermission();
         startStoredServiceIfEnabled();
     }
 
@@ -125,14 +125,18 @@ public class MainActivity extends Activity {
         return getSharedPreferences(PREFS, MODE_PRIVATE);
     }
 
-    private void requestBasicPermissions() {
+    private void requestNotificationPermission() {
+        if (Build.VERSION.SDK_INT >= 33
+                && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_LOCATION);
+        }
+    }
+
+    private void requestLocationPermissions() {
         java.util.ArrayList<String> permissions = new java.util.ArrayList<>();
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
             permissions.add(Manifest.permission.ACCESS_FINE_LOCATION);
             permissions.add(Manifest.permission.ACCESS_COARSE_LOCATION);
-        }
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            permissions.add(Manifest.permission.POST_NOTIFICATIONS);
         }
         if (!permissions.isEmpty()) requestPermissions(permissions.toArray(new String[0]), REQ_LOCATION);
     }
@@ -371,7 +375,7 @@ public class MainActivity extends Activity {
                 if (!hasForegroundLocation()) {
                     pendingJwt = jwt;
                     ensureRegistered(jwt, false);
-                    requestBasicPermissions();
+                    requestLocationPermissions();
                     return;
                 }
                 ensureRegistered(jwt, true);
