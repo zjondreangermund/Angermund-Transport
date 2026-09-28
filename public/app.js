@@ -1425,6 +1425,9 @@ async function toggleDriverAccount(userId,active){
 }
 function wireDriverAccounts(){
   if(!usersLoaded){setTimeout(()=>loadDriverAccounts(),0);return}
+  if($('createEmployee'))$('createEmployee').onclick=()=>openEmployeeForm();
+  document.querySelectorAll('.edit-employee').forEach(b=>b.onclick=()=>openEmployeeForm(b.dataset.employee));
+  document.querySelectorAll('.delete-employee').forEach(b=>b.onclick=()=>deleteEmployee(b.dataset.employee));
   if($('createDriverAccount'))$('createDriverAccount').onclick=()=>openDriverAccountForm();
   if($('createStaffAccount'))$('createStaffAccount').onclick=()=>openStaffAccountForm();
   document.querySelectorAll('.create-driver-account-for').forEach(b=>b.onclick=()=>openDriverAccountForm(b.dataset.driver));
