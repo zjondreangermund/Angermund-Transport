@@ -1053,11 +1053,11 @@ function wireRoadCharges(){
     }catch(e){notify(e.message)}
   };
 }
-function clientPayProfile(driverId){
-  const p=(db.payProfiles||[]).find(x=>x.driverId===driverId);
+function clientPayProfile(employeeId){
+  const p=(db.payProfiles||[]).find(x=>(x.employeeId||x.driverId)===employeeId);
   if(p)return p;
-  const prior=(db.payroll||[]).filter(x=>x.employeeId===driverId).sort((a,b)=>String(b.period||'').localeCompare(String(a.period||'')))[0];
-  return{driverId,baseSalary:num(prior?.base),tripRatePerKm:num(prior?.tripRatePerKm),minimumBonusKml:2.0,taxNumber:prior?.taxNumber||'',payeDefault:num(prior?.paye),sscDefault:num(prior?.ssc),overtimeRate:num(prior?.overtimeRate),standardDays:num(prior?.days)||22,otherDeductionDefault:num(prior?.deductions),autoGenerate:true}
+  const prior=(db.payroll||[]).filter(x=>x.employeeId===employeeId).sort((a,b)=>String(b.period||'').localeCompare(String(a.period||'')))[0],emp=employeeRecord(employeeId);
+  return{driverId:employeeId,employeeId,baseSalary:num(emp.baseSalary)||num(prior?.base),tripRatePerKm:num(prior?.tripRatePerKm),minimumBonusKml:2.0,taxNumber:prior?.taxNumber||'',payeDefault:num(emp.payeDefault)||num(prior?.paye),sscDefault:num(emp.sscDefault)||num(prior?.ssc),overtimeRate:num(prior?.overtimeRate),standardDays:num(prior?.days)||22,otherDeductionDefault:num(prior?.deductions),autoGenerate:true}
 }
 function payslipGross(p){return p.gross!==undefined?num(p.gross):num(p.base)+num(p.tripPay)+num(p.incentive)+num(p.overtimePay||num(p.overtimeHours||p.overtime)*num(p.overtimeRate))}
 function payslipNet(p){return p.net!==undefined?num(p.net):payslipGross(p)+num(p.reimbursements)-num(p.advances)-num(p.paye)-num(p.ssc)-num(p.deductions)}
@@ -1078,7 +1078,7 @@ function payroll(){
     +'<section class="grid-2" style="margin-top:18px">'+dataTable('Driver advances','advance',['Date','Driver','Trip','Type','Amount','Status'],db.advances,x=>[x.date,driver(x.driverId),get('trips',x.tripId).number||'—',x.type,money(x.amount),x.status])+dataTable('Approved/review expenses','expense',['Date','Trip','Category','Driver','Amount','Status'],db.expenses,x=>[x.date,get('trips',x.tripId).number||'—',x.category,driver(x.driverId),money(x.amount),x.status])+'</section>';
 }
 function openPayrollProfile(driverId){
-  const d=get('drivers',driverId),p=clientPayProfile(driverId);
+  const d=employeeRecord(driverId),p=clientPayProfile(driverId);
   $('modalTitle').textContent='Payroll setup · '+d.name;
   $('entryForm').innerHTML='<div class="notice"><b>Trip pay:</b> existing N$0.30/0.40/0.50 local km/L tiers or N$0.60/km for South Africa; enter a rate to override. <b>Fuel bonus:</b> an extra 10% of fuel cost saved above the target km/L, only with recorded litres and cost.</div>'
     +'<div class="form-grid"><div class="field"><label>Basic monthly salary</label><input id="ppBase" type="number" step="0.01" value="'+num(p.baseSalary)+'"></div>'
@@ -1097,7 +1097,7 @@ function openPayrollProfile(driverId){
 }
 function openPayslip(id){
   const p=(db.payroll||[]).find(x=>x.id===id);if(!p)return;
-  const d=get('drivers',p.employeeId),profile=clientPayProfile(p.employeeId);
+  const d=employeeRecord(p.employeeId),profile=clientPayProfile(p.employeeId);
   $('modalTitle').textContent='Payslip · '+d.name+' · '+p.period;
   $('entryForm').innerHTML='<div class="payslip-summary"><div><span>Gross earnings</span><b>'+money(payslipGross(p))+'</b></div><div><span>Trip pay</span><b>'+money(p.tripPay)+'</b></div><div><span>Fuel bonus</span><b>'+money(p.incentive)+'</b></div><div><span>Net pay</span><b class="positive">'+money(payslipNet(p))+'</b></div></div>'
     +'<div class="form-grid"><div class="field"><label>Days worked</label><input id="psDays" type="number" value="'+num(p.days)+'"></div><div class="field"><label>Basic salary</label><input id="psBase" type="number" step="0.01" value="'+num(p.base)+'"></div>'
@@ -1112,7 +1112,7 @@ function openPayslip(id){
 }
 function printPayslip(id){
   const p=(db.payroll||[]).find(x=>x.id===id);if(!p)return notify('Payslip not found');
-  const d=get('drivers',p.employeeId),profile=clientPayProfile(p.employeeId),w=window.open('','_blank','width=820,height=900');
+  const d=employeeRecord(p.employeeId),profile=clientPayProfile(p.employeeId),w=window.open('','_blank','width=820,height=900');
   if(!w)return notify('Allow pop-ups to print the payslip');
   const line=(label,value,bold=false)=>'<tr><td>'+label+'</td><td style="text-align:right;'+(bold?'font-weight:800;':'')+'">'+value+'</td></tr>';
   w.document.write('<!doctype html><html><head><title>Payslip '+esc(d.name)+' '+esc(p.period)+'</title><style>body{font-family:Arial,sans-serif;color:#111;margin:36px}.head{display:flex;justify-content:space-between;gap:20px;border-bottom:3px solid #101e80;padding-bottom:14px}.head img{width:245px;max-width:100%;height:auto}.head h2{color:#101e80}.muted{color:#555;font-size:12px}.box{border:1px solid #ccc;padding:14px;margin-top:18px}table{width:100%;border-collapse:collapse}td{padding:7px;border-bottom:1px solid #eee}.net{font-size:22px;font-weight:900}.footer{margin-top:30px;font-size:11px;color:#555}@media print{button{display:none}}</style></head><body>'
