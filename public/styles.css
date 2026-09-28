@@ -439,3 +439,13 @@ header{max-width:calc(100vw - var(--sidebar));overflow:hidden}
   .geofence-map-toolbar{align-items:stretch;flex-direction:column}
   .geofence-map-toolbar button{width:100%}
 }
+
+/* Geofence management + diesel review */
+.geofence-list{display:grid;gap:7px;margin-top:8px}
+.geofence-row{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px 11px;border:1px solid var(--line);border-radius:10px;background:#081827}
+.geofence-row b,.geofence-row small{display:block}.geofence-row small{color:var(--muted);margin-top:3px}
+.diesel-review-row{align-items:flex-start;gap:14px}
+.diesel-review-copy{min-width:0;flex:1}.diesel-review-copy b,.diesel-review-copy small{display:block}.diesel-review-copy small{margin-top:5px;color:var(--muted);line-height:1.45;overflow-wrap:anywhere}
+.diesel-review-actions{display:flex;align-items:center;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+.diesel-review-summary{display:grid;grid-template-columns:auto 1fr;gap:7px 14px;margin:12px 0;padding:12px;border:1px solid var(--line);border-radius:10px;background:#081827}.diesel-review-summary span{color:var(--muted)}
+@media(max-width:600px){.geofence-row,.diesel-review-row{align-items:stretch;flex-direction:column}.geofence-row button{width:100%}.diesel-review-actions{justify-content:flex-start}}
