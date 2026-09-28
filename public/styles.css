@@ -583,3 +583,15 @@ nav .nav-section{padding:12px 12px 4px}
 .task-copy p{color:#bfd0df;margin:6px 0 0;white-space:pre-wrap}
 .task-actions{justify-content:flex-end;margin-top:0}
 @media(max-width:650px){.task-row{flex-direction:column}.task-actions{width:100%;justify-content:flex-start}.task-actions button{flex:1}.fleet-card-actions button{flex:1}}
+
+
+/* One APK, role-aware shell. Native Android supplies true system-bar insets. */
+body.staff-mode .role-picker select{max-width:150px}
+@media(max-width:760px){
+  body.staff-mode main{padding-bottom:28px!important}
+  body.staff-mode .hero h2{font-size:22px!important}
+  body.staff-mode .hero-actions button{min-width:0}
+}
+body.driver-mode .driver-bottom{bottom:0!important;padding-bottom:0!important}
+body.driver-mode{padding-bottom:72px!important}
+body.driver-mode main{padding-bottom:94px!important}
