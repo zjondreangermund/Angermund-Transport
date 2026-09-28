@@ -541,7 +541,7 @@ function driverPortal(){
     <section class="driver-welcome">
       <div><small>${preview?'PREVIEWING DRIVER':'GOOD DAY'}</small><h1>${esc(d.name||'Driver')}</h1></div>
       <div class="driver-welcome-actions">
-        <span class="driver-online ${navigator.onLine?'on':'off'}">${navigator.onLine?'● ONLINE':'● OFFLINE'}</span>
+        <span class="driver-online ${navigator.onLine?'on':'off'}">${nativeBackgroundGpsAvailable()?'● BACKGROUND GPS':(navigator.onLine?'● ONLINE':'● OFFLINE')}</span>
         ${!preview?'<button type="button" class="driver-logout-top" id="driverLogoutTop">Log out</button>':''}
       </div>
     </section>
@@ -1438,13 +1438,25 @@ async function postDriverGpsPosition(position){
     lastDriverGpsSentAt=now;lastDriverGpsPoint=pt;
   }catch{}
 }
+function nativeBackgroundGpsAvailable(){return Boolean(window.AngermundNative&&typeof window.AngermundNative.startBackgroundGps==='function')}
+function startNativeBackgroundGps(){
+  if(role!=='driver'||!authToken||!nativeBackgroundGpsAvailable())return false;
+  try{window.AngermundNative.startBackgroundGps(authToken);return true}catch{return false}
+}
+function stopNativeBackgroundGps(){
+  if(!nativeBackgroundGpsAvailable()||typeof window.AngermundNative.stopBackgroundGps!=='function')return false;
+  try{window.AngermundNative.stopBackgroundGps();return true}catch{return false}
+}
 function startDriverGpsWatch(){
-  if(role!=='driver'||driverGeoWatchId!==null||!navigator.geolocation)return;
+  if(role!=='driver')return;
+  if(startNativeBackgroundGps())return;
+  if(driverGeoWatchId!==null||!navigator.geolocation)return;
   driverGeoWatchId=navigator.geolocation.watchPosition(postDriverGpsPosition,e=>{if(e.code===1&&sessionStorage.getItem('driver_gps_denied')!=='1'){sessionStorage.setItem('driver_gps_denied','1');notify('Location permission is needed for automatic arrival/departure alerts')}},{enableHighAccuracy:true,maximumAge:20000,timeout:30000});
 }
 function stopDriverGpsWatch(){
   if(driverGeoWatchId!==null&&navigator.geolocation)navigator.geolocation.clearWatch(driverGeoWatchId);
   driverGeoWatchId=null;lastDriverGpsPoint=null;lastDriverGpsSentAt=0;
+  stopNativeBackgroundGps();
 }
 function routeUsesRoundTrip(r){return Boolean(r?.roundTrip)||/[↔]|round\s*trip|return/i.test(String(r?.name||'')+' '+String(r?.notes||''))}
 async function gpsCheckIn(){if(!navigator.geolocation)return notify('GPS is not supported on this device');const t=db.trips.find(x=>x.driverId===currentDriver()&&!['Closed','Invoiced'].includes(x.status));navigator.geolocation.getCurrentPosition(async p=>{try{await api('/api/gps',{method:'POST',body:{vehicleId:t?.truckId||'unassigned',driverId:currentDriver(),tripId:t?.id||null,latitude:p.coords.latitude,longitude:p.coords.longitude,speed:(p.coords.speed||0)*3.6,heading:p.coords.heading||0,accuracy:p.coords.accuracy}});notify('Live GPS check-in recorded')}catch(e){notify(e.message)}},e=>notify(`GPS unavailable: ${e.message}`),{enableHighAccuracy:true,timeout:15000})}
