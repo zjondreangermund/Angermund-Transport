@@ -1,4 +1,4 @@
-name: Build Angermund Driver APK
+name: Build Angermund Transport APK
 
 permissions:
   contents: write
@@ -26,29 +26,12 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
-      - name: Prepare exact original A icon
-        run: |
-          python3 -m pip install pillow -q
-          python3 - <<'PY'
-          from PIL import Image
-          import base64, io, hashlib
-          src=Image.open("public/angermund-logo.png").convert("RGBA")
-          mark=src.crop((0,0,724,724)).resize((512,512),Image.Resampling.LANCZOS)
-          buf=io.BytesIO()
-          mark.save(buf,format="PNG",optimize=True)
-          data=buf.getvalue()
-          print("ORIGINAL_A_SIZE",mark.size,"BYTES",len(data),"SHA256",hashlib.sha256(data).hexdigest())
-          print("ORIGINAL_A_B64_BEGIN")
-          print(base64.b64encode(data).decode("ascii"))
-          print("ORIGINAL_A_B64_END")
-          PY
-
       - name: Build installable debug APK
         run: gradle -p android-driver :app:assembleDebug --stacktrace
 
       - uses: actions/upload-artifact@v4
         with:
-          name: Angermund-Driver-APK
+          name: Angermund-Transport-APK
           path: android-driver/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
 
