@@ -75,9 +75,10 @@ function commit(msg,type='system',id=''){db.audit.unshift({id:uid('log'),at:new 
 function fuelMetrics(id){const t=get('trips',id),distance=num(t.distance),litres=sum(linked('diesel','tripId',id),x=>x.litres),ready=distance>0&&litres>0;return{distance,litres,ready,kmPerL:ready?distance/litres:0,litresPerKm:ready?litres/distance:0,litresPer100Km:ready?(litres/distance)*100:0}}
 function fuelEfficiency(id){return fuelMetrics(id).kmPerL}
 function isSouthAfricaTrip(t){return tripLegs(t).some(l=>/south africa|durban|johannesburg|rosslyn|cape town|ottery|gauteng/i.test(route(l.routeId)))}
-function incentiveRate(t){const m=fuelMetrics(t.id);if(!m.ready)return 0;if(isSouthAfricaTrip(t))return .60;if(m.kmPerL>=2.4)return .50;if(m.kmPerL>=2.3)return .40;return .30}
+function incentiveRate(t){const m=fuelMetrics(t.id);if(!m.ready)return 0;const p=clientPayProfile(t.driverId),minimum=num(p.minimumBonusKml)||2.0;if(m.kmPerL<minimum)return 0;if(isSouthAfricaTrip(t))return .60;if(m.kmPerL>=2.4)return .50;if(m.kmPerL>=2.3)return .40;return .30}
 function incentiveFor(t){return journeyDistance(t)*incentiveRate(t)}
-function tripSettlement(t){const reimbursable=sum(linked('expenses','tripId',t.id),x=>x.status==='Approved'&&x.reimbursable!==false?x.amount:0),advances=sum(linked('advances','tripId',t.id),x=>x.status!=='Reconciled'?x.amount:0),fuel=fuelMetrics(t.id),rate=incentiveRate(t),incentive=incentiveFor(t);return{fuel,rate,incentive,reimbursable,advances,due:Math.max(0,incentive+reimbursable-advances)}}
+function tripPayFor(t){return journeyDistance(t)*num(clientPayProfile(t.driverId).tripRatePerKm)}
+function tripSettlement(t){const reimbursable=sum(linked('expenses','tripId',t.id),x=>x.status==='Approved'&&x.reimbursable!==false?x.amount:0),advances=sum(linked('advances','tripId',t.id),x=>x.status!=='Reconciled'?x.amount:0),fuel=fuelMetrics(t.id),rate=incentiveRate(t),incentive=incentiveFor(t),tripRate=num(clientPayProfile(t.driverId).tripRatePerKm),tripPay=tripPayFor(t);return{fuel,rate,incentive,tripRate,tripPay,reimbursable,advances,due:Math.max(0,tripPay+incentive+reimbursable-advances)}}
 const invoicePaid=id=>sum(linked('payments','invoiceId',id),x=>x.amount),invoiceBalance=i=>Math.max(0,num(i.amount)-invoicePaid(i.id));
 function refreshInvoiceStatus(i){const paid=invoicePaid(i.id),balance=Math.max(0,num(i.amount)-paid);i.paidAmount=paid;i.balance=balance;i.status=balance<=.005?'Paid':paid>0?'Part Paid':i.due&&daysUntil(i.due)<0?'Overdue':'Unpaid';if(i.status==='Paid')i.paidDate=linked('payments','invoiceId',i.id)[0]?.date||today();return i.status}
 const currentDriver=()=>role==='driver'&&sessionUser?.driverId?sessionUser.driverId:(db.settings.currentDriver||db.drivers[0]?.id);
@@ -921,9 +922,9 @@ function clientPayProfile(driverId){
   const p=(db.payProfiles||[]).find(x=>x.driverId===driverId);
   if(p)return p;
   const prior=(db.payroll||[]).filter(x=>x.employeeId===driverId).sort((a,b)=>String(b.period||'').localeCompare(String(a.period||'')))[0];
-  return{driverId,baseSalary:num(prior?.base),taxNumber:prior?.taxNumber||'',payeDefault:num(prior?.paye),sscDefault:num(prior?.ssc),overtimeRate:num(prior?.overtimeRate),standardDays:num(prior?.days)||22,otherDeductionDefault:num(prior?.deductions),autoGenerate:true}
+  return{driverId,baseSalary:num(prior?.base),tripRatePerKm:num(prior?.tripRatePerKm),minimumBonusKml:2.0,taxNumber:prior?.taxNumber||'',payeDefault:num(prior?.paye),sscDefault:num(prior?.ssc),overtimeRate:num(prior?.overtimeRate),standardDays:num(prior?.days)||22,otherDeductionDefault:num(prior?.deductions),autoGenerate:true}
 }
-function payslipGross(p){return p.gross!==undefined?num(p.gross):num(p.base)+num(p.incentive)+num(p.overtimePay||num(p.overtimeHours||p.overtime)*num(p.overtimeRate))}
+function payslipGross(p){return p.gross!==undefined?num(p.gross):num(p.base)+num(p.tripPay)+num(p.incentive)+num(p.overtimePay||num(p.overtimeHours||p.overtime)*num(p.overtimeRate))}
 function payslipNet(p){return p.net!==undefined?num(p.net):payslipGross(p)+num(p.reimbursements)-num(p.advances)-num(p.paye)-num(p.ssc)-num(p.deductions)}
 function payroll(){
   const period=payrollPeriodFilter||today().slice(0,7),rows=(db.payroll||[]).filter(x=>x.period===period).sort((a,b)=>driver(a.employeeId).localeCompare(driver(b.employeeId))),profiles=db.drivers.map(d=>({driver:d,profile:clientPayProfile(d.id)}));
