@@ -308,21 +308,26 @@ const memory={state:null,users:[],gps:[],geofences:[],notifications:[],subscript
 app.use(express.json({limit:'10mb'}));app.use(express.urlencoded({extended:true}));
 app.use((req,res,next)=>{res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','same-origin');res.setHeader('Permissions-Policy','geolocation=(self), camera=(self)');next()});
 const q=async(text,params=[])=>pool?(await pool.query(text,params)).rows:null;
-async function initDb(){if(pool){await pool.query(`CREATE TABLE IF NOT EXISTS users(id uuid PRIMARY KEY,email text UNIQUE NOT NULL,password_hash text NOT NULL,name text NOT NULL,role text NOT NULL CHECK(role IN ('admin','manager','dispatcher','driver','warehouse','workshop','finance')),driver_id text,active boolean DEFAULT true,created_at timestamptz DEFAULT now());
+async function initDb(){if(pool){await pool.query(`CREATE TABLE IF NOT EXISTS users(id uuid PRIMARY KEY,email text UNIQUE NOT NULL,password_hash text NOT NULL,name text NOT NULL,role text NOT NULL CHECK(role IN ('admin','manager','dispatcher','driver','warehouse','workshop','finance','site_worker')),driver_id text,staff_id text,active boolean DEFAULT true,created_at timestamptz DEFAULT now());
+ALTER TABLE users ADD COLUMN IF NOT EXISTS staff_id text;
+ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
+ALTER TABLE users ADD CONSTRAINT users_role_check CHECK(role IN ('admin','manager','dispatcher','driver','warehouse','workshop','finance','site_worker'));
 CREATE TABLE IF NOT EXISTS app_state(id integer PRIMARY KEY DEFAULT 1 CHECK(id=1),payload jsonb NOT NULL DEFAULT '{}'::jsonb,revision bigint NOT NULL DEFAULT 0,updated_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS gps_positions(id bigserial PRIMARY KEY,vehicle_id text NOT NULL,driver_id text,trip_id text,latitude double precision NOT NULL,longitude double precision NOT NULL,speed double precision DEFAULT 0,heading double precision DEFAULT 0,accuracy double precision,source text DEFAULT 'driver',recorded_at timestamptz DEFAULT now());
 CREATE INDEX IF NOT EXISTS gps_vehicle_time ON gps_positions(vehicle_id,recorded_at DESC);
 CREATE TABLE IF NOT EXISTS geofences(id uuid PRIMARY KEY,name text NOT NULL,latitude double precision NOT NULL,longitude double precision NOT NULL,radius_m double precision NOT NULL,event_types text[] DEFAULT ARRAY['enter','exit'],kind text DEFAULT 'custom',active boolean DEFAULT true,created_at timestamptz DEFAULT now());
 ALTER TABLE geofences ADD COLUMN IF NOT EXISTS kind text DEFAULT 'custom';
 CREATE TABLE IF NOT EXISTS geofence_state(vehicle_id text NOT NULL,geofence_id uuid REFERENCES geofences(id) ON DELETE CASCADE,inside boolean NOT NULL,updated_at timestamptz DEFAULT now(),PRIMARY KEY(vehicle_id,geofence_id));
-CREATE TABLE IF NOT EXISTS notifications(id uuid PRIMARY KEY,type text NOT NULL,severity text DEFAULT 'info',title text NOT NULL,message text NOT NULL,role text,driver_id text,linked_type text,linked_id text,read boolean DEFAULT false,created_at timestamptz DEFAULT now());
+CREATE TABLE IF NOT EXISTS notifications(id uuid PRIMARY KEY,type text NOT NULL,severity text DEFAULT 'info',title text NOT NULL,message text NOT NULL,role text,user_id uuid,driver_id text,linked_type text,linked_id text,read boolean DEFAULT false,created_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS push_subscriptions(id bigserial PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE CASCADE,subscription jsonb NOT NULL,created_at timestamptz DEFAULT now());
-CREATE TABLE IF NOT EXISTS scan_jobs(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id),filename text,status text NOT NULL DEFAULT 'processing',raw_text text,extracted jsonb,confidence double precision,error text,created_at timestamptz DEFAULT now(),completed_at timestamptz);\nCREATE TABLE IF NOT EXISTS driver_uploads(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,trip_id text NOT NULL,kind text NOT NULL,filename text NOT NULL,mime_type text NOT NULL,content bytea NOT NULL,created_at timestamptz DEFAULT now());\nCREATE TABLE IF NOT EXISTS trip_documents(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,trip_id text NOT NULL,leg_id text,kind text NOT NULL,reference text,filename text,mime_type text,content bytea,created_at timestamptz DEFAULT now());\nCREATE INDEX IF NOT EXISTS trip_documents_trip ON trip_documents(trip_id,created_at DESC);\nCREATE TABLE IF NOT EXISTS mobile_devices(id uuid PRIMARY KEY,device_id text UNIQUE NOT NULL,user_id uuid REFERENCES users(id) ON DELETE CASCADE,driver_id text NOT NULL,token_hash text UNIQUE NOT NULL,name text,platform text,active boolean DEFAULT true,last_seen timestamptz,created_at timestamptz DEFAULT now());\nCREATE INDEX IF NOT EXISTS mobile_devices_driver ON mobile_devices(driver_id,active);\nALTER TABLE notifications ADD COLUMN IF NOT EXISTS driver_id text;\nCREATE INDEX IF NOT EXISTS driver_uploads_trip ON driver_uploads(trip_id,created_at DESC);`);
+CREATE TABLE IF NOT EXISTS scan_jobs(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id),filename text,status text NOT NULL DEFAULT 'processing',raw_text text,extracted jsonb,confidence double precision,error text,created_at timestamptz DEFAULT now(),completed_at timestamptz);\nCREATE TABLE IF NOT EXISTS driver_uploads(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,trip_id text NOT NULL,kind text NOT NULL,filename text NOT NULL,mime_type text NOT NULL,content bytea NOT NULL,created_at timestamptz DEFAULT now());\nCREATE TABLE IF NOT EXISTS trip_documents(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,trip_id text NOT NULL,leg_id text,kind text NOT NULL,reference text,filename text,mime_type text,content bytea,created_at timestamptz DEFAULT now());\nCREATE INDEX IF NOT EXISTS trip_documents_trip ON trip_documents(trip_id,created_at DESC);\nCREATE TABLE IF NOT EXISTS mobile_devices(id uuid PRIMARY KEY,device_id text UNIQUE NOT NULL,user_id uuid REFERENCES users(id) ON DELETE CASCADE,driver_id text,token_hash text UNIQUE NOT NULL,name text,platform text,active boolean DEFAULT true,last_seen timestamptz,created_at timestamptz DEFAULT now());\nCREATE INDEX IF NOT EXISTS mobile_devices_driver ON mobile_devices(driver_id,active);\nALTER TABLE notifications ADD COLUMN IF NOT EXISTS driver_id text;
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS user_id uuid;
+ALTER TABLE mobile_devices ALTER COLUMN driver_id DROP NOT NULL;\nCREATE INDEX IF NOT EXISTS driver_uploads_trip ON driver_uploads(trip_id,created_at DESC);`);
  const email=(process.env.INITIAL_ADMIN_EMAIL||'admin@angermund.local').toLowerCase(),pass=process.env.INITIAL_ADMIN_PASSWORD||'ChangeMe123!';const found=await q('SELECT id FROM users WHERE email=$1',[email]);if(!found.length)await q('INSERT INTO users(id,email,password_hash,name,role) VALUES($1,$2,$3,$4,$5)',[crypto.randomUUID(),email,await bcrypt.hash(pass,12),'System Administrator','admin']);await q("INSERT INTO app_state(id,payload) VALUES(1,'{}') ON CONFLICT(id) DO NOTHING");
  }else if(!memory.users.length)memory.users.push({id:crypto.randomUUID(),email:(process.env.INITIAL_ADMIN_EMAIL||'admin@angermund.local').toLowerCase(),password_hash:await bcrypt.hash(process.env.INITIAL_ADMIN_PASSWORD||'ChangeMe123!',10),name:'System Administrator',role:'admin',active:true});
  if(process.env.VAPID_PUBLIC_KEY&&process.env.VAPID_PRIVATE_KEY)webpush.setVapidDetails(process.env.VAPID_SUBJECT||'mailto:angermundtransport@iway.na',process.env.VAPID_PUBLIC_KEY,process.env.VAPID_PRIVATE_KEY);
 }
-function tokenFor(u){return jwt.sign({sub:u.id,email:u.email,name:u.name,role:u.role,driverId:u.driver_id||u.driverId||null},JWT_SECRET,{expiresIn:'12h'})}
+function tokenFor(u){return jwt.sign({sub:u.id,email:u.email,name:u.name,role:u.role,driverId:u.driver_id||u.driverId||null,staffId:u.staff_id||u.staffId||null},JWT_SECRET,{expiresIn:'12h'})}
 function auth(req,res,next){const raw=req.headers.authorization?.replace(/^Bearer\s+/i,'')||req.query.token;if(!raw)return res.status(401).json({error:'Authentication required'});try{req.user=jwt.verify(raw,JWT_SECRET);next()}catch{return res.status(401).json({error:'Invalid or expired session'})}}
 const roles=(...allowed)=>(req,res,next)=>allowed.includes(req.user.role)?next():res.status(403).json({error:'Insufficient permission'});
 const deviceTokenHash=raw=>crypto.createHash('sha256').update(String(raw||'')).digest('hex');
@@ -331,28 +336,29 @@ async function deviceAuth(req,res,next){
   const hash=deviceTokenHash(raw);let d,u;
   if(pool){
     d=(await q('SELECT id,device_id AS "deviceId",user_id AS "userId",driver_id AS "driverId",name,platform,active FROM mobile_devices WHERE token_hash=$1 AND active=true',[hash]))[0];
-    if(d)u=(await q('SELECT id,email,name,role,driver_id AS "driverId",active FROM users WHERE id=$1 AND active=true',[d.userId]))[0]
+    if(d)u=(await q('SELECT id,email,name,role,driver_id AS "driverId",staff_id AS "staffId",active FROM users WHERE id=$1 AND active=true',[d.userId]))[0]
   }else{
     d=memory.mobileDevices.find(x=>x.tokenHash===hash&&x.active);u=d?memory.users.find(x=>x.id===d.userId&&x.active):null
   }
-  if(!d||!u||u.role!=='driver')return res.status(401).json({error:'Invalid or inactive device'});
-  req.device=d;req.user={sub:u.id,email:u.email,name:u.name,role:u.role,driverId:u.driverId||u.driver_id||d.driverId};
+  if(!d||!u)return res.status(401).json({error:'Invalid or inactive device'});
+  req.device=d;req.user={sub:u.id,email:u.email,name:u.name,role:u.role,driverId:u.driverId||u.driver_id||d.driverId||null,staffId:u.staffId||u.staff_id||null};
   if(pool)q('UPDATE mobile_devices SET last_seen=now() WHERE id=$1',[d.id]).catch(()=>{});else d.lastSeen=new Date().toISOString();
   next()
 }
 function emit(type,data){const msg=`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;for(const res of clients)res.write(msg)}
 const distance=(a,b)=>{const R=6371000,p=x=>x*Math.PI/180,dLat=p(b.latitude-a.latitude),dLon=p(b.longitude-a.longitude),x=Math.sin(dLat/2)**2+Math.cos(p(a.latitude))*Math.cos(p(b.latitude))*Math.sin(dLon/2)**2;return 2*R*Math.atan2(Math.sqrt(x),Math.sqrt(1-x))};
-async function createNotification(n){const row={id:crypto.randomUUID(),type:n.type||'system',severity:n.severity||'info',title:n.title,message:n.message,role:n.role||null,driver_id:n.driverId||null,linked_type:n.linkedType||null,linked_id:n.linkedId||null,read:false,created_at:new Date().toISOString()};if(pool)await q('INSERT INTO notifications(id,type,severity,title,message,role,driver_id,linked_type,linked_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[row.id,row.type,row.severity,row.title,row.message,row.role,row.driver_id,row.linked_type,row.linked_id]);else memory.notifications.unshift(row);emit('notification',row);await sendExternal(row);return row}
+async function createNotification(n){const row={id:crypto.randomUUID(),type:n.type||'system',severity:n.severity||'info',title:n.title,message:n.message,role:n.role||null,user_id:n.userId||null,driver_id:n.driverId||null,linked_type:n.linkedType||null,linked_id:n.linkedId||null,read:false,created_at:new Date().toISOString()};if(pool)await q('INSERT INTO notifications(id,type,severity,title,message,role,user_id,driver_id,linked_type,linked_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[row.id,row.type,row.severity,row.title,row.message,row.role,row.user_id,row.driver_id,row.linked_type,row.linked_id]);else memory.notifications.unshift(row);emit('notification',row);await sendExternal(row);return row}
 async function sendExternal(n){
   const tasks=[];
   if(n.role!=='driver'&&process.env.RESEND_API_KEY&&process.env.ALERT_EMAIL_TO)tasks.push(fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${process.env.RESEND_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({from:'Angermund Alerts <alerts@resend.dev>',to:[process.env.ALERT_EMAIL_TO],subject:n.title,html:`<h2>${n.title}</h2><p>${n.message}</p>`})}));
   if(n.role!=='driver'&&process.env.META_WHATSAPP_TOKEN&&process.env.META_PHONE_NUMBER_ID&&process.env.WHATSAPP_ALERT_TO)tasks.push(fetch(`https://graph.facebook.com/v21.0/${process.env.META_PHONE_NUMBER_ID}/messages`,{method:'POST',headers:{Authorization:`Bearer ${process.env.META_WHATSAPP_TOKEN}`,'Content-Type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to:process.env.WHATSAPP_ALERT_TO,type:'text',text:{body:`${n.title}\n${n.message}`}})}));
   let subs=[];
   if(pool){
-    if(n.driver_id)subs=await q('SELECT ps.id,ps.subscription FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id WHERE u.active=true AND u.driver_id=$1',[n.driver_id]);
+    if(n.user_id)subs=await q('SELECT ps.id,ps.subscription FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id WHERE u.active=true AND u.id=$1',[n.user_id]);
+    else if(n.driver_id)subs=await q('SELECT ps.id,ps.subscription FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id WHERE u.active=true AND u.driver_id=$1',[n.driver_id]);
     else if(n.role)subs=await q('SELECT ps.id,ps.subscription FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id WHERE u.active=true AND u.role=$1',[n.role]);
     else subs=await q('SELECT id,subscription FROM push_subscriptions');
-  }else subs=memory.subscriptions.filter(x=>!n.driver_id||x.driverId===n.driver_id);
+  }else subs=memory.subscriptions.filter(x=>n.user_id?x.userId===n.user_id:n.driver_id?x.driverId===n.driver_id:n.role?x.role===n.role:true);
   if(process.env.VAPID_PUBLIC_KEY&&process.env.VAPID_PRIVATE_KEY){
     for(const row of subs)tasks.push((async()=>{
       try{return await webpush.sendNotification(row.subscription||row,JSON.stringify({title:n.title,body:n.message,linkedType:n.linked_type,linkedId:n.linked_id,url:'/'}))}
@@ -660,11 +666,98 @@ async function evaluateTripZones(pos){
 }
 app.post('/api/auth/login',async(req,res)=>{const email=String(req.body.email||'').toLowerCase(),u=pool?(await q('SELECT * FROM users WHERE email=$1 AND active=true',[email]))[0]:memory.users.find(x=>x.email===email&&x.active);if(!u||!await bcrypt.compare(String(req.body.password||''),u.password_hash))return res.status(401).json({error:'Invalid email or password'});res.json({token:tokenFor(u),user:{id:u.id,email:u.email,name:u.name,role:u.role,driverId:u.driver_id||u.driverId||null}})});
 app.get('/api/session',auth,(req,res)=>res.json({user:req.user}));
-app.get('/api/users',auth,roles('admin','manager'),async(req,res)=>res.json(pool?await q('SELECT id,email,name,role,driver_id AS "driverId",active,created_at AS "createdAt" FROM users ORDER BY name'):memory.users.map(({password_hash,...u})=>u)));
-app.post('/api/users',auth,roles('admin'),async(req,res)=>{const email=String(req.body.email||'').trim().toLowerCase(),name=String(req.body.name||'').trim(),role=String(req.body.role||''),password=String(req.body.password||''),driverId=req.body.driverId||null;if(!email||!name||password.length<10||!['admin','manager','dispatcher','driver','warehouse','workshop','finance'].includes(role))return res.status(400).json({error:'Valid name, email, role and a 10+ character password are required'});if(role==='driver'&&!driverId)return res.status(400).json({error:'Select the driver profile this login belongs to'});if(role==='driver'&&driverId){const linked=pool?(await q('SELECT id FROM users WHERE driver_id=$1',[driverId])):memory.users.filter(x=>(x.driver_id||x.driverId)===driverId);if(linked.length)return res.status(409).json({error:'This driver already has a login. Reactivate or reset the existing account instead.'});}const u={id:crypto.randomUUID(),email,name,role,driverId,active:true,createdAt:new Date().toISOString()},hash=await bcrypt.hash(password,12);try{if(pool)await q('INSERT INTO users(id,email,password_hash,name,role,driver_id) VALUES($1,$2,$3,$4,$5,$6)',[u.id,email,hash,name,role,u.driverId]);else memory.users.push({...u,password_hash:hash});res.status(201).json(u)}catch(e){res.status(409).json({error:'A user with that email already exists'})}});
+app.get('/api/users',auth,roles('admin','manager'),async(req,res)=>res.json(pool?await q('SELECT id,email,name,role,driver_id AS "driverId",staff_id AS "staffId",active,created_at AS "createdAt" FROM users ORDER BY name'):memory.users.map(({password_hash,...u})=>u)));
+app.post('/api/users',auth,roles('admin'),async(req,res)=>{
+  const email=String(req.body.email||'').trim().toLowerCase(),name=String(req.body.name||'').trim(),role=String(req.body.role||''),password=String(req.body.password||''),driverId=req.body.driverId||null,staffId=req.body.staffId||null;
+  const validRoles=['admin','manager','dispatcher','driver','warehouse','workshop','finance','site_worker'];
+  if(!email||!name||password.length<10||!validRoles.includes(role))return res.status(400).json({error:'Valid name, email, role and a 10+ character password are required'});
+  if(role==='driver'&&!driverId)return res.status(400).json({error:'Select the driver profile this login belongs to'});
+  if(role==='driver'&&driverId){
+    const linked=pool?(await q('SELECT id FROM users WHERE driver_id=$1',[driverId])):memory.users.filter(x=>(x.driver_id||x.driverId)===driverId);
+    if(linked.length)return res.status(409).json({error:'This driver already has a login. Reactivate or reset the existing account instead.'});
+  }
+  const u={id:crypto.randomUUID(),email,name,role,driverId:role==='driver'?driverId:null,staffId:role==='driver'?null:staffId,active:true,createdAt:new Date().toISOString()},hash=await bcrypt.hash(password,12);
+  try{
+    if(pool)await q('INSERT INTO users(id,email,password_hash,name,role,driver_id,staff_id) VALUES($1,$2,$3,$4,$5,$6,$7)',[u.id,email,hash,name,role,u.driverId,u.staffId]);
+    else memory.users.push({...u,password_hash:hash});
+    res.status(201).json(u)
+  }catch(e){res.status(409).json({error:'A user with that email already exists'})}
+});
 
-app.patch('/api/users/:id',auth,roles('admin'),async(req,res)=>{const id=req.params.id,active=req.body.active===undefined?undefined:Boolean(req.body.active),driverId=req.body.driverId===undefined?undefined:(req.body.driverId||null);try{const existing=pool?(await q('SELECT id,email,name,role,driver_id AS "driverId",active FROM users WHERE id=$1',[id]))[0]:memory.users.find(x=>x.id===id);if(!existing)return res.status(404).json({error:'User not found'});if(existing.id===req.user.sub&&active===false)return res.status(400).json({error:'You cannot deactivate your own account'});const nextDriverId=driverId===undefined?(existing.driverId||existing.driver_id||null):driverId;if(existing.role==='driver'&&nextDriverId){const dup=pool?await q('SELECT id FROM users WHERE driver_id=$1 AND id<>$2',[nextDriverId,id]):memory.users.filter(x=>(x.driver_id||x.driverId)===nextDriverId&&x.id!==id);if(dup.length)return res.status(409).json({error:'That driver is already linked to another login'});}if(pool){const finalDriverId=driverId===undefined?(existing.driverId||null):driverId,finalActive=active===undefined?existing.active:active;const row=(await q('UPDATE users SET driver_id=$2,active=$3 WHERE id=$1 RETURNING id,email,name,role,driver_id AS "driverId",active,created_at AS "createdAt"',[id,finalDriverId,finalActive]))[0];return res.json(row)}if(driverId!==undefined){existing.driverId=driverId;existing.driver_id=driverId}if(active!==undefined)existing.active=active;const{password_hash,...safe}=existing;res.json(safe)}catch(e){res.status(500).json({error:e.message})}});
+app.patch('/api/users/:id',auth,roles('admin'),async(req,res)=>{
+  const id=req.params.id,validRoles=['admin','manager','dispatcher','driver','warehouse','workshop','finance','site_worker'];
+  const active=req.body.active===undefined?undefined:Boolean(req.body.active),driverId=req.body.driverId===undefined?undefined:(req.body.driverId||null),staffId=req.body.staffId===undefined?undefined:(req.body.staffId||null);
+  const name=req.body.name===undefined?undefined:String(req.body.name||'').trim(),email=req.body.email===undefined?undefined:String(req.body.email||'').trim().toLowerCase(),role=req.body.role===undefined?undefined:String(req.body.role||'');
+  if(role!==undefined&&!validRoles.includes(role))return res.status(400).json({error:'Invalid role'});
+  try{
+    const existing=pool?(await q('SELECT id,email,name,role,driver_id AS "driverId",staff_id AS "staffId",active FROM users WHERE id=$1',[id]))[0]:memory.users.find(x=>x.id===id);
+    if(!existing)return res.status(404).json({error:'User not found'});
+    if(existing.id===req.user.sub&&active===false)return res.status(400).json({error:'You cannot deactivate your own account'});
+    if(existing.id===req.user.sub&&role!==undefined&&role!=='admin')return res.status(400).json({error:'You cannot remove your own admin role'});
+    const finalRole=role===undefined?existing.role:role,finalDriverId=driverId===undefined?(existing.driverId||existing.driver_id||null):driverId;
+    if(finalRole==='driver'&&!finalDriverId)return res.status(400).json({error:'Driver role requires a linked driver profile'});
+    if(finalRole==='driver'&&finalDriverId){
+      const dup=pool?await q('SELECT id FROM users WHERE driver_id=$1 AND id<>$2',[finalDriverId,id]):memory.users.filter(x=>(x.driver_id||x.driverId)===finalDriverId&&x.id!==id);
+      if(dup.length)return res.status(409).json({error:'That driver is already linked to another login'});
+    }
+    const final={name:name===undefined?existing.name:name,email:email===undefined?existing.email:email,role:finalRole,driverId:finalRole==='driver'?finalDriverId:null,staffId:finalRole==='driver'?null:(staffId===undefined?(existing.staffId||existing.staff_id||null):staffId),active:active===undefined?existing.active:active};
+    if(!final.name||!final.email)return res.status(400).json({error:'Name and email are required'});
+    if(pool){
+      const row=(await q('UPDATE users SET name=$2,email=$3,role=$4,driver_id=$5,staff_id=$6,active=$7 WHERE id=$1 RETURNING id,email,name,role,driver_id AS "driverId",staff_id AS "staffId",active,created_at AS "createdAt"',[id,final.name,final.email,final.role,final.driverId,final.staffId,final.active]))[0];
+      return res.json(row)
+    }
+    Object.assign(existing,{name:final.name,email:final.email,role:final.role,driverId:final.driverId,driver_id:final.driverId,staffId:final.staffId,staff_id:final.staffId,active:final.active});
+    const{password_hash,...safe}=existing;res.json(safe)
+  }catch(e){res.status(409).json({error:e.code==='23505'?'A user with that email already exists':e.message})}
+});
 app.post('/api/users/:id/reset-password',auth,roles('admin'),async(req,res)=>{const password=String(req.body.password||'');if(password.length<10)return res.status(400).json({error:'Password must be at least 10 characters'});const id=req.params.id,hash=await bcrypt.hash(password,12);if(pool){const rows=await q('UPDATE users SET password_hash=$2 WHERE id=$1 RETURNING id',[id,hash]);if(!rows.length)return res.status(404).json({error:'User not found'})}else{const u=memory.users.find(x=>x.id===id);if(!u)return res.status(404).json({error:'User not found'});u.password_hash=hash}res.json({success:true})});
+app.delete('/api/users/:id',auth,roles('admin'),async(req,res)=>{
+  const id=String(req.params.id);if(id===req.user.sub)return res.status(400).json({error:'You cannot delete your own account'});
+  if(pool){const rows=await q('DELETE FROM users WHERE id=$1 RETURNING id,name',[id]);if(!rows.length)return res.status(404).json({error:'User not found'});return res.json({success:true,id})}
+  const i=memory.users.findIndex(x=>x.id===id);if(i<0)return res.status(404).json({error:'User not found'});memory.users.splice(i,1);memory.subscriptions=memory.subscriptions.filter(x=>x.userId!==id);memory.mobileDevices=memory.mobileDevices.filter(x=>x.userId!==id);res.json({success:true,id})
+});
+
+function taskNotificationTarget(task){
+  if(task.assignedUserId)return{userId:task.assignedUserId};
+  if(task.assignedDriverId)return{driverId:task.assignedDriverId,role:'driver'};
+  if(task.ownerRole)return{role:String(task.ownerRole).toLowerCase().replace(/\s+/g,'_')};
+  return{role:'admin'}
+}
+async function notifyTask(task,title,message,severity='info'){
+  return createNotification({type:'task',severity,title,message,...taskNotificationTarget(task),linkedType:'task',linkedId:task.id})
+}
+function normalizeTask(body={},existing={}){
+  const due=String(body.due??existing.due??'').slice(0,10),priority=['Low','Normal','High','Critical'].includes(body.priority)?body.priority:(existing.priority||'Normal'),status=['Open','In progress','Completed','Cancelled'].includes(body.status)?body.status:(existing.status||'Open');
+  return{...existing,title:String(body.title??existing.title??'').trim().slice(0,180),description:String(body.description??existing.description??'').trim().slice(0,2000),assignedUserId:body.assignedUserId===undefined?(existing.assignedUserId||''):(body.assignedUserId||''),assignedDriverId:body.assignedDriverId===undefined?(existing.assignedDriverId||''):(body.assignedDriverId||''),ownerRole:body.ownerRole===undefined?(existing.ownerRole||''):(body.ownerRole||''),due,priority,status,linkedType:String(body.linkedType??existing.linkedType??'').slice(0,40),linkedId:String(body.linkedId??existing.linkedId??'').slice(0,160),updatedAt:new Date().toISOString()}
+}
+app.post('/api/tasks',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
+  try{
+    const changed=await mutateOpsState(state=>{state.tasks??=[];const t=normalizeTask(req.body||{}, {id:'task_'+crypto.randomUUID(),createdAt:new Date().toISOString(),createdBy:req.user.sub,status:'Open'});if(!t.title){const e=Error('Task title is required');e.status=400;throw e}state.tasks.unshift(t);return t});
+    await notifyTask(changed.result,'New task: '+changed.result.title,(changed.result.description?changed.result.description+' · ':'')+(changed.result.due?'Due '+changed.result.due:'No due date'),changed.result.priority==='Critical'?'critical':changed.result.priority==='High'?'warning':'info');
+    res.status(201).json({task:changed.result,revision:changed.revision})
+  }catch(e){res.status(e.status||500).json({error:e.message})}
+});
+app.patch('/api/tasks/:id',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
+  try{
+    const changed=await mutateOpsState(state=>{state.tasks??=[];const i=state.tasks.findIndex(x=>x.id===req.params.id);if(i<0){const e=Error('Task not found');e.status=404;throw e}const before=state.tasks[i],next=normalizeTask(req.body||{},before);if(!next.title){const e=Error('Task title is required');e.status=400;throw e}state.tasks[i]=next;return{before,next}});
+    const b=changed.result.before,n=changed.result.next,assignmentChanged=b.assignedUserId!==n.assignedUserId||b.assignedDriverId!==n.assignedDriverId||b.ownerRole!==n.ownerRole||b.due!==n.due||b.priority!==n.priority;
+    if(assignmentChanged&&n.status!=='Completed')await notifyTask(n,'Task updated: '+n.title,(n.due?'Due '+n.due+' · ':'')+n.priority+' priority',n.priority==='Critical'?'critical':n.priority==='High'?'warning':'info');
+    res.json({task:n,revision:changed.revision})
+  }catch(e){res.status(e.status||500).json({error:e.message})}
+});
+app.post('/api/tasks/:id/complete',auth,async(req,res)=>{
+  try{
+    const changed=await mutateOpsState(state=>{state.tasks??=[];const t=state.tasks.find(x=>x.id===req.params.id);if(!t){const e=Error('Task not found');e.status=404;throw e}
+      const privileged=['admin','manager','dispatcher'].includes(req.user.role),assigned=t.assignedUserId===req.user.sub||(req.user.driverId&&t.assignedDriverId===req.user.driverId)||(!t.assignedUserId&&!t.assignedDriverId&&String(t.ownerRole||'').toLowerCase().replace(/\s+/g,'_')===req.user.role);
+      if(!privileged&&!assigned){const e=Error('This task is not assigned to you');e.status=403;throw e}
+      t.status='Completed';t.completedAt=new Date().toISOString();t.completedBy=req.user.sub;t.updatedAt=t.completedAt;return t});
+    createNotification({type:'task-complete',severity:'info',title:'Task completed',message:changed.result.title+' completed by '+req.user.name,role:'admin',linkedType:'task',linkedId:changed.result.id}).catch(()=>{});
+    res.json({task:changed.result,revision:changed.revision})
+  }catch(e){res.status(e.status||500).json({error:e.message})}
+});
+app.delete('/api/tasks/:id',auth,roles('admin','manager'),async(req,res)=>{
+  try{const changed=await mutateOpsState(state=>{state.tasks??=[];const i=state.tasks.findIndex(x=>x.id===req.params.id);if(i<0){const e=Error('Task not found');e.status=404;throw e}return state.tasks.splice(i,1)[0]});res.json({success:true,id:req.params.id,revision:changed.revision})}catch(e){res.status(e.status||500).json({error:e.message})}
+});
 
 app.get('/api/state',auth,async(req,res)=>{const row=pool?(await q('SELECT payload,revision,updated_at FROM app_state WHERE id=1'))[0]:{payload:memory.state||{},revision:0};res.json(row)});
 app.put('/api/state',auth,roles('admin','manager','dispatcher','workshop','finance'),async(req,res)=>{if(!req.body||typeof req.body!=='object')return res.status(400).json({error:'Invalid state'});if(pool){const row=(await q('UPDATE app_state SET payload=$1,revision=revision+1,updated_at=now() WHERE id=1 RETURNING revision,updated_at',[req.body]))[0];emit('state',{revision:row.revision,updatedAt:row.updated_at});res.json(row)}else{memory.state=req.body;emit('state',{revision:Date.now()});res.json({revision:Date.now()})}});
@@ -1204,18 +1297,18 @@ function driverMobileTrip(state,driverId){
   rows.sort((a,b)=>priority(b)-priority(a)||(new Date(b.createdAt||b.date||0)-new Date(a.createdAt||a.date||0))||String(b.number||'').localeCompare(String(a.number||''),undefined,{numeric:true}));
   return rows[0]||null
 }
-app.post('/api/mobile/register',auth,roles('driver'),async(req,res)=>{
+app.post('/api/mobile/register',auth,async(req,res)=>{
   try{
     const deviceId=String(req.body.deviceId||'').trim().slice(0,160);if(!deviceId)return res.status(400).json({error:'deviceId is required'});
     const token=crypto.randomBytes(32).toString('base64url'),hash=deviceTokenHash(token),name=String(req.body.name||'Android Driver').slice(0,120),platform=String(req.body.platform||'android').slice(0,40),id=crypto.randomUUID();
     if(pool){
-      await q('INSERT INTO mobile_devices(id,device_id,user_id,driver_id,token_hash,name,platform,active,last_seen) VALUES($1,$2,$3,$4,$5,$6,$7,true,now()) ON CONFLICT(device_id) DO UPDATE SET user_id=excluded.user_id,driver_id=excluded.driver_id,token_hash=excluded.token_hash,name=excluded.name,platform=excluded.platform,active=true,last_seen=now()',[id,deviceId,req.user.sub,req.user.driverId,hash,name,platform])
+      await q('INSERT INTO mobile_devices(id,device_id,user_id,driver_id,token_hash,name,platform,active,last_seen) VALUES($1,$2,$3,$4,$5,$6,$7,true,now()) ON CONFLICT(device_id) DO UPDATE SET user_id=excluded.user_id,driver_id=excluded.driver_id,token_hash=excluded.token_hash,name=excluded.name,platform=excluded.platform,active=true,last_seen=now()',[id,deviceId,req.user.sub,req.user.driverId||null,hash,name,platform])
     }else{
       let d=memory.mobileDevices.find(x=>x.deviceId===deviceId);
-      if(d)Object.assign(d,{userId:req.user.sub,driverId:req.user.driverId,tokenHash:hash,name,platform,active:true,lastSeen:new Date().toISOString()});
-      else memory.mobileDevices.push({id,deviceId,userId:req.user.sub,driverId:req.user.driverId,tokenHash:hash,name,platform,active:true,lastSeen:new Date().toISOString()})
+      if(d)Object.assign(d,{userId:req.user.sub,driverId:req.user.driverId||null,tokenHash:hash,name,platform,active:true,lastSeen:new Date().toISOString()});
+      else memory.mobileDevices.push({id,deviceId,userId:req.user.sub,driverId:req.user.driverId||null,tokenHash:hash,name,platform,active:true,lastSeen:new Date().toISOString()})
     }
-    res.status(201).json({deviceToken:token,driverId:req.user.driverId})
+    res.status(201).json({deviceToken:token,driverId:req.user.driverId||null,role:req.user.role,serverTime:new Date().toISOString()})
   }catch(e){res.status(500).json({error:e.message})}
 });
 app.post('/api/mobile/revoke',deviceAuth,async(req,res)=>{
@@ -1228,11 +1321,21 @@ app.get('/api/mobile/context',deviceAuth,async(req,res)=>{
 });
 app.post('/api/mobile/gps',deviceAuth,async(req,res)=>{
   try{
+    if(req.user.role!=='driver'||!req.user.driverId)return res.status(403).json({error:'GPS upload is only available to linked driver accounts'});
     const state=await readOpsState(),t=driverMobileTrip(state,req.user.driverId);
     if(!t)return res.status(204).end();
     req.body={...req.body,vehicleId:t.truckId,driverId:req.user.driverId,tripId:t.id};
     return gpsIn(req,res,'android-background')
   }catch(e){res.status(500).json({error:e.message})}
+});
+app.get('/api/mobile/alerts',deviceAuth,async(req,res)=>{
+  const afterRaw=String(req.query.after||''),after=Number.isFinite(Date.parse(afterRaw))?new Date(afterRaw).toISOString():new Date(Date.now()-5*60*1000).toISOString();
+  if(pool){
+    const rows=await q(`SELECT id,type,severity,title,message,role,user_id AS "userId",driver_id AS "driverId",linked_type AS "linkedType",linked_id AS "linkedId",created_at AS "createdAt" FROM notifications WHERE created_at>$1 AND (user_id=$2 OR (user_id IS NULL AND driver_id IS NOT NULL AND driver_id=$3) OR (user_id IS NULL AND driver_id IS NULL AND role=$4) OR (user_id IS NULL AND driver_id IS NULL AND role IS NULL)) ORDER BY created_at ASC LIMIT 50`,[after,req.user.sub,req.user.driverId||'',req.user.role]);
+    return res.json({alerts:rows,serverTime:new Date().toISOString()})
+  }
+  const rows=memory.notifications.filter(n=>new Date(n.created_at||n.createdAt)>new Date(after)&&(n.user_id?String(n.user_id)===String(req.user.sub):n.driver_id?String(n.driver_id)===String(req.user.driverId||''):n.role?String(n.role)===String(req.user.role):true)).sort((a,b)=>new Date(a.created_at||a.createdAt)-new Date(b.created_at||b.createdAt)).slice(0,50);
+  res.json({alerts:rows,serverTime:new Date().toISOString()})
 });
 app.post('/api/gps',auth,async(req,res)=>gpsIn(req,res,'driver'));
 app.post('/api/integrations/telematics/webhook',async(req,res)=>{if(req.headers['x-telematics-token']!==process.env.TELEMATICS_WEBHOOK_TOKEN)return res.status(401).json({error:'Invalid webhook token'});req.user={sub:'telematics'};return gpsIn(req,res,'telematics')});
@@ -1311,7 +1414,7 @@ app.delete('/api/geofences/:id',auth,roles('admin','manager','dispatcher'),async
   if(pool){const rows=await q('DELETE FROM geofences WHERE id=$1 RETURNING id,name',[id]);if(!rows.length)return res.status(404).json({error:'Geofence not found'});emit('geofence-delete',{id,name:rows[0].name});return res.json({success:true,id})}
   const i=memory.geofences.findIndex(x=>x.id===id);if(i<0)return res.status(404).json({error:'Geofence not found'});const [removed]=memory.geofences.splice(i,1);emit('geofence-delete',{id,name:removed.name});res.json({success:true,id})
 });
-app.get('/api/notifications',auth,async(req,res)=>res.json(pool?await q(`SELECT id,type,severity,title,message,role,driver_id AS "driverId",linked_type AS "linkedType",linked_id AS "linkedId",read,created_at AS "createdAt" FROM notifications WHERE (role IS NULL OR role=$1) AND ($1<>'driver' OR driver_id IS NULL OR driver_id=$2) ORDER BY created_at DESC LIMIT 100`,[req.user.role,req.user.driverId||null]):memory.notifications.filter(x=>(!x.role||x.role===req.user.role)&&(req.user.role!=='driver'||!x.driver_id||x.driver_id===req.user.driverId)).slice(0,100)));
+app.get('/api/notifications',auth,async(req,res)=>res.json(pool?await q(`SELECT id,type,severity,title,message,role,user_id AS "userId",driver_id AS "driverId",linked_type AS "linkedType",linked_id AS "linkedId",read,created_at AS "createdAt" FROM notifications WHERE user_id=$1 OR (user_id IS NULL AND driver_id IS NOT NULL AND driver_id=$2) OR (user_id IS NULL AND driver_id IS NULL AND role=$3) OR (user_id IS NULL AND driver_id IS NULL AND role IS NULL) ORDER BY created_at DESC LIMIT 100`,[req.user.sub,req.user.driverId||'',req.user.role]):memory.notifications.filter(x=>x.user_id?x.user_id===req.user.sub:x.driver_id?x.driver_id===req.user.driverId:x.role?x.role===req.user.role:true).slice(0,100)));
 app.patch('/api/notifications/:id/read',auth,async(req,res)=>{if(pool)await q('UPDATE notifications SET read=true WHERE id=$1',[req.params.id]);else{const n=memory.notifications.find(x=>x.id===req.params.id);if(n)n.read=true}res.json({success:true})});
 app.get('/api/push/status',auth,async(req,res)=>{
   let count=0;
@@ -1357,6 +1460,38 @@ app.post('/api/documents/scan',auth,upload.single('document'),async(req,res)=>{i
 app.get('/api/documents/scans/:id',auth,async(req,res)=>{const row=pool?(await q('SELECT id,filename,status,raw_text AS "rawText",extracted,confidence,error,created_at AS "createdAt",completed_at AS "completedAt" FROM scan_jobs WHERE id=$1',[req.params.id]))[0]:memory.scanJobs.find(x=>x.id===req.params.id);if(!row)return res.status(404).json({error:'Scan not found'});res.json(row)});
 app.post('/api/notifications/test',auth,roles('admin','manager'),async(req,res)=>res.status(201).json(await createNotification({type:'test',severity:'info',title:'Angermund Transport test alert',message:'Notification providers are connected and working.'})));
 
+async function ensureOperationalAlerts(){
+  try{
+    const today=new Date(Date.now()+2*60*60*1000).toISOString().slice(0,10),snapshot=await readOpsState(),alerts=[];
+    const changed=await mutateOpsState(state=>{
+      state.tasks??=[];state.permits??=[];state.maintenance??=[];state.invoices??=[];
+      for(const t of state.tasks){
+        if(!t||['Completed','Cancelled'].includes(t.status)||!t.due)continue;
+        if(t.due<today&&t.overdueAlertDate!==today){t.overdueAlertDate=today;alerts.push({task:t,title:'Overdue task: '+t.title,message:'This task was due '+t.due+'.',severity:'warning'})}
+        else if(t.due===today&&t.dueAlertDate!==today){t.dueAlertDate=today;alerts.push({task:t,title:'Task due today: '+t.title,message:t.description||'Please complete this task today.',severity:t.priority==='Critical'?'critical':t.priority==='High'?'warning':'info'})}
+      }
+      for(const p of state.permits){
+        if(!p?.expiry)continue;const days=Math.ceil((new Date(p.expiry+'T23:59:59+02:00')-new Date())/86400000);
+        if(days<=30&&p.expiryAlertDate!==today){p.expiryAlertDate=today;alerts.push({admin:true,title:(days<0?'Expired: ':'Document expiring: ')+p.type,message:(p.reference||p.type)+' '+(days<0?'expired '+Math.abs(days)+' day(s) ago':'expires in '+days+' day(s)'),severity:days<0?'critical':'warning',linkedType:'permit',linkedId:p.id})}
+      }
+      for(const m of state.maintenance){
+        if(String(m.status||'').toLowerCase()==='completed')continue;const tr=(state.trucks||[]).find(x=>x.id===m.truckId),remaining=num(m.nextService)-num(tr?.odometer);
+        if(num(m.nextService)>0&&remaining<=5000&&m.serviceAlertDate!==today){m.serviceAlertDate=today;alerts.push({role:'workshop',title:'Vehicle service due: '+(tr?.registration||'Vehicle'),message:m.type+' · '+(remaining<=0?'service is due/overdue':remaining.toLocaleString()+' km remaining'),severity:remaining<=0?'critical':'warning',linkedType:'maintenance',linkedId:m.id})}
+      }
+      for(const i of state.invoices){
+        if(!i?.due||['Paid'].includes(i.status))continue;
+        if(i.due<today&&i.overdueAlertDate!==today){i.overdueAlertDate=today;alerts.push({role:'finance',title:'Invoice overdue: '+i.number,message:'Invoice '+i.number+' was due '+i.due+'.',severity:'warning',linkedType:'invoice',linkedId:i.id})}
+      }
+      return{count:alerts.length}
+    });
+    for(const a of alerts){
+      if(a.task)await notifyTask(a.task,a.title,a.message,a.severity);
+      else await createNotification({type:'operational-alert',severity:a.severity,title:a.title,message:a.message,role:a.admin?'admin':a.role||'admin',linkedType:a.linkedType,linkedId:a.linkedId})
+    }
+    return changed.result
+  }catch(e){console.error('Operational alert sweep failed',e.message)}
+}
+
 async function ensureMonthEndPayroll(){
   try{
     const na=new Date(Date.now()+2*60*60*1000),y=na.getUTCFullYear(),m=na.getUTCMonth(),day=na.getUTCDate(),last=new Date(Date.UTC(y,m+1,0)).getUTCDate();
@@ -1370,4 +1505,4 @@ async function ensureMonthEndPayroll(){
 }
 app.get('/download/android',(req,res)=>res.redirect(302,'https://github.com/zjondreangermund/Angermund-Transport/releases/download/android-latest/Angermund-Transport.apk'));
 app.get('/login',(req,res)=>{res.setHeader('Cache-Control','no-store, no-cache, must-revalidate');res.sendFile(path.join(root,'index.html'))});app.use(express.static(root,{maxAge:'1h',setHeaders:(res,file)=>{if(file.endsWith('.html')||file.endsWith('/app.js')||file.endsWith('/styles.css')||file.endsWith('/sw.js'))res.setHeader('Cache-Control','no-store, no-cache, must-revalidate')}}));app.use((req,res)=>res.sendFile(path.join(root,'index.html')));
-initDb().then(()=>{if(process.argv.includes('--init-only'))return pool?.end();app.listen(PORT,()=>console.log(`Angermund Transport V3 running on port ${PORT}`));setTimeout(ensureMonthEndPayroll,15000);setInterval(ensureMonthEndPayroll,6*60*60*1000)}).catch(e=>{console.error('Startup failed',e);process.exit(1)});
+initDb().then(()=>{if(process.argv.includes('--init-only'))return pool?.end();app.listen(PORT,()=>console.log(`Angermund Transport V3 running on port ${PORT}`));setTimeout(ensureMonthEndPayroll,15000);setInterval(ensureMonthEndPayroll,6*60*60*1000);setTimeout(ensureOperationalAlerts,20000);setInterval(ensureOperationalAlerts,10*60*1000)}).catch(e=>{console.error('Startup failed',e);process.exit(1)});
