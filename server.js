@@ -418,6 +418,77 @@ async function previousVehiclePosition(pos){
   const at=new Date(pos.recordedAt).getTime();
   return memory.gps.filter(x=>x.vehicleId===pos.vehicleId&&new Date(x.recordedAt).getTime()<at).sort((a,b)=>new Date(b.recordedAt)-new Date(a.recordedAt))[0]||null
 }
+function geofenceWordSet(v){
+  return new Set(String(v||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').split(/\s+/).filter(w=>w.length>=4&&!['limited','company','loading','offloading','depot','zone','site','transport'].includes(w)))
+}
+function geofenceNameMatches(a,b){
+  const aa=String(a||'').trim().toLowerCase(),bb=String(b||'').trim().toLowerCase();
+  if(!aa||!bb)return false;
+  if(aa===bb||aa.includes(bb)||bb.includes(aa))return true;
+  const aw=geofenceWordSet(aa),bw=geofenceWordSet(bb);
+  for(const w of aw)if(bw.has(w))return true;
+  return false
+}
+async function operationalGeofences(activeOnly=false){
+  if(pool)return q('SELECT id,name,latitude,longitude,radius_m AS "radiusM",event_types AS "eventTypes",kind,active FROM geofences '+(activeOnly?'WHERE active=true ':'')+'ORDER BY name');
+  return memory.geofences.filter(x=>!activeOnly||x.active!==false)
+}
+async function ensureOperationalGeofence({name,latitude,longitude,kind='custom',radiusM=500,aliases=[]}){
+  const lat=Number(latitude),lon=Number(longitude),hasPoint=Number.isFinite(lat)&&Number.isFinite(lon)&&!(lat===0&&lon===0),wanted=String(name||'').trim();
+  const fences=await operationalGeofences(false),names=[wanted,...aliases].filter(Boolean);
+  let existing=null;
+  if(hasPoint){
+    existing=fences.find(f=>f.active!==false&&distance({latitude:lat,longitude:lon},{latitude:num(f.latitude),longitude:num(f.longitude)})<=Math.max(100,Math.min(300,num(f.radiusM||f.radius_m)||500)));
+  }
+  if(!existing)existing=fences.find(f=>f.active!==false&&names.some(n=>geofenceNameMatches(f.name,n)));
+  if(existing)return existing;
+  if(!hasPoint)return null;
+  const f={id:crypto.randomUUID(),name:wanted||'Trip site',latitude:lat,longitude:lon,radiusM:Math.max(25,num(radiusM)||500),eventTypes:['enter','exit'],kind:['depot','loading','offloading','custom'].includes(kind)?kind:'custom',active:true};
+  if(pool)await q('INSERT INTO geofences(id,name,latitude,longitude,radius_m,event_types,kind) VALUES($1,$2,$3,$4,$5,$6,$7)',[f.id,f.name,f.latitude,f.longitude,f.radiusM,f.eventTypes,f.kind]);
+  else memory.geofences.push(f);
+  emit('geofence',f);
+  return f
+}
+function linkedTripZones(route,leg,trip,fences){
+  const base=routeTripZones(route),loadId=leg?.loadingGeofenceId||trip?.loadingGeofenceId,offId=leg?.offloadingGeofenceId||trip?.offloadingGeofenceId;
+  const loadFence=(fences||[]).find(f=>String(f.id)===String(loadId)),offFence=(fences||[]).find(f=>String(f.id)===String(offId));
+  const load=loadFence?{latitude:num(loadFence.latitude),longitude:num(loadFence.longitude),name:String(loadFence.name||base?.load?.name||'Loading point')}:base?.load;
+  const offload=offFence?{latitude:num(offFence.latitude),longitude:num(offFence.longitude),name:String(offFence.name||base?.offload?.name||'Offloading point')}:base?.offload;
+  if(!load||!offload)return null;
+  const approachKm=Math.max(2,Math.min(5,num(route?.approachKm)||5)),arrivalKm=Math.max(.5,Math.min(approachKm-.25,num(route?.arrivalKm)||2));
+  return{load,offload,approachM:approachKm*1000,arrivalM:arrivalKm*1000,departM:Math.min(approachKm*1000,Math.max(arrivalKm*1000+500,arrivalKm*1250)),roundTrip:Boolean(route?.roundTrip)||/[↔]|round\s*trip|return/i.test(String(route?.name||'')+' '+String(route?.notes||''))}
+}
+async function linkTripLegGeofences(tripId,legId){
+  const snapshot=await readOpsState(),t=(snapshot.trips||[]).find(x=>x.id===tripId);
+  if(!t)return null;
+  const legs=ensureTripLegs(snapshot,t),leg=legId?legs.find(x=>x.id===legId):legs[0],route=(snapshot.routes||[]).find(x=>x.id===(leg?.routeId||t.routeId)),client=(snapshot.clients||[]).find(x=>x.id===(leg?.clientId||t.clientId));
+  if(!leg||!route)return null;
+  const all=await operationalGeofences(false);
+  const routeLoadLat=Number(route.loadLat),routeLoadLon=Number(route.loadLon),routeOffLat=Number(route.offloadLat),routeOffLon=Number(route.offloadLon);
+  const loadPointOk=Number.isFinite(routeLoadLat)&&Number.isFinite(routeLoadLon)&&!(routeLoadLat===0&&routeLoadLon===0),offPointOk=Number.isFinite(routeOffLat)&&Number.isFinite(routeOffLon)&&!(routeOffLat===0&&routeOffLon===0);
+  const existingLoad=!loadPointOk?all.find(f=>f.active!==false&&[route.loadName,client?.name].filter(Boolean).some(n=>geofenceNameMatches(f.name,n))):null;
+  const existingOff=!offPointOk?all.find(f=>f.active!==false&&[route.offloadName,route.name].filter(Boolean).some(n=>geofenceNameMatches(f.name,n))&&(!existingLoad||f.id!==existingLoad.id)):null;
+  const load=existingLoad||await ensureOperationalGeofence({name:String(route.loadName||client?.name||'Loading point'),latitude:routeLoadLat,longitude:routeLoadLon,kind:'loading',radiusM:Math.max(250,num(route.loadingRadiusM)||500),aliases:[client?.name,route.name]});
+  const offload=existingOff||await ensureOperationalGeofence({name:String(route.offloadName||route.name||'Offloading point'),latitude:routeOffLat,longitude:routeOffLon,kind:'offloading',radiusM:Math.max(250,num(route.offloadingRadiusM)||500),aliases:[route.offloadName]});
+  const linked=await mutateOpsState(state=>{
+    const trip=(state.trips||[]).find(x=>x.id===tripId);if(!trip)return null;
+    const tripLegsNow=ensureTripLegs(state,trip),target=tripLegsNow.find(x=>x.id===leg.id);if(!target)return null;
+    target.loadingGeofenceId=load?.id||'';target.loadingGeofenceName=load?.name||'';
+    target.offloadingGeofenceId=offload?.id||'';target.offloadingGeofenceName=offload?.name||'';
+    target.geofenceLinkStatus=load&&offload?'Linked':(load||offload?'Partial':'Setup needed');
+    target.geofenceLinkedAt=new Date().toISOString();
+    if(target===tripLegsNow[0]){
+      trip.loadingGeofenceId=target.loadingGeofenceId;trip.loadingGeofenceName=target.loadingGeofenceName;
+      trip.offloadingGeofenceId=target.offloadingGeofenceId;trip.offloadingGeofenceName=target.offloadingGeofenceName;
+      trip.geofenceLinkStatus=target.geofenceLinkStatus;trip.geofenceLinkedAt=target.geofenceLinkedAt
+    }
+    state.audit??=[];
+    state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:'System',action:'GPS geofences '+target.geofenceLinkStatus.toLowerCase()+' for '+trip.number+' · '+(target.label||'Leg '+target.sequence),linkedType:'trip',linkedId:trip.id});
+    state.audit=state.audit.slice(0,100);
+    return{tripId:trip.id,legId:target.id,status:target.geofenceLinkStatus,loading:load?{id:load.id,name:load.name}:null,offloading:offload?{id:offload.id,name:offload.name}:null}
+  });
+  return{...linked.result,revision:linked.revision}
+}
 async function tripGeoNotify(trip,title,message,severity='info'){
   await Promise.allSettled([
     createNotification({type:'trip-geofence',severity,title,message,role:'driver',driverId:trip.driverId,linkedType:'trip',linkedId:trip.id}),
@@ -435,10 +506,9 @@ async function evaluateTripZones(pos){
   const snapshot=await readOpsState();
   const active=(snapshot.trips||[]).filter(t=>t.truckId===pos.vehicleId&&!t.driverComplete&&!['Closed','Invoiced'].includes(t.status)).sort((a,b)=>{const p=serverTripPriority(b)-serverTripPriority(a);if(p)return p;return new Date(b.createdAt||b.date||0)-new Date(a.createdAt||a.date||0)})[0];
   if(!active)return;
-  const activeLeg=activeTripLegServer(active),route=(snapshot.routes||[]).find(r=>r.id===(activeLeg?.routeId||active.routeId)),zones=routeTripZones(route),multi=Array.isArray(active.legs)&&active.legs.length>1;
+  const activeLeg=activeTripLegServer(active),route=(snapshot.routes||[]).find(r=>r.id===(activeLeg?.routeId||active.routeId)),multi=Array.isArray(active.legs)&&active.legs.length>1;
+  const fences=await operationalGeofences(true),zones=linkedTripZones(route,activeLeg,active,fences);
   if(!zones)return;
-
-  const fences=pool?await q('SELECT id,name,latitude,longitude,radius_m AS "radiusM",event_types AS "eventTypes",kind,active FROM geofences WHERE active=true'):memory.geofences.filter(x=>x.active!==false);
   const depot=depotGeofenceForTrip(fences,zones),prevPos=depot?await previousVehiclePosition(pos):null;
   const preliminaryGeo=activeLeg?.geo||active.geo||{},loadM=distance(pos,zones.load),offM=distance(pos,zones.offload);
   const started=Boolean(preliminaryGeo.tripStartedAt||active.startedAt||String(activeLeg?.status||'').toLowerCase()==='in transit'||(!multi&&(num(active.stage)>=3||['In transit','At offloading','Return journey','Delivered','Returned'].includes(active.status))));
@@ -466,7 +536,7 @@ async function evaluateTripZones(pos){
   if(!possible)return;
 
   const changed=await mutateOpsState(async state=>{
-    const t=(state.trips||[]).find(x=>x.id===active.id),currentLeg=t?activeTripLegServer(t):null,r=(state.routes||[]).find(x=>x.id===(currentLeg?.routeId||active.routeId)),z=routeTripZones(r),multiLeg=Array.isArray(t?.legs)&&t.legs.length>1;
+    const t=(state.trips||[]).find(x=>x.id===active.id),currentLeg=t?activeTripLegServer(t):null,r=(state.routes||[]).find(x=>x.id===(currentLeg?.routeId||active.routeId)),z=linkedTripZones(r,currentLeg,t,fences),multiLeg=Array.isArray(t?.legs)&&t.legs.length>1;
     if(!t||!z)return{events:[]};
     if(currentLeg)currentLeg.geo??={};else t.geo??={};
     state.tasks??=[];state.trucks??=[];state.drivers??=[];
@@ -830,7 +900,9 @@ app.post('/api/admin/trips',auth,roles('admin','manager','dispatcher'),async(req
       state.audit=state.audit.slice(0,100);
       return trip;
     });
-    res.status(201).json({trip:changed.result,revision:changed.revision});
+    const geo=await linkTripLegGeofences(changed.result.id,changed.result.legs?.[0]?.id);
+    const latest=await readOpsState(),trip=(latest.trips||[]).find(x=>x.id===changed.result.id)||changed.result;
+    res.status(201).json({trip,geofences:geo,revision:geo?.revision||changed.revision});
   }catch(e){res.status(e.status||500).json({error:e.message})}
 });
 
