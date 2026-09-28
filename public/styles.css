@@ -570,3 +570,16 @@ nav .nav-section{padding:12px 12px 4px}
   .nav-more-items.open{overflow:visible}
   .company-mini{display:none}
 }
+
+
+/* Admin people, fleet and task controls */
+.fleet-card-actions,.task-actions{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-top:12px}
+.task-row{display:flex;justify-content:space-between;gap:12px;align-items:flex-start;padding:13px 0;border-bottom:1px solid var(--line)}
+.task-row:last-child{border-bottom:0}
+.task-row.task-critical{border-left:3px solid var(--red);padding-left:10px}
+.task-copy{min-width:0;flex:1}
+.task-copy b,.task-copy small{display:block}
+.task-copy small{color:var(--muted);margin-top:4px}
+.task-copy p{color:#bfd0df;margin:6px 0 0;white-space:pre-wrap}
+.task-actions{justify-content:flex-end;margin-top:0}
+@media(max-width:650px){.task-row{flex-direction:column}.task-actions{width:100%;justify-content:flex-start}.task-actions button{flex:1}.fleet-card-actions button{flex:1}}
