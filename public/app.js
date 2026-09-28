@@ -1064,7 +1064,7 @@ function payslipNet(p){return p.net!==undefined?num(p.net):payslipGross(p)+num(p
 function payroll(){
   const period=payrollPeriodFilter||today().slice(0,7),employees=workforce(),rows=(db.payroll||[]).filter(x=>x.period===period).sort((a,b)=>employeeName(a.employeeId).localeCompare(employeeName(b.employeeId))),profiles=employees.map(e=>({employee:e,profile:clientPayProfile(e.id)}));
   const totalNet=sum(rows,payslipNet),drafts=rows.filter(x=>x.status==='Draft').length,missing=profiles.filter(x=>num(x.profile.baseSalary)<=0).length;
-  const payRows=rows.length?rows.map(p=>'<tr><td><b>'+esc(driver(p.employeeId))+'</b><br><small>'+esc(p.taxNumber||clientPayProfile(p.employeeId).taxNumber||'Tax no. not set')+'</small></td>'
+  const payRows=rows.length?rows.map(p=>'<tr><td><b>'+esc(employeeName(p.employeeId))+'</b><br><small>'+esc(p.taxNumber||clientPayProfile(p.employeeId).taxNumber||'Tax no. not set')+'</small></td>'
     +'<td>'+money(p.base)+'</td><td>'+num(p.tripKm).toLocaleString()+' km</td><td>'+money(p.tripPay)+'</td><td>'+money(p.incentive)+'</td><td>'+money(p.overtimePay)+'</td><td>'+money(p.reimbursements)+'</td><td>'+money(p.advances)+'</td>'
     +'<td>'+money(num(p.paye)+num(p.ssc)+num(p.deductions))+'</td><td><b>'+money(payslipNet(p))+'</b></td><td>'+badge(p.status||'Draft')+'</td>'
     +'<td><button class="link-button open-payslip" data-id="'+p.id+'">Open</button> · <button class="link-button print-payslip" data-id="'+p.id+'">Print</button></td></tr>').join('')
