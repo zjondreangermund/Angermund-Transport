@@ -902,10 +902,18 @@ async function mutateOpsState(mutator){if(pool){const c=await pool.connect();try
 
 async function applyWorkforceEnvImport(){
   const version=String(process.env.WORKFORCE_IMPORT_VERSION||'').trim();
-  const parts=['WORKFORCE_EMPLOYEES_B64','WORKFORCE_DRIVERS_B64','WORKFORCE_PAYPROFILES_B64','WORKFORCE_PAYROLL_B64'];
-  if(!version||parts.some(k=>!process.env[k]))return {skipped:true};
-  const decode=k=>JSON.parse(Buffer.from(process.env[k],'base64').toString('utf8'));
-  const employees=decode(parts[0]),drivers=decode(parts[1]),payProfiles=decode(parts[2]),payroll=decode(parts[3]);
+  if(!version)return {skipped:true};
+  let employees,drivers,payProfiles,payroll;
+  if(process.env.WORKFORCE_IMPORT_GZIP_B64){
+    const raw=require('zlib').gunzipSync(Buffer.from(process.env.WORKFORCE_IMPORT_GZIP_B64,'base64')).toString('utf8');
+    const payload=JSON.parse(raw);
+    employees=payload.employees;drivers=payload.drivers;payProfiles=payload.payProfiles;payroll=payload.payroll;
+  }else{
+    const parts=['WORKFORCE_EMPLOYEES_B64','WORKFORCE_DRIVERS_B64','WORKFORCE_PAYPROFILES_B64','WORKFORCE_PAYROLL_B64'];
+    if(parts.some(k=>!process.env[k]))return {skipped:true};
+    const decode=k=>JSON.parse(Buffer.from(process.env[k],'base64').toString('utf8'));
+    employees=decode(parts[0]);drivers=decode(parts[1]);payProfiles=decode(parts[2]);payroll=decode(parts[3]);
+  }
   if(employees.length!==24||drivers.length!==10||payProfiles.length!==24||payroll.length!==24)throw Error('Workforce import count validation failed');
   const driverIds=new Set(drivers.map(x=>String(x.id)));
   const changed=await mutateOpsState(state=>{
