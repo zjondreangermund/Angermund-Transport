@@ -562,21 +562,19 @@ function periodBounds(period){
   return{start:start.toISOString().slice(0,10),end:end.toISOString().slice(0,10)}
 }
 function serverFuelMetrics(state,t){
-  const litres=(state.diesel||[]).filter(x=>x.tripId===t.id).reduce((a,x)=>a+num(x.litres),0),distance=num(t.distance),ready=distance>0&&litres>0;
-  return{distance,litres,ready,kmPerL:ready?distance/litres:0}
+  const records=(state.diesel||[]).filter(x=>x.tripId===t.id),litres=records.reduce((a,x)=>a+num(x.litres),0),distance=serverTripLegSummary(state,t).distance,ready=distance>0&&litres>0;
+  const spend=records.reduce((a,x)=>a+(num(x.printedTotal)||num(x.total)||num(x.litres)*num(x.price)),0);
+  return{distance,litres,ready,kmPerL:ready?distance/litres:0,pricePerL:litres>0&&records.every(x=>(num(x.printedTotal)||num(x.total)||num(x.litres)*num(x.price))>0)?spend/litres:0}
 }
 function serverSouthAfricaTrip(state,t){
   const legs=ensureTripLegs(state,t);return legs.some(l=>{const r=(state.routes||[]).find(x=>x.id===l.routeId);return /south africa|durban|johannesburg|rosslyn|cape town|ottery|gauteng/i.test(String(r?.name||'')+' '+String(r?.notes||''))})
 }
-function serverIncentiveRate(state,t){
-  const m=serverFuelMetrics(state,t);if(!m.ready)return 0;
-  const p=payrollProfile(state,t.driverId),minimum=num(p.minimumBonusKml)||2.0;if(m.kmPerL<minimum)return 0;
-  if(serverSouthAfricaTrip(state,t))return .60;
-  if(m.kmPerL>=2.4)return .50;
-  if(m.kmPerL>=2.3)return .40;
-  return .30
+function serverTripRate(state,t,configured){return num(configured)>0?num(configured):(serverSouthAfricaTrip(state,t)?.60:.30)}
+function serverIncentiveFor(state,t){
+  const m=serverFuelMetrics(state,t),target=num(payrollProfile(state,t.driverId).minimumBonusKml)||2.0;
+  if(!m.ready||m.pricePerL<=0||m.kmPerL<=target)return 0;
+  return Math.max(0,m.distance/target-m.litres)*m.pricePerL*.10
 }
-function serverIncentiveFor(state,t){return serverTripLegSummary(state,t).distance*serverIncentiveRate(state,t)}
 function payrollProfile(state,driverId){
   state.payProfiles??=[];
   let p=state.payProfiles.find(x=>x.driverId===driverId);
@@ -591,7 +589,8 @@ function calculatePayrollRecord(state,driver,period,existing=null){
   const p=payrollProfile(state,driver.id),{start,end}=periodBounds(period);
   const inPeriod=d=>String(d||'')>=start&&String(d||'')<end;
   const trips=(state.trips||[]).filter(t=>t.driverId===driver.id&&inPeriod(t.date)&&num(t.stage)>=3);
-  const tripKm=trips.reduce((a,t)=>a+serverTripLegSummary(state,t).distance,0),tripRatePerKm=num(existing?.tripRatePerKm??p.tripRatePerKm),tripPay=tripKm*tripRatePerKm;
+  const tripKm=trips.reduce((a,t)=>a+serverTripLegSummary(state,t).distance,0),tripRatePerKm=num(existing?.tripRatePerKm??p.tripRatePerKm);
+  const tripPay=trips.reduce((a,t)=>a+serverTripLegSummary(state,t).distance*serverTripRate(state,t,tripRatePerKm),0);
   const incentive=trips.reduce((a,t)=>a+serverIncentiveFor(state,t),0);
   const reimbursements=(state.expenses||[]).filter(x=>x.driverId===driver.id&&inPeriod(x.date)&&x.reimbursable!==false&&x.status==='Approved').reduce((a,x)=>a+num(x.amount),0);
   const advances=(state.advances||[]).filter(x=>x.driverId===driver.id&&inPeriod(x.date)&&x.status!=='Reconciled').reduce((a,x)=>a+num(x.amount),0);
