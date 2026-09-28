@@ -440,7 +440,7 @@ async function ensureOperationalGeofence({name,latitude,longitude,kind='custom',
   if(hasPoint){
     existing=fences.find(f=>f.active!==false&&distance({latitude:lat,longitude:lon},{latitude:num(f.latitude),longitude:num(f.longitude)})<=Math.max(100,Math.min(300,num(f.radiusM||f.radius_m)||500)));
   }
-  if(!existing)existing=fences.find(f=>f.active!==false&&names.some(n=>geofenceNameMatches(f.name,n)));
+  if(!existing&&!hasPoint)existing=fences.find(f=>f.active!==false&&names.some(n=>geofenceNameMatches(f.name,n)));
   if(existing)return existing;
   if(!hasPoint)return null;
   const f={id:crypto.randomUUID(),name:wanted||'Trip site',latitude:lat,longitude:lon,radiusM:Math.max(25,num(radiusM)||500),eventTypes:['enter','exit'],kind:['depot','loading','offloading','custom'].includes(kind)?kind:'custom',active:true};
