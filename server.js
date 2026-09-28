@@ -849,47 +849,45 @@ function serverIncentiveFor(state,t){
   if(!m.ready||m.pricePerL<=0||m.kmPerL<=target)return 0;
   return Math.max(0,m.distance/target-m.litres)*m.pricePerL*.10
 }
-function payrollProfile(state,driverId){
+function workforceEmployees(state){
+  if(Array.isArray(state.employees)&&state.employees.length)return state.employees;
+  return (state.drivers||[]).map(d=>({id:d.id,name:d.name,jobTitle:d.role||'Driver',category:'Driver',status:d.status||'Active',baseSalary:0,payeDefault:0,sscDefault:0}))
+}
+function workforceEmployee(state,id){return workforceEmployees(state).find(x=>x.id===id)||null}
+function workforceDriver(state,employee){return (state.drivers||[]).find(d=>d.id===employee?.id)||null}
+function payrollProfile(state,employeeId){
   state.payProfiles??=[];
-  let p=state.payProfiles.find(x=>x.driverId===driverId);
+  let p=state.payProfiles.find(x=>(x.employeeId||x.driverId)===employeeId);
   if(!p){
-    const prior=(state.payroll||[]).filter(x=>x.employeeId===driverId).sort((a,b)=>String(b.period||'').localeCompare(String(a.period||'')))[0];
-    p={driverId,baseSalary:num(prior?.base),tripRatePerKm:num(prior?.tripRatePerKm),minimumBonusKml:2.0,taxNumber:'',payeDefault:num(prior?.paye),sscDefault:num(prior?.ssc),overtimeRate:0,standardDays:num(prior?.days)||22,otherDeductionDefault:num(prior?.deductions),autoGenerate:true};
+    const prior=(state.payroll||[]).filter(x=>x.employeeId===employeeId).sort((a,b)=>String(b.period||'').localeCompare(String(a.period||'')))[0],emp=workforceEmployee(state,employeeId);
+    p={driverId:employeeId,employeeId,baseSalary:num(emp?.baseSalary)||num(prior?.base),tripRatePerKm:num(prior?.tripRatePerKm),minimumBonusKml:2.0,taxNumber:'',payeDefault:num(emp?.payeDefault)||num(prior?.paye),sscDefault:num(emp?.sscDefault)||num(prior?.ssc),overtimeRate:0,standardDays:num(prior?.days)||22,otherDeductionDefault:num(prior?.deductions),autoGenerate:true};
     state.payProfiles.push(p)
   }
   return p
 }
-function calculatePayrollRecord(state,driver,period,existing=null){
-  const p=payrollProfile(state,driver.id),{start,end}=periodBounds(period);
+function calculatePayrollRecord(state,employee,period,existing=null){
+  const p=payrollProfile(state,employee.id),driver=workforceDriver(state,employee),{start,end}=periodBounds(period);
   const inPeriod=d=>String(d||'')>=start&&String(d||'')<end;
-  const trips=(state.trips||[]).filter(t=>t.driverId===driver.id&&inPeriod(t.date)&&num(t.stage)>=3);
+  const trips=driver?(state.trips||[]).filter(t=>t.driverId===driver.id&&inPeriod(t.date)&&num(t.stage)>=3):[];
   const tripKm=trips.reduce((a,t)=>a+serverTripLegSummary(state,t).distance,0),tripRatePerKm=num(existing?.tripRatePerKm??p.tripRatePerKm);
   const tripPay=trips.reduce((a,t)=>a+serverTripLegSummary(state,t).distance*serverTripRate(state,t,tripRatePerKm),0);
   const incentive=trips.reduce((a,t)=>a+serverIncentiveFor(state,t),0);
-  const reimbursements=(state.expenses||[]).filter(x=>x.driverId===driver.id&&inPeriod(x.date)&&x.reimbursable!==false&&x.status==='Approved').reduce((a,x)=>a+num(x.amount),0);
-  const advances=(state.advances||[]).filter(x=>x.driverId===driver.id&&inPeriod(x.date)&&x.status!=='Reconciled').reduce((a,x)=>a+num(x.amount),0);
+  const reimbursements=driver?(state.expenses||[]).filter(x=>x.driverId===driver.id&&inPeriod(x.date)&&x.reimbursable!==false&&x.status==='Approved').reduce((a,x)=>a+num(x.amount),0):0;
+  const advances=driver?(state.advances||[]).filter(x=>x.driverId===driver.id&&inPeriod(x.date)&&x.status!=='Reconciled').reduce((a,x)=>a+num(x.amount),0):0;
   const overtimeHours=num(existing?.overtimeHours??existing?.overtime),overtimeRate=num(existing?.overtimeRate)||num(p.overtimeRate),overtimePay=overtimeHours*overtimeRate;
-  const base=num(existing?.base)||num(p.baseSalary),days=num(existing?.days)||num(p.standardDays)||22;
+  const base=num(existing?.base)||num(p.baseSalary)||num(employee.baseSalary),days=num(existing?.days)||num(p.standardDays)||22;
   const paye=existing?.paye!==undefined?num(existing.paye):num(p.payeDefault),ssc=existing?.ssc!==undefined?num(existing.ssc):num(p.sscDefault),deductions=existing?.deductions!==undefined?num(existing.deductions):num(p.otherDeductionDefault);
   const gross=base+tripPay+incentive+overtimePay,net=gross+reimbursements-advances-paye-ssc-deductions;
-  return{
-    id:existing?.id||'pay_'+crypto.randomUUID(),period,employeeId:driver.id,days,overtimeHours,overtimeRate,overtimePay:Number(overtimePay.toFixed(2)),
-    base:Number(base.toFixed(2)),tripKm:Number(tripKm.toFixed(2)),tripRatePerKm:Number(tripRatePerKm.toFixed(4)),tripPay:Number(tripPay.toFixed(2)),
-    incentive:Number(incentive.toFixed(2)),fuelSavingBonus:Number(incentive.toFixed(2)),minimumBonusKml:num(p.minimumBonusKml)||2.0,
-    reimbursements:Number(reimbursements.toFixed(2)),advances:Number(advances.toFixed(2)),
-    paye:Number(paye.toFixed(2)),ssc:Number(ssc.toFixed(2)),deductions:Number(deductions.toFixed(2)),gross:Number(gross.toFixed(2)),net:Number(net.toFixed(2)),
-    tripCount:trips.length,status:existing?.status||'Draft',generatedAt:new Date().toISOString(),autoGenerated:existing?.autoGenerated??true,
-    taxNumber:p.taxNumber||'',setupRequired:!(num(p.baseSalary)>0)
-  }
+  return{id:existing?.id||'pay_'+crypto.randomUUID(),period,employeeId:employee.id,days,overtimeHours,overtimeRate,overtimePay:Number(overtimePay.toFixed(2)),base:Number(base.toFixed(2)),tripKm:Number(tripKm.toFixed(2)),tripRatePerKm:Number(tripRatePerKm.toFixed(4)),tripPay:Number(tripPay.toFixed(2)),incentive:Number(incentive.toFixed(2)),fuelSavingBonus:Number(incentive.toFixed(2)),minimumBonusKml:num(p.minimumBonusKml)||2.0,reimbursements:Number(reimbursements.toFixed(2)),advances:Number(advances.toFixed(2)),paye:Number(paye.toFixed(2)),ssc:Number(ssc.toFixed(2)),deductions:Number(deductions.toFixed(2)),gross:Number(gross.toFixed(2)),net:Number(net.toFixed(2)),tripCount:trips.length,status:existing?.status||'Draft',generatedAt:new Date().toISOString(),autoGenerated:existing?.autoGenerated??true,taxNumber:p.taxNumber||'',setupRequired:!(num(p.baseSalary)>0),jobTitle:employee.jobTitle||employee.title||''}
 }
 function generatePayrollPeriod(state,period,auto=false){
-  state.payroll??=[];state.drivers??=[];
-  const rows=[];
-  for(const d of state.drivers){
-    const p=payrollProfile(state,d.id);if(auto&&p.autoGenerate===false)continue;
-    const existing=state.payroll.find(x=>x.period===period&&x.employeeId===d.id);
+  state.payroll??=[];
+  const rows=[],employees=workforceEmployees(state).filter(x=>x.active!==false&&x.status!=='Inactive');
+  for(const employee of employees){
+    const p=payrollProfile(state,employee.id);if(auto&&p.autoGenerate===false)continue;
+    const existing=state.payroll.find(x=>x.period===period&&x.employeeId===employee.id);
     if(existing&&['Approved','Paid'].includes(existing.status)){rows.push(existing);continue}
-    const next=calculatePayrollRecord(state,d,period,existing||null);
+    const next=calculatePayrollRecord(state,employee,period,existing||null);
     if(existing)Object.assign(existing,next);else state.payroll.unshift(next);
     rows.push(existing||next)
   }
@@ -936,7 +934,7 @@ app.patch('/api/payroll/profiles/:driverId',auth,roles('admin','manager','financ
   try{
     const did=String(req.params.driverId),body=req.body&&typeof req.body==='object'?req.body:{};
     const changed=await mutateOpsState(async state=>{
-      const d=(state.drivers||[]).find(x=>x.id===did);if(!d){const e=Error('Driver not found');e.status=404;throw e}
+      const employee=workforceEmployee(state,did);if(!employee){const e=Error('Employee not found');e.status=404;throw e}
       const p=payrollProfile(state,did);
       for(const key of ['baseSalary','tripRatePerKm','minimumBonusKml','payeDefault','sscDefault','overtimeRate','standardDays','otherDeductionDefault'])if(body[key]!==undefined)p[key]=num(body[key]);
       if(body.taxNumber!==undefined)p.taxNumber=String(body.taxNumber||'');
@@ -952,10 +950,10 @@ app.patch('/api/payroll/:id',auth,roles('admin','manager','finance'),async(req,r
     const id=String(req.params.id),body=req.body&&typeof req.body==='object'?req.body:{};
     const changed=await mutateOpsState(async state=>{
       state.payroll??=[];const row=state.payroll.find(x=>x.id===id);if(!row){const e=Error('Payslip not found');e.status=404;throw e}
-      const driver=(state.drivers||[]).find(x=>x.id===row.employeeId);if(!driver){const e=Error('Driver not found');e.status=404;throw e}
+      const employee=workforceEmployee(state,row.employeeId);if(!employee){const e=Error('Employee not found');e.status=404;throw e}
       for(const key of ['days','overtimeHours','overtimeRate','base','tripRatePerKm','paye','ssc','deductions'])if(body[key]!==undefined)row[key]=num(body[key]);
       const wantedStatus=body.status!==undefined?String(body.status):row.status;
-      Object.assign(row,calculatePayrollRecord(state,driver,row.period,row));
+      Object.assign(row,calculatePayrollRecord(state,employee,row.period,row));
       if(['Draft','Approved','Paid'].includes(wantedStatus))row.status=wantedStatus;
       if(row.status==='Approved'&&!row.approvedAt)row.approvedAt=new Date().toISOString();
       if(row.status==='Paid'&&!row.paidAt)row.paidAt=new Date().toISOString();
@@ -1497,8 +1495,8 @@ async function ensureMonthEndPayroll(){
     const na=new Date(Date.now()+2*60*60*1000),y=na.getUTCFullYear(),m=na.getUTCMonth(),day=na.getUTCDate(),last=new Date(Date.UTC(y,m+1,0)).getUTCDate();
     let period=null;if(day===last)period=y+'-'+String(m+1).padStart(2,'0');else if(day<=3){const p=new Date(Date.UTC(y,m-1,1));period=p.getUTCFullYear()+'-'+String(p.getUTCMonth()+1).padStart(2,'0')}
     if(!period)return;
-    const snapshot=await readOpsState(),drivers=snapshot.drivers||[],rows=snapshot.payroll||[];
-    const missing=drivers.some(d=>payrollProfile(snapshot,d.id).autoGenerate!==false&&!rows.some(x=>x.period===period&&x.employeeId===d.id));
+    const snapshot=await readOpsState(),employees=workforceEmployees(snapshot),rows=snapshot.payroll||[];
+    const missing=employees.some(e=>payrollProfile(snapshot,e.id).autoGenerate!==false&&!rows.some(x=>x.period===period&&x.employeeId===e.id));
     if(!missing)return;
     await mutateOpsState(state=>generatePayrollPeriod(state,period,true))
   }catch(e){console.error('Month-end payroll check failed',e.message)}
