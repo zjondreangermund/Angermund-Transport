@@ -49,6 +49,7 @@ public class MainActivity extends Activity {
     private ValueCallback<Uri[]> fileCallback;
     private Uri cameraUri;
     private String pendingJwt = "";
+    private long lastExitBackAt = 0;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
 
     @Override
@@ -290,7 +291,11 @@ public class MainActivity extends Activity {
     @Override
     public void onBackPressed() {
         if (webView.canGoBack()) webView.goBack();
-        else super.onBackPressed();
+        else if (System.currentTimeMillis() - lastExitBackAt < 2000) super.onBackPressed();
+        else {
+            lastExitBackAt = System.currentTimeMillis();
+            toast("Press Back again to exit");
+        }
     }
 
     private void toast(String text) {
@@ -298,6 +303,11 @@ public class MainActivity extends Activity {
     }
 
     public class NativeBridge {
+        @JavascriptInterface
+        public void exitApp() {
+            runOnUiThread(MainActivity.this::finish);
+        }
+
         @JavascriptInterface
         public void startBackgroundGps(String jwt) {
             runOnUiThread(() -> {
