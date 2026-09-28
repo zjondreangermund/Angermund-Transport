@@ -369,6 +369,7 @@ async function sendExternal(n){
   await Promise.allSettled(tasks);
 }
 async function evaluateGeofences(pos){
+  if(!trustedVehicleGpsSource(pos.source))return;
   const fences=pool?await q('SELECT * FROM geofences WHERE active=true'):memory.geofences.filter(x=>x.active!==false);
   for(const f of fences){
     const inside=distance(pos,{latitude:num(f.latitude),longitude:num(f.longitude)})<=num(f.radius_m||f.radiusM);
@@ -398,7 +399,7 @@ function normalizedGeofenceKind(f){
   const kind=String(f?.kind||'').trim().toLowerCase(),name=String(f?.name||'').trim().toLowerCase();
   if(kind==='depot')return 'depot';
   if(/angermund\s*transport|company\s*depot|main\s*depot|home\s*yard/.test(name))return 'depot';
-  if(kind==='loading'||kind==='offloading'||kind==='custom')return kind;
+  if(kind==='loading'||kind==='offloading'||kind==='operating_area'||kind==='custom')return kind;
   return 'custom'
 }
 function geofenceInside(pos,f,extra=0){
@@ -411,6 +412,15 @@ function depotGeofenceForTrip(fences,zones){
   if(!depots.length)return null;
   return depots.sort((a,b)=>distance(zones.load,{latitude:num(a.latitude),longitude:num(a.longitude)})-distance(zones.load,{latitude:num(b.latitude),longitude:num(b.longitude)}))[0]
 }
+function operatingAreaForTrip(fences,zones,depot){
+  const areas=(fences||[]).filter(f=>f.active!==false&&normalizedGeofenceKind(f)==='operating_area');
+  if(!areas.length)return null;
+  const anchor=depot?{latitude:num(depot.latitude),longitude:num(depot.longitude)}:zones.load;
+  const containing=areas.filter(a=>geofenceInside(anchor,a));
+  const pool=containing.length?containing:areas;
+  return pool.sort((a,b)=>distance(anchor,{latitude:num(a.latitude),longitude:num(a.longitude)})-distance(anchor,{latitude:num(b.latitude),longitude:num(b.longitude)}))[0]
+}
+function trustedVehicleGpsSource(source){return ['telematics','truck-device','tracker','vehicle-tracker'].includes(String(source||'').toLowerCase())}
 async function previousVehiclePosition(pos){
   if(pool){
     return (await q('SELECT latitude,longitude,recorded_at AS "recordedAt" FROM gps_positions WHERE vehicle_id=$1 AND recorded_at<$2 ORDER BY recorded_at DESC LIMIT 1',[pos.vehicleId,pos.recordedAt]))[0]||null
@@ -503,31 +513,35 @@ function serverTripPriority(t){
   return 100
 }
 async function evaluateTripZones(pos){
+  if(!trustedVehicleGpsSource(pos.source))return;
   const snapshot=await readOpsState();
   const active=(snapshot.trips||[]).filter(t=>t.truckId===pos.vehicleId&&!t.driverComplete&&!['Closed','Invoiced'].includes(t.status)).sort((a,b)=>{const p=serverTripPriority(b)-serverTripPriority(a);if(p)return p;return new Date(b.createdAt||b.date||0)-new Date(a.createdAt||a.date||0)})[0];
   if(!active)return;
   const activeLeg=activeTripLegServer(active),route=(snapshot.routes||[]).find(r=>r.id===(activeLeg?.routeId||active.routeId)),multi=Array.isArray(active.legs)&&active.legs.length>1;
   const fences=await operationalGeofences(true),zones=linkedTripZones(route,activeLeg,active,fences);
   if(!zones)return;
-  const depot=depotGeofenceForTrip(fences,zones),prevPos=depot?await previousVehiclePosition(pos):null;
+  const depot=depotGeofenceForTrip(fences,zones),operatingArea=operatingAreaForTrip(fences,zones,depot),prevPos=(depot||operatingArea)?await previousVehiclePosition(pos):null;
   const preliminaryGeo=activeLeg?.geo||active.geo||{},loadM=distance(pos,zones.load),offM=distance(pos,zones.offload);
   const started=Boolean(preliminaryGeo.tripStartedAt||active.startedAt||String(activeLeg?.status||'').toLowerCase()==='in transit'||(!multi&&(num(active.stage)>=3||['In transit','At offloading','Return journey','Delivered','Returned'].includes(active.status))));
   const depotM=depot?distance(pos,{latitude:num(depot.latitude),longitude:num(depot.longitude)}):Infinity;
   const prevDepotM=depot&&prevPos?distance(prevPos,{latitude:num(depot.latitude),longitude:num(depot.longitude)}):Infinity;
   const prevOffM=prevPos?distance(prevPos,zones.offload):Infinity;
   const depotInside=depot?geofenceInside(pos,depot):false,prevDepotInside=depot&&prevPos?geofenceInside(prevPos,depot):false;
+  const areaInside=operatingArea?geofenceInside(pos,operatingArea):false,prevAreaInside=operatingArea&&prevPos?geofenceInside(prevPos,operatingArea):false;
   const movingTowardOffload=Boolean(prevPos)&&offM+75<prevOffM;
   const movingTowardDepot=Boolean(prevPos)&&depotM+75<prevDepotM;
   const directDeparture=Boolean(depot&&preliminaryGeo.loadDepartedAt&&!preliminaryGeo.loadedAtDepotAt&&!started&&!depotInside&&loadM>=zones.departM&&movingTowardOffload&&!movingTowardDepot);
   const depotReturn=Boolean(depot&&preliminaryGeo.loadDepartedAt&&!started&&depotInside&&!preliminaryGeo.loadedAtDepotAt);
   const depotExit=Boolean(depot&&preliminaryGeo.loadedAtDepotAt&&!started&&!depotInside&&(prevDepotInside||depotM>(Math.max(5,num(depot.radius_m||depot.radiusM)||500)+100)));
+  const loadConfirmed=Boolean(preliminaryGeo.loadArrivedAt||preliminaryGeo.loadDepartedAt||preliminaryGeo.loadedAtDepotAt||/loaded|at loading|departure pending/i.test(String(active.status||'')));
+  const areaExit=Boolean(operatingArea&&loadConfirmed&&!started&&prevAreaInside&&!areaInside);
   const collectionExit=Boolean(depot&&!preliminaryGeo.loadArrivedAt&&!started&&prevDepotInside&&!depotInside&&!preliminaryGeo.collectionDepartedAt);
   const possible=
     collectionExit||
     (!started&&!preliminaryGeo.loadApproachAt&&loadM<=zones.approachM)||
     (!started&&!preliminaryGeo.loadArrivedAt&&loadM<=zones.arrivalM)||
     (preliminaryGeo.loadArrivedAt&&!preliminaryGeo.loadDepartedAt&&loadM>=zones.departM)||
-    depotReturn||depotExit||directDeparture||
+    depotReturn||depotExit||directDeparture||areaExit||
     (started&&!preliminaryGeo.offloadApproachAt&&offM<=zones.approachM)||
     (started&&!preliminaryGeo.offloadArrivedAt&&offM<=zones.arrivalM)||
     (preliminaryGeo.offloadArrivedAt&&!preliminaryGeo.offloadDepartedAt&&offM>=zones.departM)||
@@ -541,7 +555,8 @@ async function evaluateTripZones(pos){
     if(currentLeg)currentLeg.geo??={};else t.geo??={};
     state.tasks??=[];state.trucks??=[];state.drivers??=[];
     const g=currentLeg?currentLeg.geo:t.geo,now=new Date().toISOString(),lm=distance(pos,z.load),om=distance(pos,z.offload),events=[],km=m=>(m/1000).toFixed(1);
-    const dep=depotGeofenceForTrip(fences,z),depInside=dep?geofenceInside(pos,dep):false,prevDepInside=dep&&prevPos?geofenceInside(prevPos,dep):false;
+    const dep=depotGeofenceForTrip(fences,z),area=operatingAreaForTrip(fences,z,dep),depInside=dep?geofenceInside(pos,dep):false,prevDepInside=dep&&prevPos?geofenceInside(prevPos,dep):false;
+    const areaInsideNow=area?geofenceInside(pos,area):false,prevAreaInsideNow=area&&prevPos?geofenceInside(prevPos,area):false;
     const depM=dep?distance(pos,{latitude:num(dep.latitude),longitude:num(dep.longitude)}):Infinity;
     const prevDepM=dep&&prevPos?distance(prevPos,{latitude:num(dep.latitude),longitude:num(dep.longitude)}):Infinity;
     const previousOffM=prevPos?distance(prevPos,z.offload):Infinity;
@@ -573,14 +588,17 @@ async function evaluateTripZones(pos){
     }
     if(g.loadArrivedAt&&!g.loadDepartedAt&&lm>=z.departM){
       g.loadDepartedAt=now;g.departurePendingAt=now;g.loadDeparturePosition={latitude:pos.latitude,longitude:pos.longitude};g.offloadDistanceAtLoadDepartureKm=Number((om/1000).toFixed(2));
-      if(!dep){
-        if(startTrip('loading-exit',now))events.push({title:t.number+' trip started',message:pos.vehicleId+' left '+z.load.name+'. No company depot geofence is configured, so the trip changed to In transit.'})
+      if(area){
+        t.stage=Math.max(2,num(t.stage)||1);t.status='Loaded · departure pending';if(currentLeg)currentLeg.status='Loaded · departure pending';
+        events.push({title:t.number+' loading complete',message:pos.vehicleId+' left '+z.load.name+' loaded. Trip remains staged until the truck exits '+area.name+'.'})
+      }else if(!dep){
+        if(startTrip('loading-exit',now))events.push({title:t.number+' trip started',message:pos.vehicleId+' left '+z.load.name+'. No company operating-area geofence is configured, so the trip changed to In transit.'})
       }else if(g.loadWasAtDepot&&prevDepInside&&!depInside){
         g.loadedAtDepotAt=g.loadedAtDepotAt||g.loadArrivedAt;
-        if(startTrip('loaded-depot-exit',now))events.push({title:t.number+' departed '+dep.name,message:pos.vehicleId+' left the company depot loaded. This is the actual trip start; status changed to In transit.'})
+        if(startTrip('loaded-depot-exit',now))events.push({title:t.number+' departed '+dep.name,message:pos.vehicleId+' left the company depot loaded. No city operating-area geofence is configured, so this is the trip start.'})
       }else{
         t.stage=Math.max(2,num(t.stage)||1);t.status='Loaded · departure pending';if(currentLeg)currentLeg.status='Loaded · departure pending';
-        events.push({title:t.number+' loading complete',message:pos.vehicleId+' left '+z.load.name+' loaded. The system is waiting to see whether it returns to '+dep.name+' or departs directly.'})
+        events.push({title:t.number+' loading complete',message:pos.vehicleId+' left '+z.load.name+' loaded. The system is waiting to confirm route departure.'})
       }
     }
 
@@ -591,11 +609,16 @@ async function evaluateTripZones(pos){
     }
     if(dep&&g.loadedAtDepotAt&&!statusStarted()&&!depInside&&(prevDepInside||depM>(Math.max(5,num(dep.radius_m||dep.radiusM)||500)+100))){
       g.loadedDepotDepartedAt=now;g.loadedDepotDeparturePosition={latitude:pos.latitude,longitude:pos.longitude};
-      if(startTrip('depot-exit-after-loading',now))events.push({title:t.number+' trip started',message:pos.vehicleId+' left '+dep.name+' loaded. This depot exit is the official trip start.'})
+      if(area){t.stage=Math.max(2,num(t.stage)||1);t.status='Loaded · departure pending';if(currentLeg)currentLeg.status='Loaded · departure pending';events.push({title:t.number+' left depot loaded',message:pos.vehicleId+' left '+dep.name+' loaded. Trip remains staged until the truck exits '+area.name+'.'})}
+      else if(startTrip('depot-exit-after-loading',now))events.push({title:t.number+' trip started',message:pos.vehicleId+' left '+dep.name+' loaded. This depot exit is the official trip start.'})
     }
-    if(dep&&g.loadDepartedAt&&!g.loadedAtDepotAt&&!statusStarted()&&!depInside&&lm>=z.departM&&prevPos&&om+75<previousOffM&&!(depM+75<prevDepM)){
+    if(!area&&dep&&g.loadDepartedAt&&!g.loadedAtDepotAt&&!statusStarted()&&!depInside&&lm>=z.departM&&prevPos&&om+75<previousOffM&&!(depM+75<prevDepM)){
       const actualStart=g.loadDepartedAt||now;g.directDepartureConfirmedAt=now;
       if(startTrip('direct-from-loading',actualStart))events.push({title:t.number+' direct departure confirmed',message:pos.vehicleId+' continued toward '+z.offload.name+' instead of returning to '+dep.name+'. Trip start time is the loading-point departure time.'})
+    }
+    if(area&&!statusStarted()&&prevAreaInsideNow&&!areaInsideNow&&(g.loadArrivedAt||g.loadDepartedAt||g.loadedAtDepotAt||/loaded|at loading|departure pending/i.test(String(t.status||'')))){
+      g.operatingAreaDepartedAt=now;g.operatingAreaDeparturePosition={latitude:pos.latitude,longitude:pos.longitude};g.operatingAreaGeofenceId=area.id;g.operatingAreaGeofenceName=area.name;
+      if(startTrip('operating-area-exit',now))events.push({title:t.number+' trip started',message:pos.vehicleId+' exited '+area.name+'. Vehicle tracker confirmed the truck has left the local operating area; status changed to In transit.'})
     }
 
     if(statusStarted()&&!g.offloadApproachAt&&om<=z.approachM){
@@ -1246,18 +1269,18 @@ app.delete('/api/admin/diesel/:id',auth,roles('admin','manager','finance'),async
     res.json(changed.result)
   }catch(e){res.status(e.status||500).json({error:e.message})}
 });
-app.get('/api/gps/latest',auth,async(req,res)=>{const rows=pool?await q('SELECT DISTINCT ON(vehicle_id) vehicle_id AS "vehicleId",driver_id AS "driverId",trip_id AS "tripId",latitude,longitude,speed,heading,accuracy,source,recorded_at AS "recordedAt" FROM gps_positions ORDER BY vehicle_id,recorded_at DESC'):Object.values(memory.gps.reduce((a,x)=>(a[x.vehicleId]=x,a),{}));res.json(rows)});
+app.get('/api/gps/latest',auth,async(req,res)=>{const rows=pool?await q("SELECT DISTINCT ON(vehicle_id) vehicle_id AS \"vehicleId\",driver_id AS \"driverId\",trip_id AS \"tripId\",latitude,longitude,speed,heading,accuracy,source,recorded_at AS \"recordedAt\" FROM gps_positions WHERE source IN ('telematics','truck-device','tracker','vehicle-tracker') ORDER BY vehicle_id,recorded_at DESC"):Object.values(memory.gps.filter(x=>trustedVehicleGpsSource(x.source)).reduce((a,x)=>(a[x.vehicleId]=x,a),{}));res.json(rows)});
 app.get('/api/gps/history/:vehicleId',auth,async(req,res)=>{const hours=Math.min(168,Math.max(1,num(req.query.hours)||24)),rows=pool?await q('SELECT vehicle_id AS "vehicleId",latitude,longitude,speed,heading,recorded_at AS "recordedAt" FROM gps_positions WHERE vehicle_id=$1 AND recorded_at>now()-($2||\' hours\')::interval ORDER BY recorded_at',[req.params.vehicleId,String(hours)]):memory.gps.filter(x=>x.vehicleId===req.params.vehicleId&&Date.now()-new Date(x.recordedAt)<hours*3600000);res.json(rows)});
 app.get('/api/geofences',auth,async(req,res)=>res.json(pool?await q('SELECT id,name,latitude,longitude,radius_m AS "radiusM",event_types AS "eventTypes",kind,active FROM geofences ORDER BY name'):memory.geofences));
 app.post('/api/geofences',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
-  const requested=String(req.body.kind||'custom').toLowerCase(),kind=['depot','loading','offloading','custom'].includes(requested)?requested:'custom';
+  const requested=String(req.body.kind||'custom').toLowerCase(),kind=['depot','loading','offloading','operating_area','custom'].includes(requested)?requested:'custom';
   const f={id:crypto.randomUUID(),name:String(req.body.name||''),latitude:Number(req.body.latitude),longitude:Number(req.body.longitude),radiusM:Number(req.body.radiusM||500),eventTypes:req.body.eventTypes||['enter','exit'],kind,active:true};
   if(!f.name||!Number.isFinite(f.latitude)||!Number.isFinite(f.longitude))return res.status(400).json({error:'name, latitude and longitude required'});
   if(pool)await q('INSERT INTO geofences(id,name,latitude,longitude,radius_m,event_types,kind) VALUES($1,$2,$3,$4,$5,$6,$7)',[f.id,f.name,f.latitude,f.longitude,f.radiusM,f.eventTypes,f.kind]);else memory.geofences.push(f);
   emit('geofence',f);res.status(201).json(f)
 });
 app.patch('/api/geofences/:id',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
-  const id=String(req.params.id),name=String(req.body.name||'').trim(),latitude=Number(req.body.latitude),longitude=Number(req.body.longitude),radiusM=Number(req.body.radiusM),requested=String(req.body.kind||'custom').toLowerCase(),kind=['depot','loading','offloading','custom'].includes(requested)?requested:'custom';
+  const id=String(req.params.id),name=String(req.body.name||'').trim(),latitude=Number(req.body.latitude),longitude=Number(req.body.longitude),radiusM=Number(req.body.radiusM),requested=String(req.body.kind||'custom').toLowerCase(),kind=['depot','loading','offloading','operating_area','custom'].includes(requested)?requested:'custom';
   if(!name||name.length>160||!Number.isFinite(latitude)||Math.abs(latitude)>90||!Number.isFinite(longitude)||Math.abs(longitude)>180||!Number.isFinite(radiusM)||radiusM<5||radiusM>50000)return res.status(400).json({error:'Enter a name, valid coordinates and a radius from 5 to 50,000 m'});
   if(pool){
     const c=await pool.connect();let updated;
