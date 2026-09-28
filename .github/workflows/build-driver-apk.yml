@@ -26,6 +26,36 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
+      - name: Inspect original Angermund icon
+        run: |
+          python3 -m pip install pillow -q
+          python3 - <<'PY'
+          from PIL import Image
+          for path in [
+              "android-driver/app/src/main/res/drawable/angermund_icon.png",
+              "public/angermund-logo.png"
+          ]:
+              im=Image.open(path).convert("RGB")
+              print("\nICON_SOURCE",path,"SIZE",im.size)
+              w=64
+              h=max(1,round(im.height*w/im.width))
+              sm=im.resize((w,h))
+              chars=[]
+              for yy in range(h):
+                  row=[]
+                  for xx in range(w):
+                      r,g,b=sm.getpixel((xx,yy))
+                      if max(r,g,b)<45: c=" "
+                      elif r>190 and g>190 and b>190: c="#"
+                      elif b>120 and b>r*1.15: c="B"
+                      elif r>140 and g>140 and b<120: c="Y"
+                      else: c="."
+                      row.append(c)
+                  chars.append("".join(row))
+              print("\n".join(chars))
+          PY
+
+
       - name: Build installable debug APK
         run: gradle -p android-driver :app:assembleDebug --stacktrace
 
