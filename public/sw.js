@@ -1,43 +1,7 @@
-const CACHE='angermund-ops-v34-startup-repair';
-const ASSETS=['/','/index.html','/styles.css','/app.js','/manifest.json','/angermund-logo.webp','/angermund-truck.webp','/angermund-app-logo.jpg'];
+const CACHE='angermund-ops-v35-startup-watchdog-hq-icon';
+const ASSETS=['/','/index.html','/styles.css','/app.js','/manifest.json','/angermund-logo.webp','/angermund-truck.webp','/angermund-icon.png'];
 self.addEventListener('install',e=>e.waitUntil((async()=>{const c=await caches.open(CACHE);await c.addAll(ASSETS);await self.skipWaiting()})()));
 self.addEventListener('activate',e=>e.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)));await self.clients.claim()})()));
-self.addEventListener('fetch',e=>{
-  const req=e.request,url=new URL(req.url);
-  if(req.method!=='GET')return;
-  if(url.origin!==self.location.origin)return;
-  if(url.pathname.startsWith('/api/')||url.pathname==='/login')return;
-  if(req.mode==='navigate'){
-    e.respondWith(fetch(req,{cache:'no-store'}).then(r=>r).catch(()=>caches.match('/index.html')));
-    return;
-  }
-  e.respondWith(fetch(req,{cache:'no-store'}).then(r=>{if(ASSETS.includes(url.pathname)){const copy=r.clone();caches.open(CACHE).then(c=>c.put(req,copy))}return r}).catch(()=>caches.match(req)));
-});
-self.addEventListener('push',event=>{
-  event.waitUntil((async()=>{
-    let data={};
-    try{data=event.data?event.data.json():{}}catch{data={body:event.data?event.data.text():'New Angermund Transport alert'}}
-    const title=data.title||'Angermund Transport';
-    const options={
-      body:data.body||'You have a new notification.',
-      icon:'/angermund-app-logo.jpg',
-      badge:'/angermund-app-logo.jpg',
-      tag:data.linkedId?('angermund-'+data.linkedId):('angermund-'+Date.now()),
-      renotify:true,
-      requireInteraction:Boolean(data.requireInteraction),
-      data:{linkedType:data.linkedType||null,linkedId:data.linkedId||null,url:data.url||'/'}
-    };
-    await self.registration.showNotification(title,options)
-  })())
-});
-self.addEventListener('notificationclick',event=>{
-  event.notification.close();
-  event.waitUntil((async()=>{
-    const target=event.notification.data?.url||'/';
-    const windows=await self.clients.matchAll({type:'window',includeUncontrolled:true});
-    for(const client of windows){
-      if('focus' in client){await client.focus();try{client.postMessage({type:'push-click',data:event.notification.data||{}})}catch{}return}
-    }
-    if(self.clients.openWindow)return self.clients.openWindow(target)
-  })())
-});
+self.addEventListener('fetch',e=>{if(e.request.method!=='GET')return;const u=new URL(e.request.url);if(u.origin!==location.origin)return;if(u.pathname.startsWith('/api/')||u.pathname.startsWith('/download/'))return;e.respondWith((async()=>{try{const fresh=await fetch(e.request,{cache:'no-store'});if(fresh&&fresh.ok){const c=await caches.open(CACHE);c.put(e.request,fresh.clone()).catch(()=>{});return fresh}}catch{}const cached=await caches.match(e.request,{ignoreSearch:true});return cached||Response.error()})())});
+self.addEventListener('push',e=>{let data={};try{data=e.data?.json()||{}}catch{data={title:'Angermund Transport',body:e.data?.text()||'New operations alert'}};const title=data.title||'Angermund Transport',options={body:data.body||'New operations alert',icon:'/angermund-icon.png',badge:'/angermund-icon.png',data:data.data||{url:'/'}};e.waitUntil(self.registration.showNotification(title,options))});
+self.addEventListener('notificationclick',e=>{e.notification.close();const url=e.notification.data?.url||'/';e.waitUntil((async()=>{const all=await clients.matchAll({type:'window',includeUncontrolled:true});for(const c of all){if('focus'in c){c.navigate(url).catch(()=>{});return c.focus()}}if(clients.openWindow)return clients.openWindow(url)})())});
