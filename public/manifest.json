@@ -7,10 +7,10 @@
   "theme_color": "#0d6efd",
   "icons": [
     {
-      "src": "angermund-app-logo.webp",
+      "src": "/angermund-app-logo.jpg",
       "sizes": "512x512",
-      "type": "image/webp",
-      "purpose": "any maskable"
+      "type": "image/jpeg",
+      "purpose": "any"
     }
   ]
 }
