@@ -1,4 +1,4 @@
-const CACHE='angermund-ops-v30-app-logo-fix';
+const CACHE='angermund-ops-v31-hq-app-logo';
 const ASSETS=['/','/index.html','/styles.css','/app.js','/manifest.json','/angermund-logo.webp','/angermund-truck.webp','/angermund-app-logo.jpg'];
 self.addEventListener('install',e=>e.waitUntil((async()=>{const c=await caches.open(CACHE);await c.addAll(ASSETS);await self.skipWaiting()})()));
 self.addEventListener('activate',e=>e.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)));await self.clients.claim()})()));

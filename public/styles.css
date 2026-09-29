@@ -622,3 +622,7 @@ body.driver-mode main{padding-bottom:94px!important}
   border-radius:24px;
   box-shadow:0 12px 34px rgba(0,0,0,.38);
 }
+
+/* High-quality app-only branding */
+.app-install-card>img{width:min(220px,58%)!important;image-rendering:auto!important}
+.loading-screen .loading-brand img{width:min(78vw,360px)!important;image-rendering:auto!important}
