@@ -1,5 +1,5 @@
-const CACHE='angermund-ops-v32-original-logo-source';
-const ASSETS=['/','/index.html','/styles.css','/app.js','/manifest.json','/angermund-logo.webp','/angermund-truck.webp','/angermund-app-logo-original.jpg'];
+const CACHE='angermund-ops-v33-audit-sync';
+const ASSETS=['/','/index.html','/styles.css','/app.js','/state-sync.js','/manifest.json','/angermund-logo.webp','/angermund-truck.webp','/angermund-app-logo-original.jpg'];
 self.addEventListener('install',e=>e.waitUntil((async()=>{const c=await caches.open(CACHE);await c.addAll(ASSETS);await self.skipWaiting()})()));
 self.addEventListener('activate',e=>e.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)));await self.clients.claim()})()));
 self.addEventListener('fetch',e=>{

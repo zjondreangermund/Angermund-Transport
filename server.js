@@ -304,12 +304,13 @@ async function recognizeReceiptBest(buffer){
 
 if(!DATABASE_URL)console.warn('DATABASE_URL missing: using development memory store. Set PostgreSQL for multi-device persistence.');
 const pool=DATABASE_URL?new Pool({connectionString:DATABASE_URL,ssl:/localhost|127\.0\.0\.1/.test(DATABASE_URL)?false:{rejectUnauthorized:false}}):null;
-const memory={state:null,users:[],gps:[],geofences:[],notifications:[],subscriptions:[],uploads:[],companyReceipts:[],tripDocuments:[],mobileDevices:[],scanJobs:[]};const clients=new Set();
+const memory={state:null,revision:0,users:[],gps:[],geofences:[],notifications:[],subscriptions:[],uploads:[],companyReceipts:[],tripDocuments:[],mobileDevices:[],scanJobs:[]};const clients=new Set();
 app.use(express.json({limit:'10mb'}));app.use(express.urlencoded({extended:true}));
 app.use((req,res,next)=>{res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','same-origin');res.setHeader('Permissions-Policy','geolocation=(self), camera=(self)');next()});
 const q=async(text,params=[])=>pool?(await pool.query(text,params)).rows:null;
 async function initDb(){if(pool){await pool.query(`CREATE TABLE IF NOT EXISTS users(id uuid PRIMARY KEY,email text UNIQUE NOT NULL,password_hash text NOT NULL,name text NOT NULL,role text NOT NULL CHECK(role IN ('admin','manager','dispatcher','driver','warehouse','workshop','finance','site_worker')),driver_id text,staff_id text,active boolean DEFAULT true,created_at timestamptz DEFAULT now());
 ALTER TABLE users ADD COLUMN IF NOT EXISTS staff_id text;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS auth_version integer NOT NULL DEFAULT 0;
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
 ALTER TABLE users ADD CONSTRAINT users_role_check CHECK(role IN ('admin','manager','dispatcher','driver','warehouse','workshop','finance','site_worker'));
 CREATE TABLE IF NOT EXISTS app_state(id integer PRIMARY KEY DEFAULT 1 CHECK(id=1),payload jsonb NOT NULL DEFAULT '{}'::jsonb,revision bigint NOT NULL DEFAULT 0,updated_at timestamptz DEFAULT now());
@@ -327,8 +328,17 @@ ALTER TABLE mobile_devices ALTER COLUMN driver_id DROP NOT NULL;\nCREATE INDEX I
  }else if(!memory.users.length)memory.users.push({id:crypto.randomUUID(),email:(process.env.INITIAL_ADMIN_EMAIL||'admin@angermund.local').toLowerCase(),password_hash:await bcrypt.hash(process.env.INITIAL_ADMIN_PASSWORD||'ChangeMe123!',10),name:'System Administrator',role:'admin',active:true});
  if(process.env.VAPID_PUBLIC_KEY&&process.env.VAPID_PRIVATE_KEY)webpush.setVapidDetails(process.env.VAPID_SUBJECT||'mailto:angermundtransport@iway.na',process.env.VAPID_PUBLIC_KEY,process.env.VAPID_PRIVATE_KEY);
 }
-function tokenFor(u){return jwt.sign({sub:u.id,email:u.email,name:u.name,role:u.role,driverId:u.driver_id||u.driverId||null,staffId:u.staff_id||u.staffId||null},JWT_SECRET,{expiresIn:'12h'})}
-function auth(req,res,next){const raw=req.headers.authorization?.replace(/^Bearer\s+/i,'')||req.query.token;if(!raw)return res.status(401).json({error:'Authentication required'});try{req.user=jwt.verify(raw,JWT_SECRET);next()}catch{return res.status(401).json({error:'Invalid or expired session'})}}
+function tokenFor(u){return jwt.sign({sub:u.id,av:u.auth_version||0,email:u.email,name:u.name,role:u.role,driverId:u.driver_id||u.driverId||null,staffId:u.staff_id||u.staffId||null},JWT_SECRET,{expiresIn:'12h'})}
+async function auth(req,res,next){
+  const raw=req.headers.authorization?.replace(/^Bearer\s+/i,'')||req.query.token;
+  if(!raw)return res.status(401).json({error:'Authentication required'});
+  let claims;try{claims=jwt.verify(raw,JWT_SECRET)}catch{return res.status(401).json({error:'Invalid or expired session'})}
+  try{
+    const u=pool?(await q('SELECT * FROM users WHERE id=$1 AND active=true',[claims.sub]))[0]:memory.users.find(x=>x.id===claims.sub&&x.active);
+    if(!u||Number(claims.av||0)!==Number(u.auth_version||0))return res.status(401).json({error:'Session revoked; please sign in again'});
+    req.user={...claims,id:u.id,email:u.email,name:u.name,role:u.role,driverId:u.driver_id||u.driverId||null,staffId:u.staff_id||u.staffId||null};next()
+  }catch(e){next(e)}
+}
 const roles=(...allowed)=>(req,res,next)=>allowed.includes(req.user.role)?next():res.status(403).json({error:'Insufficient permission'});
 const deviceTokenHash=raw=>crypto.createHash('sha256').update(String(raw||'')).digest('hex');
 async function deviceAuth(req,res,next){
@@ -345,7 +355,18 @@ async function deviceAuth(req,res,next){
   if(pool)q('UPDATE mobile_devices SET last_seen=now() WHERE id=$1',[d.id]).catch(()=>{});else d.lastSeen=new Date().toISOString();
   next()
 }
-function emit(type,data){const msg=`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;for(const res of clients)res.write(msg)}
+function notificationVisible(n,user){return n.user_id?String(n.user_id)===String(user.sub):n.driver_id?String(n.driver_id)===String(user.driverId||''):n.role?String(n.role)===String(user.role):true}
+function closeUserEvents(id){for(const client of clients)if(client.user.sub===id){client.res.end();clients.delete(client)}}
+function emit(type,data){
+  const msg=`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;
+  for(const {res,user} of clients){
+    if(type==='notification'&&!notificationVisible(data,user))continue;
+    if(type==='driver-upload'&&!['admin','manager','dispatcher','finance','workshop'].includes(user.role))continue;
+    if(type==='scan'&&data.userId!==user.sub)continue;
+    if(type==='gps'&&!trustedVehicleGpsSource(data.source))continue;
+    res.write(msg)
+  }
+}
 const distance=(a,b)=>{const R=6371000,p=x=>x*Math.PI/180,dLat=p(b.latitude-a.latitude),dLon=p(b.longitude-a.longitude),x=Math.sin(dLat/2)**2+Math.cos(p(a.latitude))*Math.cos(p(b.latitude))*Math.sin(dLon/2)**2;return 2*R*Math.atan2(Math.sqrt(x),Math.sqrt(1-x))};
 async function createNotification(n){const row={id:crypto.randomUUID(),type:n.type||'system',severity:n.severity||'info',title:n.title,message:n.message,role:n.role||null,user_id:n.userId||null,driver_id:n.driverId||null,linked_type:n.linkedType||null,linked_id:n.linkedId||null,read:false,created_at:new Date().toISOString()};if(pool)await q('INSERT INTO notifications(id,type,severity,title,message,role,user_id,driver_id,linked_type,linked_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[row.id,row.type,row.severity,row.title,row.message,row.role,row.user_id,row.driver_id,row.linked_type,row.linked_id]);else memory.notifications.unshift(row);emit('notification',row);await sendExternal(row);return row}
 async function sendExternal(n){
@@ -717,15 +738,15 @@ app.patch('/api/users/:id',auth,roles('admin'),async(req,res)=>{
     if(!final.name||!final.email)return res.status(400).json({error:'Name and email are required'});
     if(pool){
       const row=(await q('UPDATE users SET name=$2,email=$3,role=$4,driver_id=$5,staff_id=$6,active=$7 WHERE id=$1 RETURNING id,email,name,role,driver_id AS "driverId",staff_id AS "staffId",active,created_at AS "createdAt"',[id,final.name,final.email,final.role,final.driverId,final.staffId,final.active]))[0];
-      return res.json(row)
+      closeUserEvents(id);return res.json(row)
     }
     Object.assign(existing,{name:final.name,email:final.email,role:final.role,driverId:final.driverId,driver_id:final.driverId,staffId:final.staffId,staff_id:final.staffId,active:final.active});
-    const{password_hash,...safe}=existing;res.json(safe)
+    closeUserEvents(id);const{password_hash,...safe}=existing;res.json(safe)
   }catch(e){res.status(409).json({error:e.code==='23505'?'A user with that email already exists':e.message})}
 });
-app.post('/api/users/:id/reset-password',auth,roles('admin'),async(req,res)=>{const password=String(req.body.password||'');if(password.length<10)return res.status(400).json({error:'Password must be at least 10 characters'});const id=req.params.id,hash=await bcrypt.hash(password,12);if(pool){const rows=await q('UPDATE users SET password_hash=$2 WHERE id=$1 RETURNING id',[id,hash]);if(!rows.length)return res.status(404).json({error:'User not found'})}else{const u=memory.users.find(x=>x.id===id);if(!u)return res.status(404).json({error:'User not found'});u.password_hash=hash}res.json({success:true})});
+app.post('/api/users/:id/reset-password',auth,roles('admin'),async(req,res)=>{const password=String(req.body.password||'');if(password.length<10)return res.status(400).json({error:'Password must be at least 10 characters'});const id=req.params.id,hash=await bcrypt.hash(password,12);if(pool){const rows=await q('UPDATE users SET password_hash=$2,auth_version=auth_version+1 WHERE id=$1 RETURNING id',[id,hash]);if(!rows.length)return res.status(404).json({error:'User not found'})}else{const u=memory.users.find(x=>x.id===id);if(!u)return res.status(404).json({error:'User not found'});u.password_hash=hash;u.auth_version=(u.auth_version||0)+1}closeUserEvents(id);res.json({success:true})});
 app.delete('/api/users/:id',auth,roles('admin'),async(req,res)=>{
-  const id=String(req.params.id);if(id===req.user.sub)return res.status(400).json({error:'You cannot delete your own account'});
+  const id=String(req.params.id);if(id===req.user.sub)return res.status(400).json({error:'You cannot delete your own account'});closeUserEvents(id);
   if(pool){const rows=await q('DELETE FROM users WHERE id=$1 RETURNING id,name',[id]);if(!rows.length)return res.status(404).json({error:'User not found'});return res.json({success:true,id})}
   const i=memory.users.findIndex(x=>x.id===id);if(i<0)return res.status(404).json({error:'User not found'});memory.users.splice(i,1);memory.subscriptions=memory.subscriptions.filter(x=>x.userId!==id);memory.mobileDevices=memory.mobileDevices.filter(x=>x.userId!==id);res.json({success:true,id})
 });
@@ -876,8 +897,40 @@ app.post('/api/approvals/:id/decision',auth,roles('admin','manager','finance'),u
   }catch(err){res.status(err.status||500).json({error:err.message})}
 });
 
-app.get('/api/state',auth,async(req,res)=>{const row=pool?(await q('SELECT payload,revision,updated_at FROM app_state WHERE id=1'))[0]:{payload:memory.state||{},revision:0};res.json(row)});
-app.put('/api/state',auth,roles('admin','manager','dispatcher','workshop','finance'),async(req,res)=>{if(!req.body||typeof req.body!=='object')return res.status(400).json({error:'Invalid state'});if(pool){const row=(await q('UPDATE app_state SET payload=$1,revision=revision+1,updated_at=now() WHERE id=1 RETURNING revision,updated_at',[req.body]))[0];emit('state',{revision:row.revision,updatedAt:row.updated_at});res.json(row)}else{memory.state=req.body;emit('state',{revision:Date.now()});res.json({revision:Date.now()})}});
+const privateStateKeys=['employees','payProfiles','payroll'];
+function visibleOpsState(state,user){
+  if(['admin','manager','finance'].includes(user.role))return state;
+  const result=structuredClone(state);for(const key of privateStateKeys)result[key]=[];
+  if(!['driver','site_worker'].includes(user.role))return result;
+  const trips=(state.trips||[]).filter(t=>user.role==='driver'&&t.driverId===user.driverId),ids=new Set(trips.map(t=>t.id));
+  const visible={version:state.version,company:state.company,settings:state.settings,trips};
+  for(const [key,field] of [['trucks','truckId'],['archivedTrucks','truckId'],['trailers','trailerId'],['drivers','driverId'],['routes','routeId'],['clients','clientId']]){
+    const refs=new Set(trips.flatMap(t=>[t[field],...(t.legs||[]).map(l=>l[field])]));if(key==='drivers'&&user.driverId)refs.add(user.driverId);
+    visible[key]=(state[key]||[]).filter(row=>refs.has(row.id));
+  }
+  for(const key of ['diesel','expenses','tripIssues','inspections','advances'])visible[key]=(state[key]||[]).filter(row=>ids.has(row.tripId));
+  visible.tasks=(state.tasks||[]).filter(t=>t.assignedUserId?t.assignedUserId===user.sub:t.assignedDriverId?t.assignedDriverId===user.driverId:t.linkedType==='trip'?ids.has(t.linkedId):String(t.ownerRole||'').toLowerCase().replace(/\s+/g,'_')===user.role);
+  return visible
+}
+let memoryStateQueue=Promise.resolve();
+function withMemoryState(work){const task=memoryStateQueue.then(work);memoryStateQueue=task.catch(()=>{});return task}
+app.get('/api/state',auth,async(req,res)=>{const row=pool?(await q('SELECT payload,revision,updated_at FROM app_state WHERE id=1'))[0]:{payload:memory.state||{},revision:memory.revision};res.json({...row,payload:visibleOpsState(row.payload,req.user)})});
+app.put('/api/state',auth,roles('admin','manager','dispatcher','workshop','finance'),async(req,res)=>{
+  if(!req.body||typeof req.body!=='object'||Array.isArray(req.body))return res.status(400).json({error:'Invalid state'});
+  const expected=String(req.headers['if-match']||'');if(!/^\d+$/.test(expected))return res.status(428).json({error:'Refresh central data before saving'});
+  const restricted=['dispatcher','workshop'].includes(req.user.role);
+  if(pool){
+    const payload=restricted?"$1::jsonb || jsonb_build_object('employees',payload->'employees','payProfiles',payload->'payProfiles','payroll',payload->'payroll')":'$1::jsonb';
+    const row=(await q(`UPDATE app_state SET payload=${payload},revision=revision+1,updated_at=now() WHERE id=1 AND revision=$2 RETURNING revision,updated_at`,[req.body,expected]))[0];
+    if(!row)return res.status(409).json({error:'Central data changed; refresh and retry'});
+    emit('state',{revision:row.revision,updatedAt:row.updated_at});return res.json(row)
+  }
+  return withMemoryState(()=>{
+    if(Number(expected)!==memory.revision)return res.status(409).json({error:'Central data changed; refresh and retry'});
+    const next=structuredClone(req.body);if(restricted)for(const key of privateStateKeys)next[key]=memory.state?.[key]||[];
+    memory.state=next;const revision=++memory.revision;emit('state',{revision});res.json({revision})
+  })
+});
 
 
 function legPricingMethod(v){
@@ -943,7 +996,7 @@ function recalcTripCosts(state,t){
 }
 
 function periodBounds(period){
-  if(!/^\d{4}-\d{2}$/.test(String(period||''))){const e=Error('Period must be YYYY-MM');e.status=400;throw e}
+  if(!/^\d{4}-(0[1-9]|1[0-2])$/.test(String(period||''))){const e=Error('Period must be YYYY-MM');e.status=400;throw e}
   const [y,m]=period.split('-').map(Number),start=new Date(Date.UTC(y,m-1,1)),end=new Date(Date.UTC(y,m,1));
   return{start:start.toISOString().slice(0,10),end:end.toISOString().slice(0,10)}
 }
@@ -1014,7 +1067,7 @@ function monthPeriod(d=new Date()){return d.getUTCFullYear()+'-'+String(d.getUTC
 function previousMonthPeriod(d=new Date()){const x=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()-1,1));return monthPeriod(x)}
 async function readOpsState(){if(pool){const row=(await q('SELECT payload FROM app_state WHERE id=1'))[0];return row?.payload||{}}return memory.state||{}}
 function driverTrip(state,req){const did=req.user.driverId;if(!did){const e=Error('Driver account is not linked to a driver profile');e.status=400;throw e}const trip=(state.trips||[]).find(x=>x.id===req.params.tripId);if(!trip){const e=Error('Trip not found');e.status=404;throw e}if(trip.driverId!==did){const e=Error('This trip is not assigned to you');e.status=403;throw e}return{trip,did}}
-async function mutateOpsState(mutator){if(pool){const c=await pool.connect();try{await c.query('BEGIN');const row=(await c.query('SELECT payload,revision FROM app_state WHERE id=1 FOR UPDATE')).rows[0]||{payload:{},revision:0};const state=row.payload||{};const result=await mutator(state);const updated=(await c.query('UPDATE app_state SET payload=$1,revision=revision+1,updated_at=now() WHERE id=1 RETURNING revision,updated_at',[state])).rows[0];await c.query('COMMIT');emit('state',{revision:updated.revision,updatedAt:updated.updated_at});return{result,revision:updated.revision}}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}const state=memory.state||{};const result=await mutator(state);memory.state=state;const revision=Date.now();emit('state',{revision});return{result,revision}}
+async function mutateOpsState(mutator){if(pool){const c=await pool.connect();try{await c.query('BEGIN');const row=(await c.query('SELECT payload,revision FROM app_state WHERE id=1 FOR UPDATE')).rows[0]||{payload:{},revision:0};const state=row.payload||{};const result=await mutator(state);const updated=(await c.query('UPDATE app_state SET payload=$1,revision=revision+1,updated_at=now() WHERE id=1 RETURNING revision,updated_at',[state])).rows[0];await c.query('COMMIT');emit('state',{revision:updated.revision,updatedAt:updated.updated_at});return{result,revision:updated.revision}}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}return withMemoryState(async()=>{const state=structuredClone(memory.state||{});const result=await mutator(state);memory.state=state;const revision=++memory.revision;emit('state',{revision});return{result,revision}})}
 
 
 const CANONICAL_FLEET=[
@@ -1205,6 +1258,8 @@ app.post('/api/admin/trips',auth,roles('admin','manager','dispatcher'),async(req
       const driver=state.drivers.find(x=>x.id===body.driverId);
       if(!truck){const e=Error('Selected truck was not found');e.status=400;throw e}
       if(!driver){const e=Error('Selected driver was not found');e.status=400;throw e}
+      if(!(state.clients||[]).some(x=>x.id===body.clientId)){const e=Error('Selected client was not found');e.status=400;throw e}
+      if(body.trailerId&&!(state.trailers||[]).some(x=>x.id===body.trailerId)){const e=Error('Selected trailer was not found');e.status=400;throw e}
       const highest=state.trips.reduce((m,t)=>{const n=Number(String(t.number||'').match(/AT-(\d+)/)?.[1]||0);return Math.max(m,n)},999);
       const status=['Planned','Loading','In transit','Delivered'].includes(body.status)?body.status:'Planned';
       const stage={Planned:1,Loading:2,'In transit':3,Delivered:4}[status]||1;
@@ -1276,6 +1331,7 @@ app.patch('/api/admin/trips/:tripId/legs/:legId',auth,roles('admin','manager','d
     const changed=await mutateOpsState(async state=>{
       const t=(state.trips||[]).find(x=>x.id===req.params.tripId);if(!t){const e=Error('Trip not found');e.status=404;throw e}
       const legs=ensureTripLegs(state,t),leg=String(req.params.legId).startsWith('legacy_')?legs[0]:legs.find(x=>x.id===req.params.legId);if(!leg){const e=Error('Journey leg not found');e.status=404;throw e}
+      if(leg.invoiceId&&['routeId','clientId','load','tons','pallets','distance','namibiaKm','unitRate','agreedAmount','pricingMethod'].some(k=>body[k]!==undefined&&String(body[k])!==String(leg[k]??''))){const e=Error('Invoiced leg values cannot be changed');e.status=409;throw e}
       if(body.routeId!==undefined){const r=(state.routes||[]).find(x=>x.id===body.routeId);if(!r){const e=Error('Route not found');e.status=400;throw e}leg.routeId=String(body.routeId);if(body.distance===undefined)leg.distance=num(r.distance);if(body.namibiaKm===undefined)leg.namibiaKm=num(r.namibiaKm)}
       if(body.clientId!==undefined){if(!(state.clients||[]).some(x=>x.id===body.clientId)){const e=Error('Client not found');e.status=400;throw e}leg.clientId=String(body.clientId)}
       for(const key of ['label','load','status'])if(body[key]!==undefined)leg[key]=String(body[key]||'');
@@ -1297,6 +1353,8 @@ app.delete('/api/admin/trips/:tripId/legs/:legId',auth,roles('admin','manager','
       const legs=ensureTripLegs(state,t),i=String(req.params.legId).startsWith('legacy_')?0:legs.findIndex(x=>x.id===req.params.legId);if(i<0){const e=Error('Journey leg not found');e.status=404;throw e}
       if(legs.length<=1){const e=Error('A journey must keep at least one leg');e.status=400;throw e}
       if(legs[i].invoiceId){const e=Error('This leg already has an invoice and cannot be removed');e.status=409;throw e}
+      const legId=legs[i].id,hasDocument=pool?(await q('SELECT id FROM trip_documents WHERE trip_id=$1 AND leg_id=$2 LIMIT 1',[t.id,legId])).length:memory.tripDocuments.some(x=>x.tripId===t.id&&x.legId===legId);
+      if(legs[i].podUploadId||hasDocument||[...(state.diesel||[]),...(state.expenses||[])].some(x=>x.tripId===t.id&&x.legId===legId)){const e=Error('Move or remove linked receipts and documents before deleting this leg');e.status=409;throw e}
       const [removed]=legs.splice(i,1);syncTripFromLegs(state,t);recalcTripCosts(state,t);return{trip:t,removed}
     });
     res.json(changed.result)
@@ -1312,7 +1370,7 @@ app.post('/api/admin/trips/:tripId/legs/:legId/invoice',auth,roles('admin','mana
       const highest=state.invoices.reduce((m,x)=>Math.max(m,Number(String(x.number||'').match(/INV-(\d+)/)?.[1]||0)),999);
       const client=(state.clients||[]).find(x=>x.id===leg.clientId),terms=num(client?.terms)||30,date=new Date(),due=new Date(date.getTime()+terms*86400000).toISOString().slice(0,10);
       const inv={id:'inv_'+crypto.randomUUID(),number:'INV-'+(highest+1),date:date.toISOString().slice(0,10),clientId:leg.clientId,tripId:t.id,legId:leg.id,amount:num(leg.income),due,status:'Unpaid',journeyLeg:true};
-      state.invoices.unshift(inv);leg.invoiceId=inv.id;leg.invoiceStatus='Unpaid';
+      state.invoices.unshift(inv);leg.invoiceId=inv.id;leg.invoiceStatus='Unpaid';t.invoiceIds=invoiceLegs.map(x=>x.invoiceId).filter(Boolean);if(invoiceLegs.length===1)t.invoiceId=inv.id;
       const legs=ensureTripLegs(state,t);if(legs.every(x=>x.invoiceId)){t.stage=Math.max(num(t.stage),5);t.status='Invoiced';t.invoiceIds=legs.map(x=>x.invoiceId);const tr=(state.trucks||[]).find(x=>x.id===t.truckId);if(tr)tr.status='Available';const dr=(state.drivers||[]).find(x=>x.id===t.driverId);if(dr)dr.status='Available'}
       return{invoice:inv,trip:t,leg,existing:false}
     });
@@ -1367,7 +1425,7 @@ app.post('/api/driver/trips/:tripId/receipt',auth,roles('driver'),upload.array('
     if(clientActionId&&state.driverActions.some(x=>x.clientActionId===clientActionId))return res.json({duplicate:true,action,tripId:t.id});
     for(let i=0;i<files.length;i++){const file=files[i],archived=archiveStoredFile(file),id=crypto.randomUUID(),kind=i===0?action:action+'-supporting';memory.uploads.push({id,userId:req.user.sub,driverId:did,userName:req.user.name||'',tripId:t.id,kind,filename:archived.filename,mimeType:archived.mimeType,content:archived.buffer,createdAt:now});ids.push(id)}
     if(action==='diesel'){const litres=num(data.litres),total=num(data.total),price=num(data.price)||(litres>0&&total>0?total/litres:0);if(litres<=0)return res.status(400).json({error:'Enter diesel litres'});const rec={id:mk('fuel'),tripId:t.id,legId:leg?.id||'',date,truckId:t.truckId,driverId:did,litres,price,odometer:num(data.odometer),supplier:String(data.supplier||''),slip:String(data.slip||''),receiptUploadId:ids[0]||'',receiptUploadIds:ids,supportingReceiptUploadId:ids[1]||'',receiptCount:ids.length,verified:false,detectedCategory:String(data.detectedCategory||'Diesel'),categoryConfidence:num(data.categoryConfidence),fuelTransactions:Array.isArray(data.fuelTransactions)?data.fuelTransactions.slice(0,10):[],fuelTransactionCount:num(data.fuelTransactionCount)||1,printedTotal:num(data.printedTotal)||total||null,receiptAdjustment:data.adjustment===null||data.adjustment===undefined?null:num(data.adjustment),driverEasyMode:true};state.diesel.unshift(rec);rememberSupplierCategory(state,rec.supplier,'Diesel')}else{const amount=num(data.amount);if(amount<=0)return res.status(400).json({error:'Enter the expense amount'});const category=String(data.category||'Other'),supplier=String(data.supplier||'');state.expenses.unshift({id:mk('expense'),date,tripId:t.id,legId:leg?.id||'',truckId:t.truckId,driverId:did,category,supplier,amount,receiptNo:String(data.receiptNo||''),notes:String(data.notes||''),receiptUploadId:ids[0]||'',receiptUploadIds:ids,supportingReceiptUploadId:ids[1]||'',receiptCount:ids.length,status:'Review',reimbursable:true,detectedCategory:String(data.detectedCategory||''),categoryConfidence:num(data.categoryConfidence),driverEasyMode:true});rememberSupplierCategory(state,supplier,category)}
-    recalcTripCosts(state,t);if(clientActionId)state.driverActions.unshift({clientActionId,tripId:t.id,driverId:did,action,at:now});memory.state=state;emit('state',{revision:Date.now()});return res.status(201).json({success:true,action,tripId:t.id})
+    recalcTripCosts(state,t);if(clientActionId)state.driverActions.unshift({clientActionId,tripId:t.id,driverId:did,action,at:now});memory.state=state;emit('state',{revision:++memory.revision});return res.status(201).json({success:true,action,tripId:t.id})
   }catch(e){return res.status(e.status||500).json({error:e.message})}
 });
 
@@ -1490,7 +1548,7 @@ app.post('/api/admin/driver-uploads/:id/move',auth,roles('admin','manager','disp
       if(record.tripId===targetTripId){const e=Error('This receipt is already linked to '+(target.number||'that trip'));e.status=409;throw e}
       const ids=(record.receiptUploadIds||[record.receiptUploadId]).filter(Boolean);
       record.tripId=target.id;record.truckId=target.truckId;record.driverId=target.driverId;record.movedAt=new Date().toISOString();record.movedBy=req.user.sub;
-      if(source)recalcTripCosts(state,source);recalcTripCosts(state,target);
+      if(source){if(type==='diesel')source.dieselCost=0;recalcTripCosts(state,source)}record.legId=activeTripLegServer(target)?.id||'';recalcTripCosts(state,target);
       state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:req.user.name||req.user.email||req.user.role,action:'Moved '+type+' receipt from '+(source?.number||'previous trip')+' to '+target.number,linkedType:'trip',linkedId:target.id});state.audit=state.audit.slice(0,100);
       const updated=(await c.query('UPDATE app_state SET payload=$1,revision=revision+1,updated_at=now() WHERE id=1 RETURNING revision,updated_at',[state])).rows[0];
       if(ids.length)await c.query('UPDATE driver_uploads SET trip_id=$1 WHERE id=ANY($2::uuid[])',[target.id,ids]);
@@ -1507,21 +1565,22 @@ app.post('/api/admin/driver-uploads/:id/move',auth,roles('admin','manager','disp
     if(!record)return res.status(400).json({error:'This upload is not linked to a posted diesel or expense record'});
     const source=(state.trips||[]).find(x=>x.id===record.tripId),ids=(record.receiptUploadIds||[record.receiptUploadId]).filter(Boolean);
     record.tripId=target.id;record.truckId=target.truckId;record.driverId=target.driverId;record.movedAt=new Date().toISOString();record.movedBy=req.user.sub;
-    if(source)recalcTripCosts(state,source);recalcTripCosts(state,target);
+    if(source){if(type==='diesel')source.dieselCost=0;recalcTripCosts(state,source)}record.legId=activeTripLegServer(target)?.id||'';recalcTripCosts(state,target);
     memory.uploads.forEach(x=>{if(ids.includes(x.id))x.tripId=target.id});
-    memory.state=state;emit('state',{revision:Date.now()});
+    memory.state=state;emit('state',{revision:++memory.revision});
     res.json({success:true,type,sourceNumber:source?.number||null,targetNumber:target.number,uploadIds:ids})
   }catch(e){res.status(e.status||500).json({error:e.message})}
 });
 app.get('/api/company/receipts/:id',auth,async(req,res)=>{
   const r=pool?(await q('SELECT id,user_id AS "userId",linked_type AS "linkedType",linked_id AS "linkedId",kind,filename,mime_type AS "mimeType",content FROM company_receipts WHERE id=$1',[req.params.id]))[0]:memory.companyReceipts.find(x=>x.id===req.params.id);
   if(!r)return res.status(404).json({error:'Receipt not found'});
+  if(!['admin','manager','dispatcher','finance','workshop'].includes(req.user.role)&&r.userId!==req.user.sub)return res.status(403).json({error:'Access denied'});
   res.set({'Content-Type':r.mimeType||'application/octet-stream','Content-Disposition':'inline; filename="'+String(r.filename||'receipt').replace(/"/g,'')+'"'});res.send(r.content)
 });
-app.get('/api/driver/uploads/:id',auth,async(req,res)=>{const u=pool?(await q('SELECT id,user_id AS "userId",trip_id AS "tripId",kind,filename,mime_type AS "mimeType",content FROM driver_uploads WHERE id=$1',[req.params.id]))[0]:memory.uploads.find(x=>x.id===req.params.id);if(!u)return res.status(404).json({error:'Upload not found'});if(req.user.role==='driver'&&u.userId!==req.user.sub)return res.status(403).json({error:'Access denied'});res.set({'Content-Type':u.mimeType||'application/octet-stream','Content-Disposition':'inline; filename="'+String(u.filename||'document').replace(/"/g,'')+'"'});res.send(u.content)});
+app.get('/api/driver/uploads/:id',auth,async(req,res)=>{const u=pool?(await q('SELECT id,user_id AS "userId",trip_id AS "tripId",kind,filename,mime_type AS "mimeType",content FROM driver_uploads WHERE id=$1',[req.params.id]))[0]:memory.uploads.find(x=>x.id===req.params.id);if(!u)return res.status(404).json({error:'Upload not found'});if(!['admin','manager','dispatcher','finance','workshop'].includes(req.user.role)&&u.userId!==req.user.sub)return res.status(403).json({error:'Access denied'});res.set({'Content-Type':u.mimeType||'application/octet-stream','Content-Disposition':'inline; filename="'+String(u.filename||'document').replace(/"/g,'')+'"'});res.send(u.content)});
 app.post('/api/driver/trips/:tripId/action',auth,roles('driver'),async(req,res)=>{const action=String(req.body.action||''),data=req.body.data&&typeof req.body.data==='object'?req.body.data:{},clientActionId=String(req.body.clientActionId||'').slice(0,100);const allowed=['accept','inspection','start','arrive','pod','finish','diesel','expense','problem'];if(!allowed.includes(action))return res.status(400).json({error:'Invalid driver action'});try{const changed=await mutateOpsState(async state=>{state.driverActions??=[];if(clientActionId){const prior=state.driverActions.find(x=>x.clientActionId===clientActionId);if(prior)return{duplicate:true,action,tripId:req.params.tripId}}const{trip:t,did}=driverTrip(state,req),now=new Date().toISOString(),date=now.slice(0,10),mk=p=>p+'_'+crypto.randomUUID(),legs=ensureTripLegs(state,t),leg=activeTripLegServer(t),multi=legs.length>1;state.inspections??=[];state.diesel??=[];state.expenses??=[];state.tripIssues??=[];state.tasks??=[];state.trucks??=[];state.drivers??=[];if(action==='accept'){t.driverAcceptedAt=t.driverAcceptedAt||now;t.stage=Math.max(1,num(t.stage)||1);t.status=t.status||'Planned'}else if(action==='inspection'){const defects=String(data.defects||'').trim(),passed=!defects;state.inspections.unshift({id:mk('ins'),date,tripId:t.id,truckId:t.truckId,driverId:did,type:'Pre-trip',score:passed?100:80,status:passed?'Passed':'Failed',defects,items:{tyres:true,lights:true,brakes:true,fluids:true,documents:true,load:true},driverEasyMode:true});if(passed&&num(t.stage)<2){t.stage=2;t.status='Loading'}if(passed&&leg)leg.status='Loading'}else if(action==='start'){const passed=state.inspections.some(x=>x.tripId===t.id&&x.driverId===did&&x.type==='Pre-trip'&&x.status==='Passed');if(!passed){const e=Error('Complete the pre-trip vehicle check first');e.status=400;throw e}t.stage=3;t.status='In transit';t.startedAt=t.startedAt||now;if(leg){leg.status='In transit';leg.startedAt=leg.startedAt||now;}const tr=state.trucks.find(x=>x.id===t.truckId);if(tr)tr.status='On trip';const dr=state.drivers.find(x=>x.id===did);if(dr)dr.status='On trip'}else if(action==='arrive'){if(leg){leg.status='At offloading';leg.arrivedAt=leg.arrivedAt||now}t.status='At offloading';t.arrivedAt=t.arrivedAt||now;if(!state.tasks.some(x=>x.linkedId===t.id&&x.legId===leg?.id&&/POD/i.test(x.title)&&x.status==='Open'))state.tasks.unshift({id:mk('task'),title:'Upload POD for '+t.number+(multi&&leg?' · '+leg.label:''),ownerRole:'Driver',assignedDriverId:t.driverId||'',linkedType:'trip',linkedId:t.id,legId:leg?.id||'',due:date,priority:'High',status:'Open'})}else if(action==='pod'){if(!data.uploadId){const e=Error('Take a POD photo first');e.status=400;throw e}if(leg){leg.pod=true;leg.podUploadId=data.uploadId;leg.podAt=now;leg.status='Delivered'}state.tasks.filter(x=>x.linkedId===t.id&&(!x.legId||x.legId===leg?.id)&&/POD/i.test(x.title)).forEach(x=>x.status='Completed');const next=legs.find(x=>!['Delivered','Invoiced','Closed'].includes(String(x.status||'')));if(next&&next.id!==leg?.id){next.status='Loading';t.stage=2;t.status='Loading';t.pod=false;t.podUploadId='';t.geo={};}else{t.pod=true;t.podUploadId=data.uploadId;t.podAt=now;t.stage=4;t.status='Delivered'}}else if(action==='finish'){if(legs.some(x=>!x.pod)){const e=Error('POD is required for every journey leg before finishing');e.status=400;throw e}if(!t.pod){const e=Error('POD photo is required before finishing the trip');e.status=400;throw e}t.driverComplete=true;t.driverCompletedAt=now;const tr=state.trucks.find(x=>x.id===t.truckId);if(tr)tr.status='Available';const dr=state.drivers.find(x=>x.id===did);if(dr)dr.status='Available';if(!state.tasks.some(x=>x.linkedId===t.id&&/Review completed trip/i.test(x.title)&&x.status==='Open'))state.tasks.unshift({id:mk('task'),title:'Review completed trip '+t.number,ownerRole:'Dispatcher',linkedType:'trip',linkedId:t.id,due:date,priority:'Normal',status:'Open'})}else if(action==='diesel'){const litres=num(data.litres),total=num(data.total),price=num(data.price)||(litres>0?total/litres:0);if(litres<=0){const e=Error('Enter diesel litres');e.status=400;throw e}const rec={id:mk('fuel'),tripId:t.id,legId:leg?.id||'',date,truckId:t.truckId,driverId:did,litres,price,total:total>0?total:Number((litres*price).toFixed(2)),odometer:num(data.odometer),supplier:String(data.supplier||''),slip:String(data.slip||''),receiptUploadId:data.uploadId||'',receiptUploadIds:Array.isArray(data.receiptUploadIds)?data.receiptUploadIds.slice(0,2):(data.uploadId?[data.uploadId]:[]),supportingReceiptUploadId:String(data.supportingUploadId||''),receiptCount:Array.isArray(data.receiptUploadIds)?Math.min(2,data.receiptUploadIds.length):(data.uploadId?1:0),verified:false,detectedCategory:String(data.detectedCategory||'Diesel'),categoryConfidence:num(data.categoryConfidence),fuelTransactions:Array.isArray(data.fuelTransactions)?data.fuelTransactions.slice(0,10):[],fuelTransactionCount:num(data.fuelTransactionCount)||1,printedTotal:num(data.printedTotal)||null,receiptAdjustment:data.adjustment===null||data.adjustment===undefined?null:num(data.adjustment),driverEasyMode:true};state.diesel.unshift(rec);rememberSupplierCategory(state,rec.supplier,'Diesel');t.dieselCost=state.diesel.filter(x=>x.tripId===t.id).reduce((a,x)=>a+(num(x.printedTotal)||num(x.total)||num(x.litres)*num(x.price)),0);t.routeExpenseCost=state.expenses.filter(x=>x.tripId===t.id).reduce((a,x)=>a+num(x.amount),0)}else if(action==='expense'){const amount=num(data.amount);if(amount<=0){const e=Error('Enter the expense amount');e.status=400;throw e}const category=String(data.category||'Other'),supplier=String(data.supplier||'');state.expenses.unshift({id:mk('expense'),date,tripId:t.id,legId:leg?.id||'',truckId:t.truckId,driverId:did,category,supplier,amount,receiptNo:String(data.receiptNo||''),notes:String(data.notes||''),receiptUploadId:data.uploadId||'',receiptUploadIds:Array.isArray(data.receiptUploadIds)?data.receiptUploadIds.slice(0,2):(data.uploadId?[data.uploadId]:[]),supportingReceiptUploadId:String(data.supportingUploadId||''),receiptCount:Array.isArray(data.receiptUploadIds)?Math.min(2,data.receiptUploadIds.length):(data.uploadId?1:0),status:data.uploadId?'Review':'Receipt missing',reimbursable:true,detectedCategory:String(data.detectedCategory||''),categoryConfidence:num(data.categoryConfidence),driverEasyMode:true});rememberSupplierCategory(state,supplier,category);t.routeExpenseCost=state.expenses.filter(x=>x.tripId===t.id).reduce((a,x)=>a+num(x.amount),0);t.dieselCost=state.diesel.filter(x=>x.tripId===t.id).reduce((a,x)=>a+(num(x.printedTotal)||num(x.total)||num(x.litres)*num(x.price)),0)}else if(action==='problem'){const type=String(data.type||'Other'),description=String(data.description||'').trim();state.tripIssues.unshift({id:mk('issue'),date,tripId:t.id,truckId:t.truckId,driverId:did,type,location:String(data.location||''),cost:num(data.cost),description:description||type,action:String(data.actionTaken||''),photoUploadId:data.uploadId||'',status:'Open',driverEasyMode:true})}if(action==='diesel'||action==='expense')recalcTripCosts(state,t);if(clientActionId)state.driverActions.unshift({clientActionId,tripId:t.id,driverId:did,action,at:now});state.driverActions=state.driverActions.slice(0,1000);return{duplicate:false,action,tripId:t.id,number:t.number,status:t.status,stage:t.stage,pod:Boolean(t.pod),driverComplete:Boolean(t.driverComplete)}});if(action==='problem'&&!changed.result.duplicate)createNotification({type:'driver-problem',severity:'warning',title:'Driver reported a trip problem',message:(req.user.name||'Driver')+' reported '+String(data.type||'a problem')+' on trip '+req.params.tripId+'.',role:'dispatcher',linkedType:'trip',linkedId:req.params.tripId}).catch(()=>{});res.status(changed.result.duplicate?200:201).json({...changed.result,revision:changed.revision})}catch(e){res.status(e.status||500).json({error:e.message})}});
 
-app.get('/api/events',auth,(req,res)=>{res.set({'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});res.flushHeaders();res.write('event: ready\ndata: {}\n\n');clients.add(res);req.on('close',()=>clients.delete(res))});
+app.get('/api/events',auth,(req,res)=>{res.set({'Content-Type':'text/event-stream','Cache-Control':'no-cache','Connection':'keep-alive'});res.flushHeaders();res.write('event: ready\ndata: {}\n\n');const client={res,user:req.user};clients.add(client);const expiry=setTimeout(()=>res.end(),Math.max(0,req.user.exp*1000-Date.now()));expiry.unref();req.on('close',()=>{clearTimeout(expiry);clients.delete(client)})});
 
 function driverMobileTrip(state,driverId){
   const rows=(state.trips||[]).filter(t=>t.driverId===driverId&&!t.driverComplete&&!['Closed','Invoiced'].includes(t.status));
@@ -1570,7 +1629,7 @@ app.get('/api/mobile/alerts',deviceAuth,async(req,res)=>{
   res.json({alerts:rows,serverTime:new Date().toISOString()})
 });
 app.post('/api/gps',auth,async(req,res)=>gpsIn(req,res,'driver'));
-app.post('/api/integrations/telematics/webhook',async(req,res)=>{if(req.headers['x-telematics-token']!==process.env.TELEMATICS_WEBHOOK_TOKEN)return res.status(401).json({error:'Invalid webhook token'});req.user={sub:'telematics'};return gpsIn(req,res,'telematics')});
+app.post('/api/integrations/telematics/webhook',async(req,res)=>{if(!process.env.TELEMATICS_WEBHOOK_TOKEN||req.headers['x-telematics-token']!==process.env.TELEMATICS_WEBHOOK_TOKEN)return res.status(401).json({error:'Invalid webhook token'});req.user={sub:'telematics'};return gpsIn(req,res,'telematics')});
 app.post('/api/integrations/traccar/position',async(req,res)=>{
   const expected=process.env.TRACCAR_FORWARD_TOKEN||process.env.TELEMATICS_WEBHOOK_TOKEN;
   const supplied=String(req.headers['x-traccar-token']||req.headers['x-telematics-token']||'');
@@ -1587,7 +1646,20 @@ app.post('/api/integrations/traccar/position',async(req,res)=>{
     return gpsIn(req,res,'telematics')
   }catch(e){res.status(500).json({error:e.message})}
 });
-async function gpsIn(req,res,source){const p={vehicleId:String(req.body.vehicleId||req.body.vehicle_id||''),driverId:req.body.driverId||req.user.driverId||null,tripId:req.body.tripId||null,latitude:Number(req.body.latitude),longitude:Number(req.body.longitude),speed:num(req.body.speed),heading:num(req.body.heading),accuracy:req.body.accuracy==null?null:num(req.body.accuracy),source,recordedAt:req.body.recordedAt||new Date().toISOString()};if(!p.vehicleId||!Number.isFinite(p.latitude)||!Number.isFinite(p.longitude))return res.status(400).json({error:'vehicleId, latitude and longitude are required'});if(pool)await q('INSERT INTO gps_positions(vehicle_id,driver_id,trip_id,latitude,longitude,speed,heading,accuracy,source,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[p.vehicleId,p.driverId,p.tripId,p.latitude,p.longitude,p.speed,p.heading,p.accuracy,p.source,p.recordedAt]);else memory.gps.push(p);await evaluateGeofences(p);await evaluateTripZones(p);emit('gps',p);res.status(201).json(p)}
+async function gpsIn(req,res,source){
+  const b=req.body,p={vehicleId:String(b.vehicleId||b.vehicle_id||''),driverId:b.driverId||req.user.driverId||null,tripId:b.tripId||null,latitude:Number(b.latitude),longitude:Number(b.longitude),speed:Number(b.speed??0),heading:Number(b.heading??0),accuracy:b.accuracy==null?null:Number(b.accuracy),source,recordedAt:b.recordedAt||new Date().toISOString()};
+  if(!p.vehicleId||b.latitude==null||b.latitude===''||b.longitude==null||b.longitude===''||!Number.isFinite(p.latitude)||Math.abs(p.latitude)>90||!Number.isFinite(p.longitude)||Math.abs(p.longitude)>180||!Number.isFinite(p.speed)||!Number.isFinite(p.heading)||!Number.isFinite(Date.parse(p.recordedAt)))return res.status(400).json({error:'A vehicle, valid coordinates and timestamp are required'});
+  const state=await readOpsState();if(!(state.trucks||[]).some(x=>x.id===p.vehicleId))return res.status(404).json({error:'Truck not found'});
+  if(!trustedVehicleGpsSource(source)){
+    const trip=(state.trips||[]).find(x=>x.id===p.tripId&&x.driverId===req.user.driverId&&x.truckId===p.vehicleId);
+    if(req.user.role!=='driver'||!req.user.driverId||!trip)return res.status(403).json({error:'GPS must belong to your assigned trip'});
+    p.driverId=req.user.driverId;
+  }
+  const latest=pool?(await q('SELECT max(recorded_at) AS at FROM gps_positions WHERE vehicle_id=$1 AND source=$2',[p.vehicleId,source]))[0]?.at:memory.gps.filter(x=>x.vehicleId===p.vehicleId&&x.source===source).reduce((a,x)=>Math.max(a,Date.parse(x.recordedAt)),0);
+  if(pool)await q('INSERT INTO gps_positions(vehicle_id,driver_id,trip_id,latitude,longitude,speed,heading,accuracy,source,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[p.vehicleId,p.driverId,p.tripId,p.latitude,p.longitude,p.speed,p.heading,p.accuracy,p.source,p.recordedAt]);else memory.gps.push(p);
+  if(!latest||Date.parse(p.recordedAt)>new Date(latest).getTime()){if(trustedVehicleGpsSource(source)){await evaluateGeofences(p);await evaluateTripZones(p);emit('gps',p)}}
+  res.status(201).json(p)
+}
 app.post('/api/admin/fuel',auth,roles('admin','manager','dispatcher','workshop','finance'),upload.single('receipt'),async(req,res)=>{
   try{
     const litres=num(req.body.litres),total=num(req.body.total),enteredPrice=num(req.body.price),tripId=String(req.body.tripId||''),requestedTruck=String(req.body.truckId||'');
@@ -1633,15 +1705,15 @@ app.delete('/api/admin/diesel/:id',auth,roles('admin','manager','finance'),async
   try{
     const changed=await mutateOpsState(async state=>{
       state.diesel??=[];const i=state.diesel.findIndex(x=>x.id===req.params.id);if(i<0){const e=Error('Diesel record not found');e.status=404;throw e}
-      const [rec]=state.diesel.splice(i,1),t=(state.trips||[]).find(x=>x.id===rec.tripId);if(t)recalcTripCosts(state,t);
+      const [rec]=state.diesel.splice(i,1),t=(state.trips||[]).find(x=>x.id===rec.tripId);if(t){t.dieselCost=0;recalcTripCosts(state,t)}
       state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:req.user.name||req.user.email||req.user.role,action:'Deleted diesel record '+rec.id+' from '+(t?.number||rec.tripId)+'; archived receipt file retained',linkedType:'trip',linkedId:rec.tripId});state.audit=state.audit.slice(0,100);
       return{deleted:true,id:rec.id,tripId:rec.tripId}
     });
     res.json(changed.result)
   }catch(e){res.status(e.status||500).json({error:e.message})}
 });
-app.get('/api/gps/latest',auth,async(req,res)=>{const rows=pool?await q("SELECT DISTINCT ON(vehicle_id) vehicle_id AS \"vehicleId\",driver_id AS \"driverId\",trip_id AS \"tripId\",latitude,longitude,speed,heading,accuracy,source,recorded_at AS \"recordedAt\" FROM gps_positions WHERE source IN ('telematics','truck-device','tracker','vehicle-tracker') ORDER BY vehicle_id,recorded_at DESC"):Object.values(memory.gps.filter(x=>trustedVehicleGpsSource(x.source)).reduce((a,x)=>(a[x.vehicleId]=x,a),{}));res.json(rows)});
-app.get('/api/gps/history/:vehicleId',auth,async(req,res)=>{const hours=Math.min(168,Math.max(1,num(req.query.hours)||24)),rows=pool?await q('SELECT vehicle_id AS "vehicleId",latitude,longitude,speed,heading,recorded_at AS "recordedAt" FROM gps_positions WHERE vehicle_id=$1 AND recorded_at>now()-($2||\' hours\')::interval ORDER BY recorded_at',[req.params.vehicleId,String(hours)]):memory.gps.filter(x=>x.vehicleId===req.params.vehicleId&&Date.now()-new Date(x.recordedAt)<hours*3600000);res.json(rows)});
+app.get('/api/gps/latest',auth,async(req,res)=>{const rows=pool?await q("SELECT DISTINCT ON(vehicle_id) vehicle_id AS \"vehicleId\",driver_id AS \"driverId\",trip_id AS \"tripId\",latitude,longitude,speed,heading,accuracy,source,recorded_at AS \"recordedAt\" FROM gps_positions WHERE source IN ('telematics','truck-device','tracker','vehicle-tracker') ORDER BY vehicle_id,recorded_at DESC"):Object.values(memory.gps.filter(x=>trustedVehicleGpsSource(x.source)).reduce((a,x)=>{if(!a[x.vehicleId]||Date.parse(x.recordedAt)>Date.parse(a[x.vehicleId].recordedAt))a[x.vehicleId]=x;return a},{}));res.json(rows)});
+app.get('/api/gps/history/:vehicleId',auth,async(req,res)=>{const hours=Math.min(168,Math.max(1,num(req.query.hours)||24)),rows=pool?await q('SELECT vehicle_id AS "vehicleId",latitude,longitude,speed,heading,recorded_at AS "recordedAt" FROM gps_positions WHERE vehicle_id=$1 AND source IN (\'telematics\',\'truck-device\',\'tracker\',\'vehicle-tracker\') AND recorded_at>now()-($2||\' hours\')::interval ORDER BY recorded_at',[req.params.vehicleId,String(hours)]):memory.gps.filter(x=>trustedVehicleGpsSource(x.source)&&x.vehicleId===req.params.vehicleId&&Date.now()-new Date(x.recordedAt)<hours*3600000);res.json(rows)});
 app.get('/api/geofences',auth,async(req,res)=>res.json(pool?await q('SELECT id,name,latitude,longitude,radius_m AS "radiusM",event_types AS "eventTypes",kind,active FROM geofences ORDER BY name'):memory.geofences));
 app.post('/api/geofences',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
   const requested=String(req.body.kind||'custom').toLowerCase(),kind=['depot','loading','offloading','operating_area','custom'].includes(requested)?requested:'custom';
@@ -1667,7 +1739,7 @@ app.delete('/api/geofences/:id',auth,roles('admin','manager','dispatcher'),async
   const i=memory.geofences.findIndex(x=>x.id===id);if(i<0)return res.status(404).json({error:'Geofence not found'});const [removed]=memory.geofences.splice(i,1);emit('geofence-delete',{id,name:removed.name});res.json({success:true,id})
 });
 app.get('/api/notifications',auth,async(req,res)=>res.json(pool?await q(`SELECT id,type,severity,title,message,role,user_id AS "userId",driver_id AS "driverId",linked_type AS "linkedType",linked_id AS "linkedId",read,created_at AS "createdAt" FROM notifications WHERE user_id=$1 OR (user_id IS NULL AND driver_id IS NOT NULL AND driver_id=$2) OR (user_id IS NULL AND driver_id IS NULL AND role=$3) OR (user_id IS NULL AND driver_id IS NULL AND role IS NULL) ORDER BY created_at DESC LIMIT 100`,[req.user.sub,req.user.driverId||'',req.user.role]):memory.notifications.filter(x=>x.user_id?x.user_id===req.user.sub:x.driver_id?x.driver_id===req.user.driverId:x.role?x.role===req.user.role:true).slice(0,100)));
-app.patch('/api/notifications/:id/read',auth,async(req,res)=>{if(pool)await q('UPDATE notifications SET read=true WHERE id=$1',[req.params.id]);else{const n=memory.notifications.find(x=>x.id===req.params.id);if(n)n.read=true}res.json({success:true})});
+app.patch('/api/notifications/:id/read',auth,async(req,res)=>{const n=pool?(await q('SELECT * FROM notifications WHERE id=$1',[req.params.id]))[0]:memory.notifications.find(x=>x.id===req.params.id);if(!n||!notificationVisible(n,req.user))return res.status(404).json({error:'Notification not found'});if(pool)await q('UPDATE notifications SET read=true WHERE id=$1',[n.id]);else n.read=true;res.json({success:true})});
 app.get('/api/push/status',auth,async(req,res)=>{
   let count=0;
   if(pool)count=num((await q('SELECT count(*)::int AS count FROM push_subscriptions WHERE user_id=$1',[req.user.sub]))[0]?.count);
@@ -1708,8 +1780,8 @@ app.post('/api/push/test-device',auth,async(req,res)=>{
 });
 app.get('/api/config',auth,(req,res)=>res.json({vapidPublicKey:process.env.VAPID_PUBLIC_KEY||null,mapStyle:process.env.MAP_STYLE_URL||'https://tiles.openfreemap.org/styles/liberty',providers:{whatsapp:Boolean(process.env.META_WHATSAPP_TOKEN),email:Boolean(process.env.RESEND_API_KEY),push:Boolean(process.env.VAPID_PUBLIC_KEY),telematics:Boolean(process.env.TELEMATICS_WEBHOOK_TOKEN||process.env.TRACCAR_FORWARD_TOKEN),maps:'OpenFreeMap'}}));
 app.post('/api/export/:kind',auth,async(req,res)=>{const title=String(req.body.title||req.params.kind).slice(0,80),columns=Array.isArray(req.body.columns)?req.body.columns:[],rows=Array.isArray(req.body.rows)?req.body.rows:[];if(!columns.length)return res.status(400).json({error:'Export columns required'});const book=new ExcelJS.Workbook();book.creator='Angermund Transport';book.created=new Date();const cover=book.addWorksheet('Angermund Transport');cover.getColumn(1).width=44;cover.getColumn(2).width=25;cover.getRow(1).height=100;const brandImage=book.addImage({buffer:fs.readFileSync(path.join(root,'angermund-logo.png')),extension:'png'});cover.addImage(brandImage,{tl:{col:0,row:0},ext:{width:340,height:120}});cover.getCell('A6').value='ANGERMUND TRANSPORT CC';cover.getCell('A6').font={name:'Aptos Display',size:18,bold:true,color:{argb:'FF101E80'}};cover.getCell('A8').value=title;cover.getCell('A8').font={name:'Aptos',size:14,bold:true};cover.getCell('A9').value=`Exported ${new Date().toLocaleString('en-NA',{timeZone:'Africa/Windhoek'})}`;cover.getCell('A10').value=`${rows.length} record(s)`;const sheet=book.addWorksheet(title.slice(0,31)||'Export',{views:[{state:'frozen',ySplit:4}]});sheet.properties.defaultRowHeight=20;sheet.mergeCells(1,1,1,columns.length);const heading=sheet.getCell(1,1);heading.value=`Angermund Transport CC — ${title}`;heading.font={name:'Aptos Display',size:16,bold:true,color:{argb:'FFFFFFFF'}};heading.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF0B2035'}};heading.alignment={vertical:'middle'};sheet.getRow(1).height=30;sheet.mergeCells(2,1,2,columns.length);sheet.getCell(2,1).value=`Exported ${new Date().toLocaleString('en-NA',{timeZone:'Africa/Windhoek'})}`;sheet.getCell(2,1).font={name:'Aptos',size:10,italic:true,color:{argb:'FF5E7184'}};sheet.getRow(4).values=columns.map(c=>c.label);sheet.getRow(4).eachCell(c=>{c.font={name:'Aptos',bold:true,color:{argb:'FFFFFFFF'}};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF1769AA'}};c.alignment={vertical:'middle',horizontal:'center'}});for(const source of rows){const values=columns.map(c=>source[c.key]??'');const row=sheet.addRow(values);row.eachCell((cell,index)=>{cell.font={name:'Aptos',size:10};cell.alignment={vertical:'middle',wrapText:false};const col=columns[index-1];if(col.type==='currency')cell.numFmt='N$ #,##0.00';else if(col.type==='number')cell.numFmt='#,##0.00';else if(col.type==='date'&&cell.value)cell.numFmt='yyyy-mm-dd'})}columns.forEach((c,i)=>{let width=Math.max(12,c.label.length+2);for(const row of rows.slice(0,200))width=Math.max(width,String(row[c.key]??'').length+2);sheet.getColumn(i+1).width=Math.min(42,width)});sheet.autoFilter={from:{row:4,column:1},to:{row:Math.max(4,rows.length+4),column:columns.length}};sheet.getRow(rows.length+5).getCell(1).value=`${rows.length} record(s)`;sheet.getRow(rows.length+5).getCell(1).font={italic:true,color:{argb:'FF5E7184'}};const buffer=await book.xlsx.writeBuffer();res.set({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="${req.params.kind}-${new Date().toISOString().slice(0,10)}.xlsx"`});res.send(Buffer.from(buffer))});
-app.post('/api/documents/scan',auth,upload.single('document'),async(req,res)=>{if(!req.file)return res.status(400).json({error:'Document image required'});const id=crypto.randomUUID(),row={id,user_id:req.user.sub,filename:req.file.originalname,status:'processing'};if(pool)await q('INSERT INTO scan_jobs(id,user_id,filename,status) VALUES($1,$2,$3,$4)',[id,row.user_id,row.filename,row.status]);else memory.scanJobs.push({...row,rawText:null,extracted:null,confidence:null,error:null,createdAt:new Date().toISOString(),completedAt:null});res.status(202).json({id,status:'processing'});(async()=>{try{const result=await recognizeReceiptBest(req.file.buffer),state=await readOpsState().catch(()=>({})),extractions=result.results.map(r=>extractReceiptFields(r.text,state)),extracted=mergeReceiptExtractions(extractions),raw=result.results.map(r=>'['+r.label+']\n'+r.text).join('\n\n--- OCR PASS ---\n\n'),confidence=result.best.confidence;if(pool)await q('UPDATE scan_jobs SET status=$2,raw_text=$3,extracted=$4,confidence=$5,completed_at=now() WHERE id=$1',[id,'review',raw,extracted,confidence]);else{const m=memory.scanJobs.find(x=>x.id===id);if(m)Object.assign(m,{status:'review',rawText:raw,extracted,confidence,completedAt:new Date().toISOString()})}emit('scan',{id,status:'review',extracted,confidence,ocrMode:'merged'})}catch(e){if(pool)await q('UPDATE scan_jobs SET status=$2,error=$3,completed_at=now() WHERE id=$1',[id,'failed',e.message]);else{const m=memory.scanJobs.find(x=>x.id===id);if(m)Object.assign(m,{status:'failed',error:e.message,completedAt:new Date().toISOString()})}emit('scan',{id,status:'failed',error:e.message})}})()});
-app.get('/api/documents/scans/:id',auth,async(req,res)=>{const row=pool?(await q('SELECT id,filename,status,raw_text AS "rawText",extracted,confidence,error,created_at AS "createdAt",completed_at AS "completedAt" FROM scan_jobs WHERE id=$1',[req.params.id]))[0]:memory.scanJobs.find(x=>x.id===req.params.id);if(!row)return res.status(404).json({error:'Scan not found'});res.json(row)});
+app.post('/api/documents/scan',auth,upload.single('document'),async(req,res)=>{if(!req.file)return res.status(400).json({error:'Document image required'});const id=crypto.randomUUID(),row={id,user_id:req.user.sub,filename:req.file.originalname,status:'processing'};if(pool)await q('INSERT INTO scan_jobs(id,user_id,filename,status) VALUES($1,$2,$3,$4)',[id,row.user_id,row.filename,row.status]);else memory.scanJobs.push({...row,rawText:null,extracted:null,confidence:null,error:null,createdAt:new Date().toISOString(),completedAt:null});res.status(202).json({id,status:'processing'});(async()=>{try{const result=await recognizeReceiptBest(req.file.buffer),state=await readOpsState().catch(()=>({})),extractions=result.results.map(r=>extractReceiptFields(r.text,state)),extracted=mergeReceiptExtractions(extractions),raw=result.results.map(r=>'['+r.label+']\n'+r.text).join('\n\n--- OCR PASS ---\n\n'),confidence=result.best.confidence;if(pool)await q('UPDATE scan_jobs SET status=$2,raw_text=$3,extracted=$4,confidence=$5,completed_at=now() WHERE id=$1',[id,'review',raw,extracted,confidence]);else{const m=memory.scanJobs.find(x=>x.id===id);if(m)Object.assign(m,{status:'review',rawText:raw,extracted,confidence,completedAt:new Date().toISOString()})}emit('scan',{id,userId:req.user.sub,status:'review',extracted,confidence,ocrMode:'merged'})}catch(e){if(pool)await q('UPDATE scan_jobs SET status=$2,error=$3,completed_at=now() WHERE id=$1',[id,'failed',e.message]);else{const m=memory.scanJobs.find(x=>x.id===id);if(m)Object.assign(m,{status:'failed',error:e.message,completedAt:new Date().toISOString()})}emit('scan',{id,userId:req.user.sub,status:'failed',error:e.message})}})()});
+app.get('/api/documents/scans/:id',auth,async(req,res)=>{const row=pool?(await q('SELECT id,user_id,filename,status,raw_text AS "rawText",extracted,confidence,error,created_at AS "createdAt",completed_at AS "completedAt" FROM scan_jobs WHERE id=$1',[req.params.id]))[0]:memory.scanJobs.find(x=>x.id===req.params.id);if(!row||(!['admin','manager','dispatcher','finance'].includes(req.user.role)&&row.user_id!==req.user.sub))return res.status(404).json({error:'Scan not found'});res.json(row)});
 app.post('/api/notifications/test',auth,roles('admin','manager'),async(req,res)=>res.status(201).json(await createNotification({type:'test',severity:'info',title:'Angermund Transport test alert',message:'Notification providers are connected and working.'})));
 
 async function ensureOperationalAlerts(){
