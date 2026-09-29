@@ -1,4 +1,4 @@
-const CACHE='angermund-ops-v36-login-stability-correct-app-logo';
+const CACHE='angermund-ops-v37-startup-login-fix';
 const ASSETS=['/','/index.html','/styles.css','/app.js','/manifest.json','/angermund-logo.webp','/angermund-truck.webp','/angermund-app-logo.jpg'];
 self.addEventListener('install',e=>e.waitUntil((async()=>{const c=await caches.open(CACHE);await c.addAll(ASSETS);await self.skipWaiting()})()));
 self.addEventListener('activate',e=>e.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)));await self.clients.claim()})()));
