@@ -3,6 +3,10 @@ const {Pool}=require('pg');const {createWorker}=require('tesseract.js');
 const app=express(),root=path.join(__dirname,'public'),upload=multer({storage:multer.memoryStorage(),limits:{fileSize:12*1024*1024}});
 const PORT=process.env.PORT||3000,JWT_SECRET=process.env.JWT_SECRET||'development-only-change-before-production',DATABASE_URL=process.env.DATABASE_URL;
 const num=value=>Number(value||0);
+const OPENAI_API_KEY=process.env.OPENAI_API_KEY||'';
+const RECEIPT_AI_PRIMARY_MODEL=process.env.RECEIPT_AI_PRIMARY_MODEL||'gpt-6-luna';
+const RECEIPT_AI_ESCALATION_MODEL=process.env.RECEIPT_AI_ESCALATION_MODEL||'gpt-6-sol';
+const RECEIPT_AI_SOL_THRESHOLD=Math.max(0,Math.min(100,num(process.env.RECEIPT_AI_SOL_THRESHOLD)||82));
 
 function jpegDimensions(buf){
   if(!Buffer.isBuffer(buf)||buf.length<4||buf[0]!==0xff||buf[1]!==0xd8)return null;
@@ -300,6 +304,160 @@ async function recognizeReceiptBest(buffer){
   }finally{await worker.terminate()}
   results.sort((a,b)=>(b.score+b.confidence*.18)-(a.score+a.confidence*.18));
   return{best:results[0]||{text:'',confidence:0,score:0,label:'none'},results};
+}
+
+
+const RECEIPT_AI_CATEGORIES=['Diesel','Toll','Meals','Accommodation','Parking','Border permit','Loading / offloading','Emergency repair','Other'];
+const RECEIPT_AI_SCHEMA={
+  type:'object',
+  properties:{
+    supplier:{type:'string'},
+    documentNumber:{type:'string'},
+    date:{type:'string'},
+    registration:{type:'string'},
+    odometer:{type:'number'},
+    suggestedAmount:{type:'number'},
+    printedTotal:{type:'number'},
+    litres:{type:'number'},
+    pricePerLitre:{type:'number'},
+    category:{type:'string',enum:RECEIPT_AI_CATEGORIES},
+    categoryConfidence:{type:'integer'},
+    extractionConfidence:{type:'integer'},
+    fuelTransactions:{type:'array',items:{type:'object',properties:{litres:{type:'number'},pricePerLitre:{type:'number'},amount:{type:'number'}},required:['litres','pricePerLitre','amount'],additionalProperties:false}},
+    needsReview:{type:'boolean'},
+    explanation:{type:'string'}
+  },
+  required:['supplier','documentNumber','date','registration','odometer','suggestedAmount','printedTotal','litres','pricePerLitre','category','categoryConfidence','extractionConfidence','fuelTransactions','needsReview','explanation'],
+  additionalProperties:false
+};
+function receiptImageMime(buffer,declared=''){
+  if(!Buffer.isBuffer(buffer)||buffer.length<12)return null;
+  if(buffer[0]===0xff&&buffer[1]===0xd8)return'image/jpeg';
+  if(buffer[0]===0x89&&buffer.toString('ascii',1,4)==='PNG')return'image/png';
+  if(buffer.toString('ascii',0,4)==='RIFF'&&buffer.toString('ascii',8,12)==='WEBP')return'image/webp';
+  if(buffer.toString('ascii',0,3)==='GIF')return'image/gif';
+  const m=String(declared||'').toLowerCase();
+  return /^image\/(jpeg|jpg|png|webp|gif)$/.test(m)?(m==='image/jpg'?'image/jpeg':m):null
+}
+function normalizeAiReceipt(raw,model){
+  const n=v=>{const x=Number(v);return Number.isFinite(x)&&x>0?x:null},text=v=>String(v||'').trim();
+  const category=RECEIPT_AI_CATEGORIES.includes(raw?.category)?raw.category:'Other';
+  const fuelTransactions=(Array.isArray(raw?.fuelTransactions)?raw.fuelTransactions:[]).map(x=>({litres:n(x.litres)||0,pricePerLitre:n(x.pricePerLitre)||0,amount:n(x.amount)||0})).filter(x=>x.litres>0&&x.amount>0);
+  return{
+    supplier:text(raw?.supplier)||null,
+    documentNumber:text(raw?.documentNumber)||null,
+    date:text(raw?.date)||null,
+    registration:text(raw?.registration)||null,
+    odometer:n(raw?.odometer),
+    suggestedAmount:n(raw?.suggestedAmount),
+    printedTotal:n(raw?.printedTotal),
+    litres:n(raw?.litres),
+    pricePerLitre:n(raw?.pricePerLitre),
+    category,
+    categoryConfidence:Math.max(0,Math.min(100,Math.round(num(raw?.categoryConfidence)))),
+    extractionConfidence:Math.max(0,Math.min(100,Math.round(num(raw?.extractionConfidence)))),
+    fuelTransactions,
+    fuelTransactionCount:fuelTransactions.length,
+    needsReview:Boolean(raw?.needsReview),
+    categoryReason:text(raw?.explanation)||'AI vision extraction',
+    categorySource:'openai-'+model,
+    aiModel:model
+  }
+}
+function finalizeReceiptExtraction(input){
+  const x=JSON.parse(JSON.stringify(input||{})),tx=Array.isArray(x.fuelTransactions)?x.fuelTransactions.filter(r=>num(r.litres)>0&&num(r.amount)>0):[];
+  if(tx.length){
+    const litres=tx.reduce((a,r)=>a+num(r.litres),0),amount=tx.reduce((a,r)=>a+num(r.amount),0);
+    x.fuelTransactions=tx;x.fuelTransactionCount=tx.length;x.fuelLineAmount=Number(amount.toFixed(2));
+    if(!num(x.litres))x.litres=Number(litres.toFixed(3));
+    if(!num(x.suggestedAmount))x.suggestedAmount=Number(amount.toFixed(2));
+    if(!num(x.pricePerLitre)&&litres>0)x.pricePerLitre=Number((amount/litres).toFixed(4));
+  }
+  const amount=num(x.printedTotal)||num(x.suggestedAmount),litres=num(x.litres),price=num(x.pricePerLitre);
+  let mathOk=true,difference=0;
+  if(amount>0&&litres>0&&price>0){
+    difference=Math.abs(litres*price-amount);
+    mathOk=difference<=Math.max(.50,amount*.01);
+  }
+  if(tx.length){
+    const rowsOk=tx.every(r=>Math.abs(num(r.litres)*num(r.pricePerLitre)-num(r.amount))<=Math.max(.50,num(r.amount)*.01));
+    mathOk=mathOk&&rowsOk;
+  }
+  x.totalDifference=Number(difference.toFixed(2));
+  x.totalsReconcile=mathOk;
+  if(x.category==='Diesel'&&(!amount||!litres))x.needsReview=true;
+  if(!mathOk)x.needsReview=true;
+  x.requiresManualAmountConfirmation=Boolean(x.needsReview)||!amount;
+  return x
+}
+function receiptAiDisagrees(ai,ocr,ocrConfidence){
+  if(!ai||!ocr||num(ocrConfidence)<70)return false;
+  const differs=(a,b,abs,pct)=>num(a)>0&&num(b)>0&&Math.abs(num(a)-num(b))>Math.max(abs,Math.max(num(a),num(b))*pct);
+  if(differs(ai.suggestedAmount||ai.printedTotal,ocr.suggestedAmount||ocr.printedTotal,2,.015))return true;
+  if(differs(ai.litres,ocr.litres,.75,.01))return true;
+  if(differs(ai.pricePerLitre,ocr.pricePerLitre,.15,.01))return true;
+  return false
+}
+function receiptNeedsSol(combined,luna,ocr,ocrConfidence){
+  if(!luna)return true;
+  if(num(luna.extractionConfidence)<RECEIPT_AI_SOL_THRESHOLD)return true;
+  if(!combined||combined.category==='Other'||num(combined.categoryConfidence)<75)return true;
+  if(!num(combined.suggestedAmount)&&!num(combined.printedTotal))return true;
+  if(combined.category==='Diesel'&&(!num(combined.litres)||!num(combined.pricePerLitre)))return true;
+  if(combined.needsReview||combined.totalsReconcile===false)return true;
+  return receiptAiDisagrees(luna,ocr,ocrConfidence)
+}
+async function openAiReceiptExtract(buffer,mimeType,ocrText,model,detail='high'){
+  if(!OPENAI_API_KEY)return null;
+  const mime=receiptImageMime(buffer,mimeType);if(!mime)return null;
+  const controller=new AbortController(),timer=setTimeout(()=>controller.abort(),45000);
+  try{
+    const prompt=[
+      'Read this transport expense receipt/slip image and return only the requested structured fields.',
+      'This is for Angermund Transport in Namibia. Never invent a value that is not visible.',
+      'Use 0 for unknown numeric values and an empty string for unknown text.',
+      'Recognise diesel/fuel, toll, meals, accommodation, parking, border permit, loading/offloading and emergency repair slips.',
+      'For fuel: carefully read litres, price per litre, printed total and each visible fuel transaction. Check litres × price against amount.',
+      'If the image is unclear, numbers conflict, or a required fuel value is missing, set needsReview=true and lower extractionConfidence.',
+      'OCR text is provided only as a clue; trust the visible image over bad OCR.',
+      'OCR TEXT:',
+      String(ocrText||'').slice(0,9000)
+    ].join('\n');
+    const body={
+      model,
+      store:false,
+      reasoning:{effort:model===RECEIPT_AI_PRIMARY_MODEL?'none':'low'},
+      input:[{role:'user',content:[
+        {type:'input_text',text:prompt},
+        {type:'input_image',image_url:'data:'+mime+';base64,'+buffer.toString('base64'),detail}
+      ]}],
+      text:{format:{type:'json_schema',name:'receipt_extraction',strict:true,schema:RECEIPT_AI_SCHEMA}}
+    };
+    const response=await fetch('https://api.openai.com/v1/responses',{method:'POST',headers:{Authorization:'Bearer '+OPENAI_API_KEY,'Content-Type':'application/json'},body:JSON.stringify(body),signal:controller.signal});
+    const data=await response.json().catch(()=>({}));
+    if(!response.ok)throw Error(data?.error?.message||('OpenAI receipt scan failed ('+response.status+')'));
+    const outputText=data.output_text||((data.output||[]).flatMap(o=>o.content||[]).find(c=>c.type==='output_text')?.text)||'';
+    if(!outputText)throw Error('OpenAI receipt scan returned no structured result');
+    return normalizeAiReceipt(JSON.parse(outputText),model)
+  }finally{clearTimeout(timer)}
+}
+async function analyzeReceiptHybrid(buffer,mimeType,state={}){
+  const source=receiptOcrBuffer(buffer,mimeType),ocr=await recognizeReceiptBest(source),ocrExtractions=ocr.results.map(r=>extractReceiptFields(r.text,state)),ocrExtracted=finalizeReceiptExtraction(mergeReceiptExtractions(ocrExtractions)),raw=ocr.results.map(r=>'['+r.label+']\n'+r.text).join('\n\n--- OCR PASS ---\n\n');
+  let extracted=ocrExtracted,aiPrimary=null,aiEscalated=null,aiError='';
+  if(OPENAI_API_KEY){
+    try{
+      aiPrimary=await openAiReceiptExtract(source,mimeType,raw,RECEIPT_AI_PRIMARY_MODEL,'high');
+      if(aiPrimary)extracted=finalizeReceiptExtraction(mergeReceiptExtractions([aiPrimary,ocrExtracted]));
+      if(receiptNeedsSol(extracted,aiPrimary,ocrExtracted,ocr.best.confidence)){
+        aiEscalated=await openAiReceiptExtract(source,mimeType,raw,RECEIPT_AI_ESCALATION_MODEL,'original');
+        if(aiEscalated)extracted=finalizeReceiptExtraction(mergeReceiptExtractions([aiEscalated,aiPrimary,ocrExtracted].filter(Boolean)))
+      }
+    }catch(e){aiError=e.message||String(e)}
+  }
+  const aiUsed=Boolean(aiPrimary||aiEscalated),model=aiEscalated?.aiModel||aiPrimary?.aiModel||null;
+  extracted.aiUsed=aiUsed;extracted.aiModel=model;extracted.aiEscalated=Boolean(aiEscalated);extracted.aiAvailable=Boolean(OPENAI_API_KEY);if(aiError)extracted.aiError=aiError;
+  const confidence=Math.max(num(ocr.best.confidence),num(aiEscalated?.extractionConfidence),num(aiPrimary?.extractionConfidence));
+  return{extracted,confidence,raw,ocr,ai:{available:Boolean(OPENAI_API_KEY),used:aiUsed,primaryModel:RECEIPT_AI_PRIMARY_MODEL,escalationModel:RECEIPT_AI_ESCALATION_MODEL,model,escalated:Boolean(aiEscalated),error:aiError||null}}
 }
 
 if(!DATABASE_URL)console.warn('DATABASE_URL missing: using development memory store. Set PostgreSQL for multi-device persistence.');
@@ -1435,8 +1593,8 @@ app.post('/api/admin/driver-uploads/:id/scan',auth,roles('admin','manager','disp
   try{
     const u=pool?(await q('SELECT du.id,du.user_id AS "userId",u.driver_id AS "driverId",u.name AS "userName",du.trip_id AS "tripId",du.kind,du.filename,du.mime_type AS "mimeType",du.content FROM driver_uploads du LEFT JOIN users u ON u.id=du.user_id WHERE du.id=$1',[req.params.id]))[0]:memory.uploads.find(x=>x.id===req.params.id);
     if(!u)return res.status(404).json({error:'Upload not found'});
-    const source=receiptOcrBuffer(u.content,u.mimeType),result=await recognizeReceiptBest(source),state=await readOpsState(),extractions=result.results.map(r=>extractReceiptFields(r.text,state)),extracted=mergeReceiptExtractions(extractions);
-    res.json({upload:{id:u.id,driverId:u.driverId||null,userName:u.userName||'',tripId:u.tripId,kind:u.kind,filename:u.filename,mimeType:u.mimeType},extracted,confidence:result.best.confidence})
+    const state=await readOpsState(),result=await analyzeReceiptHybrid(u.content,u.mimeType,state);
+    res.json({upload:{id:u.id,driverId:u.driverId||null,userName:u.userName||'',tripId:u.tripId,kind:u.kind,filename:u.filename,mimeType:u.mimeType},extracted:result.extracted,confidence:result.confidence,ai:result.ai})
   }catch(e){res.status(500).json({error:e.message})}
 });
 app.post('/api/admin/driver-uploads/:id/post',auth,roles('admin','manager','dispatcher','finance'),async(req,res)=>{
@@ -1706,9 +1864,9 @@ app.post('/api/push/test-device',auth,async(req,res)=>{
   if(!sent)return res.status(502).json({error:stale?'The saved push subscription was stale and has been removed. Enable push on this phone again.':'Push provider rejected the test notification.',sent,failed,stale});
   res.json({success:true,sent,failed,stale})
 });
-app.get('/api/config',auth,(req,res)=>res.json({vapidPublicKey:process.env.VAPID_PUBLIC_KEY||null,mapStyle:process.env.MAP_STYLE_URL||'https://tiles.openfreemap.org/styles/liberty',providers:{whatsapp:Boolean(process.env.META_WHATSAPP_TOKEN),email:Boolean(process.env.RESEND_API_KEY),push:Boolean(process.env.VAPID_PUBLIC_KEY),telematics:Boolean(process.env.TELEMATICS_WEBHOOK_TOKEN||process.env.TRACCAR_FORWARD_TOKEN),maps:'OpenFreeMap'}}));
+app.get('/api/config',auth,(req,res)=>res.json({vapidPublicKey:process.env.VAPID_PUBLIC_KEY||null,mapStyle:process.env.MAP_STYLE_URL||'https://tiles.openfreemap.org/styles/liberty',providers:{whatsapp:Boolean(process.env.META_WHATSAPP_TOKEN),email:Boolean(process.env.RESEND_API_KEY),push:Boolean(process.env.VAPID_PUBLIC_KEY),telematics:Boolean(process.env.TELEMATICS_WEBHOOK_TOKEN||process.env.TRACCAR_FORWARD_TOKEN),maps:'OpenFreeMap'},receiptAI:{enabled:Boolean(OPENAI_API_KEY),primaryModel:RECEIPT_AI_PRIMARY_MODEL,escalationModel:RECEIPT_AI_ESCALATION_MODEL,solThreshold:RECEIPT_AI_SOL_THRESHOLD}}));
 app.post('/api/export/:kind',auth,async(req,res)=>{const title=String(req.body.title||req.params.kind).slice(0,80),columns=Array.isArray(req.body.columns)?req.body.columns:[],rows=Array.isArray(req.body.rows)?req.body.rows:[];if(!columns.length)return res.status(400).json({error:'Export columns required'});const book=new ExcelJS.Workbook();book.creator='Angermund Transport';book.created=new Date();const cover=book.addWorksheet('Angermund Transport');cover.getColumn(1).width=44;cover.getColumn(2).width=25;cover.getRow(1).height=100;const brandImage=book.addImage({buffer:fs.readFileSync(path.join(root,'angermund-logo.png')),extension:'png'});cover.addImage(brandImage,{tl:{col:0,row:0},ext:{width:340,height:120}});cover.getCell('A6').value='ANGERMUND TRANSPORT CC';cover.getCell('A6').font={name:'Aptos Display',size:18,bold:true,color:{argb:'FF101E80'}};cover.getCell('A8').value=title;cover.getCell('A8').font={name:'Aptos',size:14,bold:true};cover.getCell('A9').value=`Exported ${new Date().toLocaleString('en-NA',{timeZone:'Africa/Windhoek'})}`;cover.getCell('A10').value=`${rows.length} record(s)`;const sheet=book.addWorksheet(title.slice(0,31)||'Export',{views:[{state:'frozen',ySplit:4}]});sheet.properties.defaultRowHeight=20;sheet.mergeCells(1,1,1,columns.length);const heading=sheet.getCell(1,1);heading.value=`Angermund Transport CC — ${title}`;heading.font={name:'Aptos Display',size:16,bold:true,color:{argb:'FFFFFFFF'}};heading.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF0B2035'}};heading.alignment={vertical:'middle'};sheet.getRow(1).height=30;sheet.mergeCells(2,1,2,columns.length);sheet.getCell(2,1).value=`Exported ${new Date().toLocaleString('en-NA',{timeZone:'Africa/Windhoek'})}`;sheet.getCell(2,1).font={name:'Aptos',size:10,italic:true,color:{argb:'FF5E7184'}};sheet.getRow(4).values=columns.map(c=>c.label);sheet.getRow(4).eachCell(c=>{c.font={name:'Aptos',bold:true,color:{argb:'FFFFFFFF'}};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF1769AA'}};c.alignment={vertical:'middle',horizontal:'center'}});for(const source of rows){const values=columns.map(c=>source[c.key]??'');const row=sheet.addRow(values);row.eachCell((cell,index)=>{cell.font={name:'Aptos',size:10};cell.alignment={vertical:'middle',wrapText:false};const col=columns[index-1];if(col.type==='currency')cell.numFmt='N$ #,##0.00';else if(col.type==='number')cell.numFmt='#,##0.00';else if(col.type==='date'&&cell.value)cell.numFmt='yyyy-mm-dd'})}columns.forEach((c,i)=>{let width=Math.max(12,c.label.length+2);for(const row of rows.slice(0,200))width=Math.max(width,String(row[c.key]??'').length+2);sheet.getColumn(i+1).width=Math.min(42,width)});sheet.autoFilter={from:{row:4,column:1},to:{row:Math.max(4,rows.length+4),column:columns.length}};sheet.getRow(rows.length+5).getCell(1).value=`${rows.length} record(s)`;sheet.getRow(rows.length+5).getCell(1).font={italic:true,color:{argb:'FF5E7184'}};const buffer=await book.xlsx.writeBuffer();res.set({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="${req.params.kind}-${new Date().toISOString().slice(0,10)}.xlsx"`});res.send(Buffer.from(buffer))});
-app.post('/api/documents/scan',auth,upload.single('document'),async(req,res)=>{if(!req.file)return res.status(400).json({error:'Document image required'});const id=crypto.randomUUID(),row={id,user_id:req.user.sub,filename:req.file.originalname,status:'processing'};if(pool)await q('INSERT INTO scan_jobs(id,user_id,filename,status) VALUES($1,$2,$3,$4)',[id,row.user_id,row.filename,row.status]);else memory.scanJobs.push({...row,rawText:null,extracted:null,confidence:null,error:null,createdAt:new Date().toISOString(),completedAt:null});res.status(202).json({id,status:'processing'});(async()=>{try{const result=await recognizeReceiptBest(req.file.buffer),state=await readOpsState().catch(()=>({})),extractions=result.results.map(r=>extractReceiptFields(r.text,state)),extracted=mergeReceiptExtractions(extractions),raw=result.results.map(r=>'['+r.label+']\n'+r.text).join('\n\n--- OCR PASS ---\n\n'),confidence=result.best.confidence;if(pool)await q('UPDATE scan_jobs SET status=$2,raw_text=$3,extracted=$4,confidence=$5,completed_at=now() WHERE id=$1',[id,'review',raw,extracted,confidence]);else{const m=memory.scanJobs.find(x=>x.id===id);if(m)Object.assign(m,{status:'review',rawText:raw,extracted,confidence,completedAt:new Date().toISOString()})}emit('scan',{id,status:'review',extracted,confidence,ocrMode:'merged'})}catch(e){if(pool)await q('UPDATE scan_jobs SET status=$2,error=$3,completed_at=now() WHERE id=$1',[id,'failed',e.message]);else{const m=memory.scanJobs.find(x=>x.id===id);if(m)Object.assign(m,{status:'failed',error:e.message,completedAt:new Date().toISOString()})}emit('scan',{id,status:'failed',error:e.message})}})()});
+app.post('/api/documents/scan',auth,upload.single('document'),async(req,res)=>{if(!req.file)return res.status(400).json({error:'Document image required'});const id=crypto.randomUUID(),row={id,user_id:req.user.sub,filename:req.file.originalname,status:'processing'};if(pool)await q('INSERT INTO scan_jobs(id,user_id,filename,status) VALUES($1,$2,$3,$4)',[id,row.user_id,row.filename,row.status]);else memory.scanJobs.push({...row,rawText:null,extracted:null,confidence:null,error:null,createdAt:new Date().toISOString(),completedAt:null});res.status(202).json({id,status:'processing'});(async()=>{try{const state=await readOpsState().catch(()=>({})),result=await analyzeReceiptHybrid(req.file.buffer,req.file.mimetype,state),{extracted,raw,confidence}=result;if(pool)await q('UPDATE scan_jobs SET status=$2,raw_text=$3,extracted=$4,confidence=$5,completed_at=now() WHERE id=$1',[id,'review',raw,extracted,confidence]);else{const m=memory.scanJobs.find(x=>x.id===id);if(m)Object.assign(m,{status:'review',rawText:raw,extracted,confidence,completedAt:new Date().toISOString()})}emit('scan',{id,status:'review',extracted,confidence,ocrMode:result.ai.used?'ocr+ai':'ocr',ai:result.ai})}catch(e){if(pool)await q('UPDATE scan_jobs SET status=$2,error=$3,completed_at=now() WHERE id=$1',[id,'failed',e.message]);else{const m=memory.scanJobs.find(x=>x.id===id);if(m)Object.assign(m,{status:'failed',error:e.message,completedAt:new Date().toISOString()})}emit('scan',{id,status:'failed',error:e.message})}})()});
 app.get('/api/documents/scans/:id',auth,async(req,res)=>{const row=pool?(await q('SELECT id,filename,status,raw_text AS "rawText",extracted,confidence,error,created_at AS "createdAt",completed_at AS "completedAt" FROM scan_jobs WHERE id=$1',[req.params.id]))[0]:memory.scanJobs.find(x=>x.id===req.params.id);if(!row)return res.status(404).json({error:'Scan not found'});res.json(row)});
 app.post('/api/notifications/test',auth,roles('admin','manager'),async(req,res)=>res.status(201).json(await createNotification({type:'test',severity:'info',title:'Angermund Transport test alert',message:'Notification providers are connected and working.'})));
 
