@@ -478,7 +478,8 @@ ALTER TABLE geofences ADD COLUMN IF NOT EXISTS kind text DEFAULT 'custom';
 CREATE TABLE IF NOT EXISTS geofence_state(vehicle_id text NOT NULL,geofence_id uuid REFERENCES geofences(id) ON DELETE CASCADE,inside boolean NOT NULL,updated_at timestamptz DEFAULT now(),PRIMARY KEY(vehicle_id,geofence_id));
 CREATE TABLE IF NOT EXISTS notifications(id uuid PRIMARY KEY,type text NOT NULL,severity text DEFAULT 'info',title text NOT NULL,message text NOT NULL,role text,user_id uuid,driver_id text,linked_type text,linked_id text,read boolean DEFAULT false,created_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS push_subscriptions(id bigserial PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE CASCADE,subscription jsonb NOT NULL,created_at timestamptz DEFAULT now());
-CREATE TABLE IF NOT EXISTS scan_jobs(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id),filename text,status text NOT NULL DEFAULT 'processing',raw_text text,extracted jsonb,confidence double precision,error text,created_at timestamptz DEFAULT now(),completed_at timestamptz);\nCREATE TABLE IF NOT EXISTS driver_uploads(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,trip_id text NOT NULL,kind text NOT NULL,filename text NOT NULL,mime_type text NOT NULL,content bytea NOT NULL,created_at timestamptz DEFAULT now());\nCREATE TABLE IF NOT EXISTS company_receipts(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,linked_type text NOT NULL,linked_id text NOT NULL,kind text NOT NULL,filename text NOT NULL,mime_type text NOT NULL,content bytea NOT NULL,created_at timestamptz DEFAULT now());\nCREATE INDEX IF NOT EXISTS company_receipts_link ON company_receipts(linked_type,linked_id,created_at DESC);\nCREATE TABLE IF NOT EXISTS trip_documents(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,trip_id text NOT NULL,leg_id text,kind text NOT NULL,reference text,filename text,mime_type text,content bytea,created_at timestamptz DEFAULT now());\nCREATE INDEX IF NOT EXISTS trip_documents_trip ON trip_documents(trip_id,created_at DESC);\nCREATE TABLE IF NOT EXISTS mobile_devices(id uuid PRIMARY KEY,device_id text UNIQUE NOT NULL,user_id uuid REFERENCES users(id) ON DELETE CASCADE,driver_id text,token_hash text UNIQUE NOT NULL,name text,platform text,active boolean DEFAULT true,last_seen timestamptz,created_at timestamptz DEFAULT now());\nCREATE INDEX IF NOT EXISTS mobile_devices_driver ON mobile_devices(driver_id,active);\nALTER TABLE notifications ADD COLUMN IF NOT EXISTS driver_id text;
+CREATE TABLE IF NOT EXISTS scan_jobs(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id),filename text,status text NOT NULL DEFAULT 'processing',raw_text text,extracted jsonb,confidence double precision,error text,created_at timestamptz DEFAULT now(),completed_at timestamptz);\nCREATE TABLE IF NOT EXISTS driver_uploads(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,trip_id text NOT NULL,kind text NOT NULL,filename text NOT NULL,mime_type text NOT NULL,content bytea NOT NULL,created_at timestamptz DEFAULT now());\nCREATE TABLE IF NOT EXISTS company_receipts(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,linked_type text NOT NULL,linked_id text NOT NULL,kind text NOT NULL,filename text NOT NULL,mime_type text NOT NULL,content bytea NOT NULL,created_at timestamptz DEFAULT now());\nCREATE INDEX IF NOT EXISTS company_receipts_link ON company_receipts(linked_type,linked_id,created_at DESC);\nCREATE TABLE IF NOT EXISTS trip_documents(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,trip_id text NOT NULL,leg_id text,kind text NOT NULL,reference text,filename text,mime_type text,content bytea,created_at timestamptz DEFAULT now());\nCREATE INDEX IF NOT EXISTS trip_documents_trip ON trip_documents(trip_id,created_at DESC);\nCREATE TABLE IF NOT EXISTS mobile_devices(id uuid PRIMARY KEY,device_id text UNIQUE NOT NULL,user_id uuid REFERENCES users(id) ON DELETE CASCADE,driver_id text,token_hash text UNIQUE NOT NULL,name text,platform text,active boolean DEFAULT true,last_seen timestamptz,created_at timestamptz DEFAULT now());
+CREATE TABLE IF NOT EXISTS user_quick_pins(user_id uuid REFERENCES users(id) ON DELETE CASCADE,device_id text NOT NULL,pin_hash text NOT NULL,failed_attempts integer DEFAULT 0,locked_until timestamptz,updated_at timestamptz DEFAULT now(),PRIMARY KEY(user_id,device_id));\nCREATE INDEX IF NOT EXISTS mobile_devices_driver ON mobile_devices(driver_id,active);\nALTER TABLE notifications ADD COLUMN IF NOT EXISTS driver_id text;
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS user_id uuid;
 ALTER TABLE mobile_devices ALTER COLUMN driver_id DROP NOT NULL;\nCREATE INDEX IF NOT EXISTS driver_uploads_trip ON driver_uploads(trip_id,created_at DESC);`);
  const email=(process.env.INITIAL_ADMIN_EMAIL||'admin@angermund.local').toLowerCase(),pass=process.env.INITIAL_ADMIN_PASSWORD||'ChangeMe123!';const found=await q('SELECT id FROM users WHERE email=$1',[email]);if(!found.length)await q('INSERT INTO users(id,email,password_hash,name,role) VALUES($1,$2,$3,$4,$5)',[crypto.randomUUID(),email,await bcrypt.hash(pass,12),'System Administrator','admin']);await q("INSERT INTO app_state(id,payload) VALUES(1,'{}') ON CONFLICT(id) DO NOTHING");
@@ -486,6 +487,27 @@ ALTER TABLE mobile_devices ALTER COLUMN driver_id DROP NOT NULL;\nCREATE INDEX I
  if(process.env.VAPID_PUBLIC_KEY&&process.env.VAPID_PRIVATE_KEY)webpush.setVapidDetails(process.env.VAPID_SUBJECT||'mailto:angermundtransport@iway.na',process.env.VAPID_PUBLIC_KEY,process.env.VAPID_PRIVATE_KEY);
 }
 function tokenFor(u){return jwt.sign({sub:u.id,email:u.email,name:u.name,role:u.role,driverId:u.driver_id||u.driverId||null,staffId:u.staff_id||u.staffId||null},JWT_SECRET,{expiresIn:'12h'})}
+function accountUsername(u){return String(u?.email||'').split('@')[0]||String(u?.name||'user').toLowerCase().replace(/[^a-z0-9]+/g,'.').replace(/^\.|\.$/g,'')}
+function usernameSlug(name){return String(name||'user').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'.').replace(/^\.|\.$/g,'')||'user'}
+function temporaryAccountPassword(){return 'AT-'+crypto.randomBytes(6).toString('base64url').replace(/[-_]/g,'A').slice(0,8)+'!'+String(Math.floor(10+Math.random()*90))}
+async function findLoginUser(identifier){
+  const login=String(identifier||'').trim().toLowerCase();if(!login)return null;
+  if(pool){
+    let rows=await q('SELECT * FROM users WHERE active=true AND lower(email)=lower($1) LIMIT 1',[login]);
+    if(rows.length)return rows[0];
+    if(!login.includes('@')){
+      rows=await q("SELECT * FROM users WHERE active=true AND lower(split_part(email,'@',1))=lower($1) ORDER BY created_at ASC LIMIT 2",[login]);
+      if(rows.length===1)return rows[0]
+    }
+    return null
+  }
+  const exact=memory.users.find(x=>x.active&&String(x.email||'').toLowerCase()===login);if(exact)return exact;
+  if(!login.includes('@')){
+    const matches=memory.users.filter(x=>x.active&&accountUsername(x).toLowerCase()===login);if(matches.length===1)return matches[0]
+  }
+  return null
+}
+
 function auth(req,res,next){const raw=req.headers.authorization?.replace(/^Bearer\s+/i,'')||req.query.token;if(!raw)return res.status(401).json({error:'Authentication required'});try{req.user=jwt.verify(raw,JWT_SECRET);next()}catch{return res.status(401).json({error:'Invalid or expired session'})}}
 const roles=(...allowed)=>(req,res,next)=>allowed.includes(req.user.role)?next():res.status(403).json({error:'Insufficient permission'});
 const deviceTokenHash=raw=>crypto.createHash('sha256').update(String(raw||'')).digest('hex');
@@ -539,7 +561,7 @@ async function evaluateGeofences(pos){
     const inside=distance(pos,{latitude:num(f.latitude),longitude:num(f.longitude)})<=num(f.radius_m||f.radiusM);
     const prev=pool?(await q('SELECT inside FROM geofence_state WHERE vehicle_id=$1 AND geofence_id=$2',[pos.vehicleId,f.id]))[0]:f.states?.[pos.vehicleId];
     if(prev!==undefined&&Boolean(prev.inside??prev)!==inside){
-      await createNotification({type:'geofence',severity:inside?'info':'warning',title:(inside?'Entered ':'Exited ')+f.name,message:pos.vehicleId+' '+(inside?'entered':'left')+' the '+f.name+' geofence.',linkedType:'vehicle',linkedId:pos.vehicleId});
+      const phoneTest=String(pos.source||'').toLowerCase()==='phone-test',label=phoneTest?String(pos.vehicleId||'Phone').replace(/^phone-test:/i,''):pos.vehicleId;await createNotification({type:'geofence',severity:inside?'info':'warning',title:(phoneTest?'GPS TEST · ':'')+(inside?'Entered ':'Exited ')+f.name,message:label+' '+(inside?'entered':'left')+' the '+f.name+' geofence.',linkedType:'vehicle',linkedId:pos.vehicleId});
     }
     if(pool)await q('INSERT INTO geofence_state(vehicle_id,geofence_id,inside) VALUES($1,$2,$3) ON CONFLICT(vehicle_id,geofence_id) DO UPDATE SET inside=$3,updated_at=now()',[pos.vehicleId,f.id,inside]);
     else{f.states??={};f.states[pos.vehicleId]=inside}
@@ -584,7 +606,7 @@ function operatingAreaForTrip(fences,zones,depot){
   const pool=containing.length?containing:areas;
   return pool.sort((a,b)=>distance(anchor,{latitude:num(a.latitude),longitude:num(a.longitude)})-distance(anchor,{latitude:num(b.latitude),longitude:num(b.longitude)}))[0]
 }
-function trustedVehicleGpsSource(source){return ['telematics','truck-device','tracker','vehicle-tracker'].includes(String(source||'').toLowerCase())}
+function trustedVehicleGpsSource(source){return ['telematics','truck-device','tracker','vehicle-tracker','phone-test'].includes(String(source||'').toLowerCase())}
 async function previousVehiclePosition(pos){
   if(pool){
     return (await q('SELECT latitude,longitude,recorded_at AS "recordedAt" FROM gps_positions WHERE vehicle_id=$1 AND recorded_at<$2 ORDER BY recorded_at DESC LIMIT 1',[pos.vehicleId,pos.recordedAt]))[0]||null
@@ -822,9 +844,88 @@ async function evaluateTripZones(pos){
   });
   for(const e of changed.result?.events||[])await tripGeoNotify({...active,driverId:changed.result.driverId},e.title,e.message,e.severity||'info')
 }
-app.post('/api/auth/login',async(req,res)=>{const email=String(req.body.email||'').toLowerCase(),u=pool?(await q('SELECT * FROM users WHERE email=$1 AND active=true',[email]))[0]:memory.users.find(x=>x.email===email&&x.active);if(!u||!await bcrypt.compare(String(req.body.password||''),u.password_hash))return res.status(401).json({error:'Invalid email or password'});res.json({token:tokenFor(u),user:{id:u.id,email:u.email,name:u.name,role:u.role,driverId:u.driver_id||u.driverId||null}})});
+app.post('/api/auth/login',async(req,res)=>{const login=String(req.body.login||req.body.email||'').trim(),u=await findLoginUser(login);if(!u||!await bcrypt.compare(String(req.body.password||''),u.password_hash))return res.status(401).json({error:'Invalid username or password'});res.json({token:tokenFor(u),user:{id:u.id,email:u.email,username:accountUsername(u),name:u.name,role:u.role,driverId:u.driver_id||u.driverId||null}})});
 app.get('/api/session',auth,(req,res)=>res.json({user:req.user}));
-app.get('/api/users',auth,roles('admin','manager'),async(req,res)=>res.json(pool?await q('SELECT id,email,name,role,driver_id AS "driverId",staff_id AS "staffId",active,created_at AS "createdAt" FROM users ORDER BY name'):memory.users.map(({password_hash,...u})=>u)));
+app.post('/api/auth/pin/setup',auth,async(req,res)=>{
+  const deviceId=String(req.body.deviceId||'').trim().slice(0,160),pin=String(req.body.pin||'').trim();
+  if(!deviceId||!/^\d{4}$/.test(pin))return res.status(400).json({error:'Choose a 4-digit PIN'});
+  const hash=await bcrypt.hash(pin,10);
+  if(pool)await q('INSERT INTO user_quick_pins(user_id,device_id,pin_hash,failed_attempts,locked_until,updated_at) VALUES($1,$2,$3,0,NULL,now()) ON CONFLICT(user_id,device_id) DO UPDATE SET pin_hash=$3,failed_attempts=0,locked_until=NULL,updated_at=now()',[req.user.sub,deviceId,hash]);
+  else{
+    memory.quickPins??=[];let row=memory.quickPins.find(x=>x.userId===req.user.sub&&x.deviceId===deviceId);
+    if(row)Object.assign(row,{pinHash:hash,failedAttempts:0,lockedUntil:null,updatedAt:new Date().toISOString()});
+    else memory.quickPins.push({userId:req.user.sub,deviceId,pinHash:hash,failedAttempts:0,lockedUntil:null,updatedAt:new Date().toISOString()})
+  }
+  res.json({success:true})
+});
+app.delete('/api/auth/pin',auth,async(req,res)=>{
+  const deviceId=String(req.body.deviceId||'').trim().slice(0,160);if(!deviceId)return res.status(400).json({error:'deviceId is required'});
+  if(pool)await q('DELETE FROM user_quick_pins WHERE user_id=$1 AND device_id=$2',[req.user.sub,deviceId]);
+  else{memory.quickPins??=[];memory.quickPins=memory.quickPins.filter(x=>!(x.userId===req.user.sub&&x.deviceId===deviceId))}
+  res.json({success:true})
+});
+app.post('/api/auth/pin/login',async(req,res)=>{
+  const login=String(req.body.login||req.body.email||'').trim(),deviceId=String(req.body.deviceId||'').trim().slice(0,160),pin=String(req.body.pin||'').trim();
+  if(!login||!deviceId||!/^\d{4}$/.test(pin))return res.status(401).json({error:'Invalid username or PIN'});
+  const u=await findLoginUser(login);if(!u)return res.status(401).json({error:'Invalid username or PIN'});
+  let row;
+  if(pool)row=(await q('SELECT pin_hash AS "pinHash",failed_attempts AS "failedAttempts",locked_until AS "lockedUntil" FROM user_quick_pins WHERE user_id=$1 AND device_id=$2',[u.id,deviceId]))[0];
+  else{memory.quickPins??=[];row=memory.quickPins.find(x=>x.userId===u.id&&x.deviceId===deviceId)}
+  if(!row)return res.status(401).json({error:'Quick PIN is not set up on this device'});
+  if(row.lockedUntil&&new Date(row.lockedUntil)>new Date())return res.status(429).json({error:'Too many wrong PIN attempts. Use your password or try again later.'});
+  const ok=await bcrypt.compare(pin,row.pinHash);
+  if(!ok){
+    const attempts=num(row.failedAttempts)+1,locked=attempts>=5?new Date(Date.now()+10*60*1000).toISOString():null;
+    if(pool)await q('UPDATE user_quick_pins SET failed_attempts=$3,locked_until=$4,updated_at=now() WHERE user_id=$1 AND device_id=$2',[u.id,deviceId,attempts,locked]);
+    else Object.assign(row,{failedAttempts:attempts,lockedUntil:locked,updatedAt:new Date().toISOString()});
+    return res.status(401).json({error:attempts>=5?'Quick PIN locked for 10 minutes. Use your password.':'Invalid username or PIN'})
+  }
+  if(pool)await q('UPDATE user_quick_pins SET failed_attempts=0,locked_until=NULL,updated_at=now() WHERE user_id=$1 AND device_id=$2',[u.id,deviceId]);
+  else Object.assign(row,{failedAttempts:0,lockedUntil:null,updatedAt:new Date().toISOString()});
+  res.json({token:tokenFor(u),user:{id:u.id,email:u.email,username:accountUsername(u),name:u.name,role:u.role,driverId:u.driver_id||u.driverId||null}})
+});
+
+app.get('/api/users',auth,roles('admin','manager'),async(req,res)=>{const rows=pool?await q('SELECT id,email,name,role,driver_id AS "driverId",staff_id AS "staffId",active,created_at AS "createdAt" FROM users ORDER BY name'):memory.users.map(({password_hash,...u})=>u);res.json(rows.map(u=>({...u,username:accountUsername(u)})))});
+
+app.post('/api/users/bootstrap-credentials',auth,roles('admin'),async(req,res)=>{
+  const resetExisting=req.body.resetExisting!==false,state=await readOpsState(),drivers=(state.drivers||[]).filter(d=>d&&d.id&&d.name);
+  const credentials=[];
+  const allUsers=pool?await q('SELECT * FROM users ORDER BY created_at ASC'):memory.users;
+  const usedEmails=new Set(allUsers.map(u=>String(u.email||'').toLowerCase()));
+  const uniqueDriverEmail=name=>{const base=usernameSlug(name)||'driver';let local=base,n=2,email=local+'@driver.local';while(usedEmails.has(email)){local=base+'.'+n++;email=local+'@driver.local'}usedEmails.add(email);return email};
+  const affectedIds=[];
+  for(const d of drivers){
+    let u=allUsers.find(x=>(x.driver_id||x.driverId)===d.id);
+    let created=false;
+    if(!u){
+      const email=uniqueDriverEmail(d.name),id=crypto.randomUUID(),password=temporaryAccountPassword(),hash=await bcrypt.hash(password,12);
+      if(pool)await q('INSERT INTO users(id,email,password_hash,name,role,driver_id,active) VALUES($1,$2,$3,$4,$5,$6,true)',[id,email,hash,d.name,'driver',d.id]);
+      else{u={id,email,password_hash:hash,name:d.name,role:'driver',driverId:d.id,active:true};memory.users.push(u)}
+      u={id,email,name:d.name,role:'driver',driver_id:d.id,active:true};allUsers.push(u);created=true;credentials.push({name:d.name,role:'driver',username:accountUsername(u),login:u.email,password,created:true});affectedIds.push(u.id);continue
+    }
+    if(!u.active){
+      if(pool)await q('UPDATE users SET active=true WHERE id=$1',[u.id]);else u.active=true
+    }
+    if(resetExisting){
+      const password=temporaryAccountPassword(),hash=await bcrypt.hash(password,12);
+      if(pool)await q('UPDATE users SET password_hash=$2 WHERE id=$1',[u.id,hash]);else u.password_hash=hash;
+      credentials.push({name:u.name||d.name,role:'driver',username:accountUsername(u),login:u.email,password,created});
+      affectedIds.push(u.id)
+    }else credentials.push({name:u.name||d.name,role:'driver',username:accountUsername(u),login:u.email,password:null,created:false})
+  }
+  for(const u of allUsers.filter(x=>x.role==='admin'&&x.active)){
+    if(resetExisting){
+      const password=temporaryAccountPassword(),hash=await bcrypt.hash(password,12);
+      if(pool)await q('UPDATE users SET password_hash=$2 WHERE id=$1',[u.id,hash]);else u.password_hash=hash;
+      credentials.unshift({name:u.name,role:'admin',username:accountUsername(u),login:u.email,password,created:false});affectedIds.push(u.id)
+    }else credentials.unshift({name:u.name,role:'admin',username:accountUsername(u),login:u.email,password:null,created:false})
+  }
+  if(resetExisting&&affectedIds.length){
+    if(pool)await q('DELETE FROM user_quick_pins WHERE user_id=ANY($1::uuid[])',[affectedIds]);
+    else{memory.quickPins??=[];memory.quickPins=memory.quickPins.filter(x=>!affectedIds.includes(x.userId))}
+  }
+  res.json({credentials,resetExisting,generatedAt:new Date().toISOString(),note:'Temporary passwords are returned once. Users can set a 4-digit quick PIN after password sign-in.'})
+});
 app.post('/api/users',auth,roles('admin'),async(req,res)=>{
   const email=String(req.body.email||'').trim().toLowerCase(),name=String(req.body.name||'').trim(),role=String(req.body.role||''),password=String(req.body.password||''),driverId=req.body.driverId||null,staffId=req.body.staffId||null;
   const validRoles=['admin','manager','dispatcher','driver','warehouse','workshop','finance','site_worker'];
@@ -881,7 +982,7 @@ app.patch('/api/users/:id',auth,roles('admin'),async(req,res)=>{
     const{password_hash,...safe}=existing;res.json(safe)
   }catch(e){res.status(409).json({error:e.code==='23505'?'A user with that email already exists':e.message})}
 });
-app.post('/api/users/:id/reset-password',auth,roles('admin'),async(req,res)=>{const password=String(req.body.password||'');if(password.length<10)return res.status(400).json({error:'Password must be at least 10 characters'});const id=req.params.id,hash=await bcrypt.hash(password,12);if(pool){const rows=await q('UPDATE users SET password_hash=$2 WHERE id=$1 RETURNING id',[id,hash]);if(!rows.length)return res.status(404).json({error:'User not found'})}else{const u=memory.users.find(x=>x.id===id);if(!u)return res.status(404).json({error:'User not found'});u.password_hash=hash}res.json({success:true})});
+app.post('/api/users/:id/reset-password',auth,roles('admin'),async(req,res)=>{const password=String(req.body.password||'');if(password.length<10)return res.status(400).json({error:'Password must be at least 10 characters'});const id=req.params.id,hash=await bcrypt.hash(password,12);if(pool){const rows=await q('UPDATE users SET password_hash=$2 WHERE id=$1 RETURNING id',[id,hash]);if(!rows.length)return res.status(404).json({error:'User not found'});await q('DELETE FROM user_quick_pins WHERE user_id=$1',[id])}else{const u=memory.users.find(x=>x.id===id);if(!u)return res.status(404).json({error:'User not found'});u.password_hash=hash;memory.quickPins??=[];memory.quickPins=memory.quickPins.filter(x=>x.userId!==id)}res.json({success:true})});
 app.delete('/api/users/:id',auth,roles('admin'),async(req,res)=>{
   const id=String(req.params.id);if(id===req.user.sub)return res.status(400).json({error:'You cannot delete your own account'});
   if(pool){const rows=await q('DELETE FROM users WHERE id=$1 RETURNING id,name',[id]);if(!rows.length)return res.status(404).json({error:'User not found'});return res.json({success:true,id})}
@@ -1711,7 +1812,13 @@ app.get('/api/mobile/context',deviceAuth,async(req,res)=>{
 });
 app.post('/api/mobile/gps',deviceAuth,async(req,res)=>{
   try{
-    if(req.user.role!=='driver'||!req.user.driverId)return res.status(403).json({error:'GPS upload is only available to linked driver accounts'});
+    const testMode=req.body.testMode===true||String(req.body.testMode||'').toLowerCase()==='true';
+    if(testMode){
+      const label=String(req.body.testLabel||req.user.name||req.device.name||'Phone test').trim().slice(0,80).replace(/[^a-zA-Z0-9 ._-]/g,'')||'Phone test';
+      req.body={...req.body,vehicleId:'phone-test:'+label,driverId:req.user.driverId||null,tripId:null};
+      return gpsIn(req,res,'phone-test')
+    }
+    if(req.user.role!=='driver'||!req.user.driverId)return res.status(403).json({error:'GPS upload is only available to linked driver accounts unless Phone GPS Test is enabled'});
     const state=await readOpsState(),t=driverMobileTrip(state,req.user.driverId);
     if(!t)return res.status(204).end();
     req.body={...req.body,vehicleId:t.truckId,driverId:req.user.driverId,tripId:t.id};
@@ -1745,7 +1852,7 @@ app.post('/api/integrations/traccar/position',async(req,res)=>{
     return gpsIn(req,res,'telematics')
   }catch(e){res.status(500).json({error:e.message})}
 });
-async function gpsIn(req,res,source){const p={vehicleId:String(req.body.vehicleId||req.body.vehicle_id||''),driverId:req.body.driverId||req.user.driverId||null,tripId:req.body.tripId||null,latitude:Number(req.body.latitude),longitude:Number(req.body.longitude),speed:num(req.body.speed),heading:num(req.body.heading),accuracy:req.body.accuracy==null?null:num(req.body.accuracy),source,recordedAt:req.body.recordedAt||new Date().toISOString()};if(!p.vehicleId||!Number.isFinite(p.latitude)||!Number.isFinite(p.longitude))return res.status(400).json({error:'vehicleId, latitude and longitude are required'});if(pool)await q('INSERT INTO gps_positions(vehicle_id,driver_id,trip_id,latitude,longitude,speed,heading,accuracy,source,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[p.vehicleId,p.driverId,p.tripId,p.latitude,p.longitude,p.speed,p.heading,p.accuracy,p.source,p.recordedAt]);else memory.gps.push(p);await evaluateGeofences(p);await evaluateTripZones(p);emit('gps',p);res.status(201).json(p)}
+async function gpsIn(req,res,source){const p={vehicleId:String(req.body.vehicleId||req.body.vehicle_id||''),driverId:req.body.driverId||req.user.driverId||null,tripId:req.body.tripId||null,latitude:Number(req.body.latitude),longitude:Number(req.body.longitude),speed:num(req.body.speed),heading:num(req.body.heading),accuracy:req.body.accuracy==null?null:num(req.body.accuracy),source,recordedAt:req.body.recordedAt||new Date().toISOString()};if(!p.vehicleId||!Number.isFinite(p.latitude)||!Number.isFinite(p.longitude))return res.status(400).json({error:'vehicleId, latitude and longitude are required'});if(pool)await q('INSERT INTO gps_positions(vehicle_id,driver_id,trip_id,latitude,longitude,speed,heading,accuracy,source,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[p.vehicleId,p.driverId,p.tripId,p.latitude,p.longitude,p.speed,p.heading,p.accuracy,p.source,p.recordedAt]);else memory.gps.push(p);await evaluateGeofences(p);if(source!=='phone-test')await evaluateTripZones(p);emit('gps',p);res.status(201).json(p)}
 app.post('/api/admin/fuel',auth,roles('admin','manager','dispatcher','workshop','finance'),upload.single('receipt'),async(req,res)=>{
   try{
     const litres=num(req.body.litres),total=num(req.body.total),enteredPrice=num(req.body.price),tripId=String(req.body.tripId||''),requestedTruck=String(req.body.truckId||'');
@@ -1798,7 +1905,7 @@ app.delete('/api/admin/diesel/:id',auth,roles('admin','manager','finance'),async
     res.json(changed.result)
   }catch(e){res.status(e.status||500).json({error:e.message})}
 });
-app.get('/api/gps/latest',auth,async(req,res)=>{const rows=pool?await q("SELECT DISTINCT ON(vehicle_id) vehicle_id AS \"vehicleId\",driver_id AS \"driverId\",trip_id AS \"tripId\",latitude,longitude,speed,heading,accuracy,source,recorded_at AS \"recordedAt\" FROM gps_positions WHERE source IN ('telematics','truck-device','tracker','vehicle-tracker') ORDER BY vehicle_id,recorded_at DESC"):Object.values(memory.gps.filter(x=>trustedVehicleGpsSource(x.source)).reduce((a,x)=>(a[x.vehicleId]=x,a),{}));res.json(rows)});
+app.get('/api/gps/latest',auth,async(req,res)=>{const rows=pool?await q("SELECT DISTINCT ON(vehicle_id) vehicle_id AS \"vehicleId\",driver_id AS \"driverId\",trip_id AS \"tripId\",latitude,longitude,speed,heading,accuracy,source,recorded_at AS \"recordedAt\" FROM gps_positions WHERE source IN ('telematics','truck-device','tracker','vehicle-tracker','phone-test') ORDER BY vehicle_id,recorded_at DESC"):Object.values(memory.gps.filter(x=>trustedVehicleGpsSource(x.source)).reduce((a,x)=>(a[x.vehicleId]=x,a),{}));res.json(rows)});
 app.get('/api/gps/history/:vehicleId',auth,async(req,res)=>{const hours=Math.min(168,Math.max(1,num(req.query.hours)||24)),rows=pool?await q('SELECT vehicle_id AS "vehicleId",latitude,longitude,speed,heading,recorded_at AS "recordedAt" FROM gps_positions WHERE vehicle_id=$1 AND recorded_at>now()-($2||\' hours\')::interval ORDER BY recorded_at',[req.params.vehicleId,String(hours)]):memory.gps.filter(x=>x.vehicleId===req.params.vehicleId&&Date.now()-new Date(x.recordedAt)<hours*3600000);res.json(rows)});
 app.get('/api/geofences',auth,async(req,res)=>res.json(pool?await q('SELECT id,name,latitude,longitude,radius_m AS "radiusM",event_types AS "eventTypes",kind,active FROM geofences ORDER BY name'):memory.geofences));
 app.post('/api/geofences',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
