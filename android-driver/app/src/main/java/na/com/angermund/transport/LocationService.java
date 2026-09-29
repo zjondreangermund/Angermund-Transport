@@ -53,7 +53,7 @@ public class LocationService extends Service implements LocationListener {
     public void onCreate() {
         super.onCreate();
         createChannel();
-        startForeground(NOTIFICATION_ID, notification("Background GPS active", "Waiting for location…"));
+        startForeground(NOTIFICATION_ID, notification(prefs().getBoolean("gps_test_mode", false) ? "Angermund GPS TEST active" : "Background GPS active", "Waiting for location…"));
         manager = (LocationManager) getSystemService(LOCATION_SERVICE);
         requestUpdates();
         handler.post(retryRunnable);
@@ -119,6 +119,9 @@ public class LocationService extends Service implements LocationListener {
             j.put("heading", location.hasBearing() ? location.getBearing() : 0);
             j.put("accuracy", location.hasAccuracy() ? location.getAccuracy() : JSONObject.NULL);
             j.put("recordedAt", Build.VERSION.SDK_INT >= 26 ? Instant.ofEpochMilli(location.getTime()).toString() : String.valueOf(location.getTime()));
+            boolean testMode = prefs().getBoolean("gps_test_mode", false);
+            j.put("testMode", testMode);
+            if (testMode) j.put("testLabel", prefs().getString("gps_test_label", "Phone GPS Test"));
             String payload = j.toString();
             prefs().edit().putString("pending_location", payload).apply();
             sendPayload(payload);
@@ -156,7 +159,7 @@ public class LocationService extends Service implements LocationListener {
                     String trip = r.optString("tripId", "active trip");
                     String vehicle = r.optString("vehicleId", "");
                     clearPendingIfSent(payload);
-                    handler.post(() -> updateNotification((vehicle.isEmpty() ? "" : vehicle + " · ") + trip + " · last GPS sent"));
+                    handler.post(() -> updateNotification((prefs().getBoolean("gps_test_mode", false) ? "TEST · " : "") + (vehicle.isEmpty() ? "" : vehicle + " · ") + trip + " · last GPS sent"));
                 } else if (code == 204) {
                     clearPendingIfSent(payload);
                     handler.post(() -> updateNotification("Waiting for an assigned trip"));
