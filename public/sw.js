@@ -1,5 +1,5 @@
-const CACHE='angermund-ops-v31-hq-app-logo';
-const ASSETS=['/','/index.html','/styles.css','/app.js','/manifest.json','/angermund-logo.webp','/angermund-truck.webp','/angermund-app-logo.jpg'];
+const CACHE='angermund-ops-v32-original-logo-source';
+const ASSETS=['/','/index.html','/styles.css','/app.js','/manifest.json','/angermund-logo.webp','/angermund-truck.webp','/angermund-app-logo-original.jpg'];
 self.addEventListener('install',e=>e.waitUntil((async()=>{const c=await caches.open(CACHE);await c.addAll(ASSETS);await self.skipWaiting()})()));
 self.addEventListener('activate',e=>e.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)));await self.clients.claim()})()));
 self.addEventListener('fetch',e=>{
@@ -20,8 +20,8 @@ self.addEventListener('push',event=>{
     const title=data.title||'Angermund Transport';
     const options={
       body:data.body||'You have a new notification.',
-      icon:'/angermund-app-logo.jpg',
-      badge:'/angermund-app-logo.jpg',
+      icon:'/angermund-app-logo-original.jpg',
+      badge:'/angermund-app-logo-original.jpg',
       tag:data.linkedId?('angermund-'+data.linkedId):('angermund-'+Date.now()),
       renotify:true,
       requireInteraction:Boolean(data.requireInteraction),
