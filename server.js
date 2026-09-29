@@ -304,7 +304,7 @@ async function recognizeReceiptBest(buffer){
 
 if(!DATABASE_URL)console.warn('DATABASE_URL missing: using development memory store. Set PostgreSQL for multi-device persistence.');
 const pool=DATABASE_URL?new Pool({connectionString:DATABASE_URL,ssl:/localhost|127\.0\.0\.1/.test(DATABASE_URL)?false:{rejectUnauthorized:false}}):null;
-const memory={state:null,users:[],gps:[],geofences:[],notifications:[],subscriptions:[],uploads:[],tripDocuments:[],mobileDevices:[],scanJobs:[]};const clients=new Set();
+const memory={state:null,users:[],gps:[],geofences:[],notifications:[],subscriptions:[],uploads:[],companyReceipts:[],tripDocuments:[],mobileDevices:[],scanJobs:[]};const clients=new Set();
 app.use(express.json({limit:'10mb'}));app.use(express.urlencoded({extended:true}));
 app.use((req,res,next)=>{res.setHeader('X-Content-Type-Options','nosniff');res.setHeader('Referrer-Policy','same-origin');res.setHeader('Permissions-Policy','geolocation=(self), camera=(self)');next()});
 const q=async(text,params=[])=>pool?(await pool.query(text,params)).rows:null;
@@ -320,7 +320,7 @@ ALTER TABLE geofences ADD COLUMN IF NOT EXISTS kind text DEFAULT 'custom';
 CREATE TABLE IF NOT EXISTS geofence_state(vehicle_id text NOT NULL,geofence_id uuid REFERENCES geofences(id) ON DELETE CASCADE,inside boolean NOT NULL,updated_at timestamptz DEFAULT now(),PRIMARY KEY(vehicle_id,geofence_id));
 CREATE TABLE IF NOT EXISTS notifications(id uuid PRIMARY KEY,type text NOT NULL,severity text DEFAULT 'info',title text NOT NULL,message text NOT NULL,role text,user_id uuid,driver_id text,linked_type text,linked_id text,read boolean DEFAULT false,created_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS push_subscriptions(id bigserial PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE CASCADE,subscription jsonb NOT NULL,created_at timestamptz DEFAULT now());
-CREATE TABLE IF NOT EXISTS scan_jobs(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id),filename text,status text NOT NULL DEFAULT 'processing',raw_text text,extracted jsonb,confidence double precision,error text,created_at timestamptz DEFAULT now(),completed_at timestamptz);\nCREATE TABLE IF NOT EXISTS driver_uploads(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,trip_id text NOT NULL,kind text NOT NULL,filename text NOT NULL,mime_type text NOT NULL,content bytea NOT NULL,created_at timestamptz DEFAULT now());\nCREATE TABLE IF NOT EXISTS trip_documents(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,trip_id text NOT NULL,leg_id text,kind text NOT NULL,reference text,filename text,mime_type text,content bytea,created_at timestamptz DEFAULT now());\nCREATE INDEX IF NOT EXISTS trip_documents_trip ON trip_documents(trip_id,created_at DESC);\nCREATE TABLE IF NOT EXISTS mobile_devices(id uuid PRIMARY KEY,device_id text UNIQUE NOT NULL,user_id uuid REFERENCES users(id) ON DELETE CASCADE,driver_id text,token_hash text UNIQUE NOT NULL,name text,platform text,active boolean DEFAULT true,last_seen timestamptz,created_at timestamptz DEFAULT now());\nCREATE INDEX IF NOT EXISTS mobile_devices_driver ON mobile_devices(driver_id,active);\nALTER TABLE notifications ADD COLUMN IF NOT EXISTS driver_id text;
+CREATE TABLE IF NOT EXISTS scan_jobs(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id),filename text,status text NOT NULL DEFAULT 'processing',raw_text text,extracted jsonb,confidence double precision,error text,created_at timestamptz DEFAULT now(),completed_at timestamptz);\nCREATE TABLE IF NOT EXISTS driver_uploads(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,trip_id text NOT NULL,kind text NOT NULL,filename text NOT NULL,mime_type text NOT NULL,content bytea NOT NULL,created_at timestamptz DEFAULT now());\nCREATE TABLE IF NOT EXISTS company_receipts(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,linked_type text NOT NULL,linked_id text NOT NULL,kind text NOT NULL,filename text NOT NULL,mime_type text NOT NULL,content bytea NOT NULL,created_at timestamptz DEFAULT now());\nCREATE INDEX IF NOT EXISTS company_receipts_link ON company_receipts(linked_type,linked_id,created_at DESC);\nCREATE TABLE IF NOT EXISTS trip_documents(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,trip_id text NOT NULL,leg_id text,kind text NOT NULL,reference text,filename text,mime_type text,content bytea,created_at timestamptz DEFAULT now());\nCREATE INDEX IF NOT EXISTS trip_documents_trip ON trip_documents(trip_id,created_at DESC);\nCREATE TABLE IF NOT EXISTS mobile_devices(id uuid PRIMARY KEY,device_id text UNIQUE NOT NULL,user_id uuid REFERENCES users(id) ON DELETE CASCADE,driver_id text,token_hash text UNIQUE NOT NULL,name text,platform text,active boolean DEFAULT true,last_seen timestamptz,created_at timestamptz DEFAULT now());\nCREATE INDEX IF NOT EXISTS mobile_devices_driver ON mobile_devices(driver_id,active);\nALTER TABLE notifications ADD COLUMN IF NOT EXISTS driver_id text;
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS user_id uuid;
 ALTER TABLE mobile_devices ALTER COLUMN driver_id DROP NOT NULL;\nCREATE INDEX IF NOT EXISTS driver_uploads_trip ON driver_uploads(trip_id,created_at DESC);`);
  const email=(process.env.INITIAL_ADMIN_EMAIL||'admin@angermund.local').toLowerCase(),pass=process.env.INITIAL_ADMIN_PASSWORD||'ChangeMe123!';const found=await q('SELECT id FROM users WHERE email=$1',[email]);if(!found.length)await q('INSERT INTO users(id,email,password_hash,name,role) VALUES($1,$2,$3,$4,$5)',[crypto.randomUUID(),email,await bcrypt.hash(pass,12),'System Administrator','admin']);await q("INSERT INTO app_state(id,payload) VALUES(1,'{}') ON CONFLICT(id) DO NOTHING");
@@ -743,6 +743,49 @@ function normalizeTask(body={},existing={}){
   const due=String(body.due??existing.due??'').slice(0,10),priority=['Low','Normal','High','Critical'].includes(body.priority)?body.priority:(existing.priority||'Normal'),status=['Open','In progress','Completed','Cancelled'].includes(body.status)?body.status:(existing.status||'Open');
   return{...existing,title:String(body.title??existing.title??'').trim().slice(0,180),description:String(body.description??existing.description??'').trim().slice(0,2000),assignedUserId:body.assignedUserId===undefined?(existing.assignedUserId||''):(body.assignedUserId||''),assignedDriverId:body.assignedDriverId===undefined?(existing.assignedDriverId||''):(body.assignedDriverId||''),ownerRole:body.ownerRole===undefined?(existing.ownerRole||''):(body.ownerRole||''),due,priority,status,linkedType:String(body.linkedType??existing.linkedType??'').slice(0,40),linkedId:String(body.linkedId??existing.linkedId??'').slice(0,160),updatedAt:new Date().toISOString()}
 }
+
+function truthy(v){return v===true||['1','true','yes','on'].includes(String(v||'').toLowerCase())}
+function canCompleteTaskForUser(task,user){
+  const privileged=['admin','manager','dispatcher'].includes(user.role);
+  const assigned=task.assignedUserId===user.sub||(user.driverId&&task.assignedDriverId===user.driverId)||(!task.assignedUserId&&!task.assignedDriverId&&String(task.ownerRole||'').toLowerCase().replace(/\s+/g,'_')===user.role);
+  return privileged||assigned
+}
+function financialContext(state,linkedType,linkedId,body={}){
+  let tripId=String(body.tripId||''),truckId=String(body.truckId||''),driverId=String(body.driverId||''),maintenanceId='',tyreId='';
+  if(linkedType==='trip'){
+    const t=(state.trips||[]).find(x=>x.id===linkedId);if(t){tripId=t.id;truckId=t.truckId||truckId;driverId=t.driverId||driverId}
+  }else if(linkedType==='truck')truckId=linkedId;
+  else if(linkedType==='maintenance'){
+    const m=(state.maintenance||[]).find(x=>x.id===linkedId);if(m){maintenanceId=m.id;truckId=m.truckId||truckId}
+  }else if(linkedType==='tyre'){
+    const y=(state.tyres||[]).find(x=>x.id===linkedId);if(y){tyreId=y.id;truckId=y.truckId||truckId}
+  }else if(linkedType==='expense'){
+    const e=(state.expenses||[]).find(x=>x.id===linkedId);if(e){tripId=e.tripId||tripId;truckId=e.truckId||truckId;driverId=e.driverId||driverId;maintenanceId=e.maintenanceId||'';tyreId=e.tyreId||''}
+  }
+  if(tripId){const t=(state.trips||[]).find(x=>x.id===tripId);if(t){truckId=t.truckId||truckId;driverId=t.driverId||driverId}}
+  return{tripId,truckId,driverId,maintenanceId,tyreId}
+}
+async function storeCompanyReceipt(file,user,linkedType,linkedId,kind='expense'){
+  if(!file)return null;
+  const archived=archiveStoredFile(file),id=crypto.randomUUID(),createdAt=new Date().toISOString(),row={id,userId:user.sub,linkedType:String(linkedType||'expense'),linkedId:String(linkedId||''),kind:String(kind||'expense'),filename:archived.filename,mimeType:archived.mimeType,content:archived.buffer,createdAt};
+  if(pool)await q('INSERT INTO company_receipts(id,user_id,linked_type,linked_id,kind,filename,mime_type,content,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[id,user.sub,row.linkedType,row.linkedId,row.kind,row.filename,row.mimeType,row.content,createdAt]);
+  else memory.companyReceipts.push(row);
+  return{id,filename:row.filename,mimeType:row.mimeType,createdAt}
+}
+function applyLinkedCost(state,ctx,amount){
+  if(ctx.maintenanceId){const m=(state.maintenance||[]).find(x=>x.id===ctx.maintenanceId);if(m&&num(m.cost)<=0)m.cost=amount}
+  if(ctx.tyreId){const y=(state.tyres||[]).find(x=>x.id===ctx.tyreId);if(y&&num(y.cost)<=0)y.cost=amount}
+}
+function buildCompanyExpense(state,{sourceType,sourceId,title,body,receiptId,status='Review',linkedType='',linkedId=''}){
+  state.expenses??=[];
+  const amount=num(body.amount);if(amount<=0){const e=Error('Enter the amount paid');e.status=400;throw e}
+  const ctx=financialContext(state,linkedType,linkedId,body),id='expense_'+crypto.randomUUID();
+  const rec={id,date:String(body.date||new Date().toISOString().slice(0,10)).slice(0,10),tripId:ctx.tripId,truckId:ctx.truckId,driverId:ctx.driverId,maintenanceId:ctx.maintenanceId,tyreId:ctx.tyreId,category:String(body.category||'Other').slice(0,80),supplier:String(body.supplier||'').slice(0,160),amount,paymentMethod:String(body.paymentMethod||'Company card').slice(0,80),receiptNo:String(body.receiptNo||'').slice(0,120),notes:String(body.notes||title||'').slice(0,1000),receiptUploadId:receiptId||'',receiptUploadIds:receiptId?[receiptId]:[],receiptCount:receiptId?1:0,receiptSource:'company',companyPaid:true,reimbursable:false,status,sourceType,sourceId,taskId:sourceType==='task'?sourceId:'',approvalId:sourceType==='approval'?sourceId:''};
+  state.expenses.unshift(rec);applyLinkedCost(state,ctx,amount);
+  if(ctx.tripId){const t=(state.trips||[]).find(x=>x.id===ctx.tripId);if(t)recalcTripCosts(state,t)}
+  return rec
+}
+
 app.post('/api/tasks',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
   try{
     const changed=await mutateOpsState(state=>{state.tasks??=[];const t=normalizeTask(req.body||{}, {id:'task_'+crypto.randomUUID(),createdAt:new Date().toISOString(),createdBy:req.user.sub,status:'Open'});if(!t.title){const e=Error('Task title is required');e.status=400;throw e}state.tasks.unshift(t);return t});
@@ -758,18 +801,79 @@ app.patch('/api/tasks/:id',auth,roles('admin','manager','dispatcher'),async(req,
     res.json({task:n,revision:changed.revision})
   }catch(e){res.status(e.status||500).json({error:e.message})}
 });
-app.post('/api/tasks/:id/complete',auth,async(req,res)=>{
+app.post('/api/tasks/:id/complete',auth,upload.single('receipt'),async(req,res)=>{
+  let receipt=null;
   try{
-    const changed=await mutateOpsState(state=>{state.tasks??=[];const t=state.tasks.find(x=>x.id===req.params.id);if(!t){const e=Error('Task not found');e.status=404;throw e}
-      const privileged=['admin','manager','dispatcher'].includes(req.user.role),assigned=t.assignedUserId===req.user.sub||(req.user.driverId&&t.assignedDriverId===req.user.driverId)||(!t.assignedUserId&&!t.assignedDriverId&&String(t.ownerRole||'').toLowerCase().replace(/\s+/g,'_')===req.user.role);
-      if(!privileged&&!assigned){const e=Error('This task is not assigned to you');e.status=403;throw e}
-      t.status='Completed';t.completedAt=new Date().toISOString();t.completedBy=req.user.sub;t.updatedAt=t.completedAt;return t});
-    createNotification({type:'task-complete',severity:'info',title:'Task completed',message:changed.result.title+' completed by '+req.user.name,role:'admin',linkedType:'task',linkedId:changed.result.id}).catch(()=>{});
-    res.json({task:changed.result,revision:changed.revision})
-  }catch(e){res.status(e.status||500).json({error:e.message})}
+    const snapshot=await readOpsState(),task=(snapshot.tasks||[]).find(x=>x.id===req.params.id);
+    if(!task)return res.status(404).json({error:'Task not found'});
+    if(!canCompleteTaskForUser(task,req.user))return res.status(403).json({error:'This task is not assigned to you'});
+    if(task.status==='Completed')return res.json({task,alreadyCompleted:true});
+    const fundsUsed=truthy(req.body?.fundsUsed);
+    if(fundsUsed){
+      if(num(req.body.amount)<=0)return res.status(400).json({error:'Enter the amount paid'});
+      if(!req.file)return res.status(400).json({error:'Receipt, slip or proof of payment is required when company funds were used'});
+      receipt=await storeCompanyReceipt(req.file,req.user,'task',task.id,'task-expense');
+    }
+    const changed=await mutateOpsState(state=>{
+      state.tasks??=[];state.expenses??=[];state.approvals??=[];
+      const t=state.tasks.find(x=>x.id===req.params.id);if(!t){const er=Error('Task not found');er.status=404;throw er}
+      if(!canCompleteTaskForUser(t,req.user)){const er=Error('This task is not assigned to you');er.status=403;throw er}
+      if(t.status==='Completed')return t;
+      let expense=null;
+      if(fundsUsed){
+        const directApproval=['admin','manager','finance'].includes(req.user.role),status=directApproval?'Approved':'Review';
+        expense=buildCompanyExpense(state,{sourceType:'task',sourceId:t.id,title:t.title,body:req.body,receiptId:receipt?.id||'',status,linkedType:t.linkedType,linkedId:t.linkedId});
+        t.fundsUsed=true;t.expenseId=expense.id;t.expenseAmount=expense.amount;t.receiptUploadId=expense.receiptUploadId;t.paymentMethod=expense.paymentMethod;
+        if(!directApproval)state.approvals.unshift({id:'apr_'+crypto.randomUUID(),type:'Company expense',description:'Approve '+expense.category+' · '+t.title,amount:expense.amount,requester:req.user.name||req.user.email||req.user.role,status:'Pending',linkedType:'expense',linkedId:expense.id,taskId:t.id,fundsInvolved:true,createdAt:new Date().toISOString()})
+      }else{t.fundsUsed=false;t.expenseId='';t.expenseAmount=0}
+      t.status='Completed';t.completedAt=new Date().toISOString();t.completedBy=req.user.sub;t.updatedAt=t.completedAt;
+      state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:t.completedAt,actor:req.user.name||req.user.email||req.user.role,action:'Completed task '+t.title+(expense?' · company spend '+expense.amount.toFixed(2):' · no company funds'),linkedType:'task',linkedId:t.id});state.audit=state.audit.slice(0,100);
+      return t
+    });
+    createNotification({type:'task-complete',severity:'info',title:'Task completed',message:changed.result.title+' completed by '+req.user.name+(changed.result.fundsUsed?' · company funds recorded':' · no company funds'),role:'admin',linkedType:'task',linkedId:changed.result.id}).catch(()=>{});
+    res.json({task:changed.result,receipt,revision:changed.revision})
+  }catch(err){res.status(err.status||500).json({error:err.message})}
 });
 app.delete('/api/tasks/:id',auth,roles('admin','manager'),async(req,res)=>{
   try{const changed=await mutateOpsState(state=>{state.tasks??=[];const i=state.tasks.findIndex(x=>x.id===req.params.id);if(i<0){const e=Error('Task not found');e.status=404;throw e}return state.tasks.splice(i,1)[0]});res.json({success:true,id:req.params.id,revision:changed.revision})}catch(e){res.status(e.status||500).json({error:e.message})}
+});
+
+app.post('/api/approvals/:id/decision',auth,roles('admin','manager','finance'),upload.single('receipt'),async(req,res)=>{
+  let receipt=null;
+  try{
+    const status=String(req.body.status||'');if(!['Approved','Rejected'].includes(status))return res.status(400).json({error:'Choose Approved or Rejected'});
+    const snapshot=await readOpsState(),approval=(snapshot.approvals||[]).find(x=>x.id===req.params.id);
+    if(!approval)return res.status(404).json({error:'Approval not found'});
+    const existingExpense=approval.linkedType==='expense'?(snapshot.expenses||[]).find(x=>x.id===approval.linkedId):null;
+    const fundsUsed=status==='Approved'&&(Boolean(existingExpense)||truthy(req.body.fundsUsed));
+    if(fundsUsed&&!existingExpense&&num(req.body.amount||approval.amount)<=0)return res.status(400).json({error:'Enter the amount involved'});
+    if(fundsUsed&&!existingExpense&&!req.file)return res.status(400).json({error:'Receipt, slip or proof of payment is required before approving company spend'});
+    if(fundsUsed&&req.file)receipt=await storeCompanyReceipt(req.file,req.user,'approval',approval.id,'approved-expense');
+    const changed=await mutateOpsState(state=>{
+      state.approvals??=[];state.expenses??=[];const a=state.approvals.find(x=>x.id===req.params.id);if(!a){const er=Error('Approval not found');er.status=404;throw er}
+      let expense=a.linkedType==='expense'?state.expenses.find(x=>x.id===a.linkedId):null;
+      if(status==='Rejected'){
+        a.status='Rejected';a.rejectedAt=new Date().toISOString();a.rejectedBy=req.user.sub;a.decisionNotes=String(req.body.notes||'').slice(0,1000);
+        if(expense&&expense.status==='Review')expense.status='Rejected'
+      }else{
+        if(fundsUsed){
+          const body={...req.body,amount:num(req.body.amount)||num(a.amount)};
+          if(expense){
+            expense.amount=num(body.amount)||expense.amount;expense.category=String(body.category||expense.category||'Other');expense.supplier=String(body.supplier||expense.supplier||'');expense.paymentMethod=String(body.paymentMethod||expense.paymentMethod||'Company card');expense.receiptNo=String(body.receiptNo||expense.receiptNo||'');expense.notes=String(body.notes||expense.notes||'');expense.status='Approved';expense.approvalId=a.id;expense.approvedAt=new Date().toISOString();expense.approvedBy=req.user.sub;
+            if(receipt){expense.receiptUploadId=receipt.id;expense.receiptUploadIds=[receipt.id];expense.receiptCount=1;expense.receiptSource='company'}
+            const ctx=financialContext(state,'expense',expense.id,expense);applyLinkedCost(state,ctx,expense.amount);if(ctx.tripId){const t=(state.trips||[]).find(x=>x.id===ctx.tripId);if(t)recalcTripCosts(state,t)}
+          }else{
+            expense=buildCompanyExpense(state,{sourceType:'approval',sourceId:a.id,title:a.description,body,receiptId:receipt?.id||'',status:'Approved',linkedType:a.linkedType,linkedId:a.linkedId});a.expenseId=expense.id
+          }
+          a.fundsInvolved=true;a.amount=expense.amount
+        }else a.fundsInvolved=false;
+        a.status='Approved';a.approvedAt=new Date().toISOString();a.approvedBy=req.user.sub;a.decisionNotes=String(req.body.notes||'').slice(0,1000)
+      }
+      state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:req.user.name||req.user.email||req.user.role,action:status+' approval '+a.description+(fundsUsed?' · company funds checked':''),linkedType:'approval',linkedId:a.id});state.audit=state.audit.slice(0,100);
+      return{approval:a,expense}
+    });
+    res.json({...changed.result,receipt,revision:changed.revision})
+  }catch(err){res.status(err.status||500).json({error:err.message})}
 });
 
 app.get('/api/state',auth,async(req,res)=>{const row=pool?(await q('SELECT payload,revision,updated_at FROM app_state WHERE id=1'))[0]:{payload:memory.state||{},revision:0};res.json(row)});
@@ -1409,6 +1513,11 @@ app.post('/api/admin/driver-uploads/:id/move',auth,roles('admin','manager','disp
     res.json({success:true,type,sourceNumber:source?.number||null,targetNumber:target.number,uploadIds:ids})
   }catch(e){res.status(e.status||500).json({error:e.message})}
 });
+app.get('/api/company/receipts/:id',auth,async(req,res)=>{
+  const r=pool?(await q('SELECT id,user_id AS "userId",linked_type AS "linkedType",linked_id AS "linkedId",kind,filename,mime_type AS "mimeType",content FROM company_receipts WHERE id=$1',[req.params.id]))[0]:memory.companyReceipts.find(x=>x.id===req.params.id);
+  if(!r)return res.status(404).json({error:'Receipt not found'});
+  res.set({'Content-Type':r.mimeType||'application/octet-stream','Content-Disposition':'inline; filename="'+String(r.filename||'receipt').replace(/"/g,'')+'"'});res.send(r.content)
+});
 app.get('/api/driver/uploads/:id',auth,async(req,res)=>{const u=pool?(await q('SELECT id,user_id AS "userId",trip_id AS "tripId",kind,filename,mime_type AS "mimeType",content FROM driver_uploads WHERE id=$1',[req.params.id]))[0]:memory.uploads.find(x=>x.id===req.params.id);if(!u)return res.status(404).json({error:'Upload not found'});if(req.user.role==='driver'&&u.userId!==req.user.sub)return res.status(403).json({error:'Access denied'});res.set({'Content-Type':u.mimeType||'application/octet-stream','Content-Disposition':'inline; filename="'+String(u.filename||'document').replace(/"/g,'')+'"'});res.send(u.content)});
 app.post('/api/driver/trips/:tripId/action',auth,roles('driver'),async(req,res)=>{const action=String(req.body.action||''),data=req.body.data&&typeof req.body.data==='object'?req.body.data:{},clientActionId=String(req.body.clientActionId||'').slice(0,100);const allowed=['accept','inspection','start','arrive','pod','finish','diesel','expense','problem'];if(!allowed.includes(action))return res.status(400).json({error:'Invalid driver action'});try{const changed=await mutateOpsState(async state=>{state.driverActions??=[];if(clientActionId){const prior=state.driverActions.find(x=>x.clientActionId===clientActionId);if(prior)return{duplicate:true,action,tripId:req.params.tripId}}const{trip:t,did}=driverTrip(state,req),now=new Date().toISOString(),date=now.slice(0,10),mk=p=>p+'_'+crypto.randomUUID(),legs=ensureTripLegs(state,t),leg=activeTripLegServer(t),multi=legs.length>1;state.inspections??=[];state.diesel??=[];state.expenses??=[];state.tripIssues??=[];state.tasks??=[];state.trucks??=[];state.drivers??=[];if(action==='accept'){t.driverAcceptedAt=t.driverAcceptedAt||now;t.stage=Math.max(1,num(t.stage)||1);t.status=t.status||'Planned'}else if(action==='inspection'){const defects=String(data.defects||'').trim(),passed=!defects;state.inspections.unshift({id:mk('ins'),date,tripId:t.id,truckId:t.truckId,driverId:did,type:'Pre-trip',score:passed?100:80,status:passed?'Passed':'Failed',defects,items:{tyres:true,lights:true,brakes:true,fluids:true,documents:true,load:true},driverEasyMode:true});if(passed&&num(t.stage)<2){t.stage=2;t.status='Loading'}if(passed&&leg)leg.status='Loading'}else if(action==='start'){const passed=state.inspections.some(x=>x.tripId===t.id&&x.driverId===did&&x.type==='Pre-trip'&&x.status==='Passed');if(!passed){const e=Error('Complete the pre-trip vehicle check first');e.status=400;throw e}t.stage=3;t.status='In transit';t.startedAt=t.startedAt||now;if(leg){leg.status='In transit';leg.startedAt=leg.startedAt||now;}const tr=state.trucks.find(x=>x.id===t.truckId);if(tr)tr.status='On trip';const dr=state.drivers.find(x=>x.id===did);if(dr)dr.status='On trip'}else if(action==='arrive'){if(leg){leg.status='At offloading';leg.arrivedAt=leg.arrivedAt||now}t.status='At offloading';t.arrivedAt=t.arrivedAt||now;if(!state.tasks.some(x=>x.linkedId===t.id&&x.legId===leg?.id&&/POD/i.test(x.title)&&x.status==='Open'))state.tasks.unshift({id:mk('task'),title:'Upload POD for '+t.number+(multi&&leg?' · '+leg.label:''),ownerRole:'Driver',assignedDriverId:t.driverId||'',linkedType:'trip',linkedId:t.id,legId:leg?.id||'',due:date,priority:'High',status:'Open'})}else if(action==='pod'){if(!data.uploadId){const e=Error('Take a POD photo first');e.status=400;throw e}if(leg){leg.pod=true;leg.podUploadId=data.uploadId;leg.podAt=now;leg.status='Delivered'}state.tasks.filter(x=>x.linkedId===t.id&&(!x.legId||x.legId===leg?.id)&&/POD/i.test(x.title)).forEach(x=>x.status='Completed');const next=legs.find(x=>!['Delivered','Invoiced','Closed'].includes(String(x.status||'')));if(next&&next.id!==leg?.id){next.status='Loading';t.stage=2;t.status='Loading';t.pod=false;t.podUploadId='';t.geo={};}else{t.pod=true;t.podUploadId=data.uploadId;t.podAt=now;t.stage=4;t.status='Delivered'}}else if(action==='finish'){if(legs.some(x=>!x.pod)){const e=Error('POD is required for every journey leg before finishing');e.status=400;throw e}if(!t.pod){const e=Error('POD photo is required before finishing the trip');e.status=400;throw e}t.driverComplete=true;t.driverCompletedAt=now;const tr=state.trucks.find(x=>x.id===t.truckId);if(tr)tr.status='Available';const dr=state.drivers.find(x=>x.id===did);if(dr)dr.status='Available';if(!state.tasks.some(x=>x.linkedId===t.id&&/Review completed trip/i.test(x.title)&&x.status==='Open'))state.tasks.unshift({id:mk('task'),title:'Review completed trip '+t.number,ownerRole:'Dispatcher',linkedType:'trip',linkedId:t.id,due:date,priority:'Normal',status:'Open'})}else if(action==='diesel'){const litres=num(data.litres),total=num(data.total),price=num(data.price)||(litres>0?total/litres:0);if(litres<=0){const e=Error('Enter diesel litres');e.status=400;throw e}const rec={id:mk('fuel'),tripId:t.id,legId:leg?.id||'',date,truckId:t.truckId,driverId:did,litres,price,total:total>0?total:Number((litres*price).toFixed(2)),odometer:num(data.odometer),supplier:String(data.supplier||''),slip:String(data.slip||''),receiptUploadId:data.uploadId||'',receiptUploadIds:Array.isArray(data.receiptUploadIds)?data.receiptUploadIds.slice(0,2):(data.uploadId?[data.uploadId]:[]),supportingReceiptUploadId:String(data.supportingUploadId||''),receiptCount:Array.isArray(data.receiptUploadIds)?Math.min(2,data.receiptUploadIds.length):(data.uploadId?1:0),verified:false,detectedCategory:String(data.detectedCategory||'Diesel'),categoryConfidence:num(data.categoryConfidence),fuelTransactions:Array.isArray(data.fuelTransactions)?data.fuelTransactions.slice(0,10):[],fuelTransactionCount:num(data.fuelTransactionCount)||1,printedTotal:num(data.printedTotal)||null,receiptAdjustment:data.adjustment===null||data.adjustment===undefined?null:num(data.adjustment),driverEasyMode:true};state.diesel.unshift(rec);rememberSupplierCategory(state,rec.supplier,'Diesel');t.dieselCost=state.diesel.filter(x=>x.tripId===t.id).reduce((a,x)=>a+(num(x.printedTotal)||num(x.total)||num(x.litres)*num(x.price)),0);t.routeExpenseCost=state.expenses.filter(x=>x.tripId===t.id).reduce((a,x)=>a+num(x.amount),0)}else if(action==='expense'){const amount=num(data.amount);if(amount<=0){const e=Error('Enter the expense amount');e.status=400;throw e}const category=String(data.category||'Other'),supplier=String(data.supplier||'');state.expenses.unshift({id:mk('expense'),date,tripId:t.id,legId:leg?.id||'',truckId:t.truckId,driverId:did,category,supplier,amount,receiptNo:String(data.receiptNo||''),notes:String(data.notes||''),receiptUploadId:data.uploadId||'',receiptUploadIds:Array.isArray(data.receiptUploadIds)?data.receiptUploadIds.slice(0,2):(data.uploadId?[data.uploadId]:[]),supportingReceiptUploadId:String(data.supportingUploadId||''),receiptCount:Array.isArray(data.receiptUploadIds)?Math.min(2,data.receiptUploadIds.length):(data.uploadId?1:0),status:data.uploadId?'Review':'Receipt missing',reimbursable:true,detectedCategory:String(data.detectedCategory||''),categoryConfidence:num(data.categoryConfidence),driverEasyMode:true});rememberSupplierCategory(state,supplier,category);t.routeExpenseCost=state.expenses.filter(x=>x.tripId===t.id).reduce((a,x)=>a+num(x.amount),0);t.dieselCost=state.diesel.filter(x=>x.tripId===t.id).reduce((a,x)=>a+(num(x.printedTotal)||num(x.total)||num(x.litres)*num(x.price)),0)}else if(action==='problem'){const type=String(data.type||'Other'),description=String(data.description||'').trim();state.tripIssues.unshift({id:mk('issue'),date,tripId:t.id,truckId:t.truckId,driverId:did,type,location:String(data.location||''),cost:num(data.cost),description:description||type,action:String(data.actionTaken||''),photoUploadId:data.uploadId||'',status:'Open',driverEasyMode:true})}if(action==='diesel'||action==='expense')recalcTripCosts(state,t);if(clientActionId)state.driverActions.unshift({clientActionId,tripId:t.id,driverId:did,action,at:now});state.driverActions=state.driverActions.slice(0,1000);return{duplicate:false,action,tripId:t.id,number:t.number,status:t.status,stage:t.stage,pod:Boolean(t.pod),driverComplete:Boolean(t.driverComplete)}});if(action==='problem'&&!changed.result.duplicate)createNotification({type:'driver-problem',severity:'warning',title:'Driver reported a trip problem',message:(req.user.name||'Driver')+' reported '+String(data.type||'a problem')+' on trip '+req.params.tripId+'.',role:'dispatcher',linkedType:'trip',linkedId:req.params.tripId}).catch(()=>{});res.status(changed.result.duplicate?200:201).json({...changed.result,revision:changed.revision})}catch(e){res.status(e.status||500).json({error:e.message})}});
 
@@ -1479,6 +1588,26 @@ app.post('/api/integrations/traccar/position',async(req,res)=>{
   }catch(e){res.status(500).json({error:e.message})}
 });
 async function gpsIn(req,res,source){const p={vehicleId:String(req.body.vehicleId||req.body.vehicle_id||''),driverId:req.body.driverId||req.user.driverId||null,tripId:req.body.tripId||null,latitude:Number(req.body.latitude),longitude:Number(req.body.longitude),speed:num(req.body.speed),heading:num(req.body.heading),accuracy:req.body.accuracy==null?null:num(req.body.accuracy),source,recordedAt:req.body.recordedAt||new Date().toISOString()};if(!p.vehicleId||!Number.isFinite(p.latitude)||!Number.isFinite(p.longitude))return res.status(400).json({error:'vehicleId, latitude and longitude are required'});if(pool)await q('INSERT INTO gps_positions(vehicle_id,driver_id,trip_id,latitude,longitude,speed,heading,accuracy,source,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[p.vehicleId,p.driverId,p.tripId,p.latitude,p.longitude,p.speed,p.heading,p.accuracy,p.source,p.recordedAt]);else memory.gps.push(p);await evaluateGeofences(p);await evaluateTripZones(p);emit('gps',p);res.status(201).json(p)}
+app.post('/api/admin/fuel',auth,roles('admin','manager','dispatcher','workshop','finance'),upload.single('receipt'),async(req,res)=>{
+  try{
+    const litres=num(req.body.litres),total=num(req.body.total),enteredPrice=num(req.body.price),tripId=String(req.body.tripId||''),requestedTruck=String(req.body.truckId||'');
+    if(litres<=0)return res.status(400).json({error:'Enter diesel litres'});
+    if(total<=0&&enteredPrice<=0)return res.status(400).json({error:'Enter receipt total or price per litre'});
+    if(!req.file)return res.status(400).json({error:'Fuel slip or receipt is required'});
+    const snapshot=await readOpsState(),trip=tripId?(snapshot.trips||[]).find(x=>x.id===tripId):null,truckId=trip?.truckId||requestedTruck,driverId=trip?.driverId||String(req.body.driverId||'');
+    if(!truckId||!(snapshot.trucks||[]).some(x=>x.id===truckId))return res.status(400).json({error:'Select the truck that received the fuel'});
+    if(tripId&&!trip)return res.status(400).json({error:'Selected trip was not found'});
+    const id='fuel_'+crypto.randomUUID(),receipt=await storeCompanyReceipt(req.file,req.user,'fuel',id,'fuel-slip'),price=enteredPrice||(total/litres),printedTotal=total||(litres*price),verified=['admin','manager','finance'].includes(req.user.role);
+    const changed=await mutateOpsState(state=>{
+      state.diesel??=[];const rec={id,scope:trip?'trip':'company',companyPaid:true,tripId:trip?.id||'',legId:'',date:String(req.body.date||new Date().toISOString().slice(0,10)).slice(0,10),truckId,driverId,litres,price:Number(price.toFixed(4)),total:Number(printedTotal.toFixed(2)),printedTotal:Number(printedTotal.toFixed(2)),odometer:num(req.body.odometer),supplier:String(req.body.supplier||''),slip:String(req.body.slip||''),paymentMethod:String(req.body.paymentMethod||'Company card'),receiptUploadId:receipt.id,receiptUploadIds:[receipt.id],receiptCount:1,receiptSource:'company',verified,status:verified?'Verified':'Review',recordedBy:req.user.sub,recordedAt:new Date().toISOString()};
+      state.diesel.unshift(rec);rememberSupplierCategory(state,rec.supplier,'Diesel');if(trip){const t=(state.trips||[]).find(x=>x.id===trip.id);if(t)recalcTripCosts(state,t)}
+      state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:req.user.name||req.user.email||req.user.role,action:'Recorded '+(trip?'trip':'company fleet')+' fuel '+rec.litres+' L · '+rec.truckId+' · '+rec.total.toFixed(2),linkedType:trip?'trip':'truck',linkedId:trip?.id||truckId});state.audit=state.audit.slice(0,100);
+      return rec
+    });
+    if(!verified)createNotification({type:'fuel-review',severity:'info',title:'Fuel slip awaiting review',message:req.user.name+' recorded '+litres+' L company fuel.',role:'finance',linkedType:'fuel',linkedId:id}).catch(()=>{});
+    res.status(201).json({record:changed.result,receipt,revision:changed.revision})
+  }catch(err){res.status(err.status||500).json({error:err.message})}
+});
 app.patch('/api/admin/diesel/:id',auth,roles('admin','manager','dispatcher','finance'),async(req,res)=>{
   try{
     const body=req.body&&typeof req.body==='object'?req.body:{};
