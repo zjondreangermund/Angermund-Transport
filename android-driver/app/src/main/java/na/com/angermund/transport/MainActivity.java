@@ -15,6 +15,10 @@ import android.os.PowerManager;
 import android.provider.Settings;
 import android.view.ViewGroup;
 import android.view.WindowInsets;
+import android.view.Gravity;
+import android.widget.ImageView;
+import android.widget.LinearLayout;
+import android.widget.TextView;
 import android.widget.FrameLayout;
 import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
@@ -48,6 +52,7 @@ public class MainActivity extends Activity {
     private static final String START_URL = BuildConfig.SERVER_URL + "/login";
 
     private WebView webView;
+    private FrameLayout splashOverlay;
     private ValueCallback<Uri[]> fileCallback;
     private Uri cameraUri;
     private String pendingJwt = "";
@@ -70,6 +75,7 @@ public class MainActivity extends Activity {
         webView.setLayoutParams(new FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
         webView.setBackgroundColor(0xff061421);
         root.addView(webView);
+        addNativeSplash(root);
         root.setOnApplyWindowInsetsListener((v, insets) -> {
             int left, top, right, bottom;
             if (Build.VERSION.SDK_INT >= 30) {
@@ -94,10 +100,16 @@ public class MainActivity extends Activity {
         settings.setGeolocationEnabled(true);
         settings.setAllowFileAccess(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " AngermundTransportNative/1.2");
+        settings.setUserAgentString(settings.getUserAgentString() + " AngermundTransportNative/1.3");
 
         webView.addJavascriptInterface(new NativeBridge(), "AngermundNative");
-        webView.setWebViewClient(new WebViewClient());
+        webView.setWebViewClient(new WebViewClient() {
+            @Override
+            public void onPageFinished(WebView view, String url) {
+                super.onPageFinished(view, url);
+                view.postDelayed(MainActivity.this::hideNativeSplash, 350);
+            }
+        });
         webView.setWebChromeClient(new WebChromeClient() {
             @Override
             public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
@@ -119,6 +131,56 @@ public class MainActivity extends Activity {
 
         requestNotificationPermission();
         startStoredServiceIfEnabled();
+    }
+
+    private void addNativeSplash(FrameLayout root) {
+        splashOverlay = new FrameLayout(this);
+        splashOverlay.setBackgroundColor(0xff061421);
+        splashOverlay.setClickable(true);
+        splashOverlay.setLayoutParams(new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT));
+
+        LinearLayout box = new LinearLayout(this);
+        box.setOrientation(LinearLayout.VERTICAL);
+        box.setGravity(Gravity.CENTER_HORIZONTAL);
+        FrameLayout.LayoutParams boxParams = new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.CENTER);
+        box.setLayoutParams(boxParams);
+
+        ImageView logo = new ImageView(this);
+        int size = (int) (Math.min(getResources().getDisplayMetrics().widthPixels * 0.68f,
+                360f * getResources().getDisplayMetrics().density));
+        LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(size, size);
+        logo.setLayoutParams(logoParams);
+        logo.setScaleType(ImageView.ScaleType.CENTER_CROP);
+        logo.setImageResource(R.drawable.angermund_app_icon_hq);
+        box.addView(logo);
+
+        TextView loading = new TextView(this);
+        loading.setText("LOADING OPERATIONS…");
+        loading.setTextColor(0xfff4f9ff);
+        loading.setTextSize(12);
+        loading.setLetterSpacing(0.16f);
+        loading.setGravity(Gravity.CENTER);
+        LinearLayout.LayoutParams textParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT);
+        textParams.topMargin = (int) (18 * getResources().getDisplayMetrics().density);
+        loading.setLayoutParams(textParams);
+        box.addView(loading);
+
+        splashOverlay.addView(box);
+        root.addView(splashOverlay);
+    }
+
+    private void hideNativeSplash() {
+        if (splashOverlay == null) return;
+        splashOverlay.animate().alpha(0f).setDuration(220).withEndAction(() -> {
+            if (splashOverlay != null) {
+                ViewGroup parent = (ViewGroup) splashOverlay.getParent();
+                if (parent != null) parent.removeView(splashOverlay);
+                splashOverlay = null;
+            }
+        }).start();
     }
 
     private SharedPreferences prefs() {
@@ -379,6 +441,39 @@ public class MainActivity extends Activity {
                     return;
                 }
                 ensureRegistered(jwt, true);
+            });
+        }
+
+        @JavascriptInterface
+        public void startGpsTest(String jwt, String label) {
+            runOnUiThread(() -> {
+                prefs().edit()
+                        .putBoolean("gps_test_mode", true)
+                        .putString("gps_test_label", label == null ? "Phone GPS Test" : label)
+                        .apply();
+                gpsRequested = true;
+                if (!hasForegroundLocation()) {
+                    pendingJwt = jwt;
+                    ensureRegistered(jwt, false);
+                    requestLocationPermissions();
+                    return;
+                }
+                ensureRegistered(jwt, true);
+                toast("Phone GPS TEST active");
+            });
+        }
+
+        @JavascriptInterface
+        public void stopGpsTest() {
+            runOnUiThread(() -> {
+                prefs().edit()
+                        .putBoolean("gps_test_mode", false)
+                        .putBoolean("gps_enabled", false)
+                        .remove("gps_test_label")
+                        .remove("pending_location")
+                        .apply();
+                stopService(new Intent(MainActivity.this, LocationService.class));
+                toast("Phone GPS TEST stopped");
             });
         }
 
