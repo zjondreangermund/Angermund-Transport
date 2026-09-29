@@ -639,3 +639,31 @@ body.driver-mode main{padding-bottom:94px!important}
 .alert.alert-action em{font-style:normal;color:#75b5ff;font-size:12px;white-space:nowrap}
 .task-copy small b{color:#dcecff;font-weight:700}
 @media(max-width:650px){.alert.alert-action{grid-template-columns:auto 1fr}.alert.alert-action em{grid-column:2}.kpi.kpi-action em{position:static;display:block;margin-top:7px}}
+
+
+/* Quick PIN, credentials and phone GPS test */
+.login-card{width:min(430px,100%);padding:28px;border-radius:24px;background:linear-gradient(155deg,#102942,#071725);border-color:#285985}
+.login-card>img{display:block;width:min(190px,52%);height:auto;aspect-ratio:1/1;object-fit:cover;margin:0 auto 16px;border-radius:30px;box-shadow:0 20px 55px rgba(0,0,0,.42),0 0 35px rgba(25,126,255,.2)}
+.login-card h1{text-align:center;margin-top:4px}.login-card>p{text-align:center}
+.quick-pin-panel{margin-top:18px;padding-top:4px}.quick-pin-panel p{font-size:12px;text-align:center;margin:8px 0;color:var(--muted)}
+.quick-pin-divider{display:flex;align-items:center;gap:10px;color:#89a8c5;font-size:11px;text-transform:uppercase;letter-spacing:.9px;margin:8px 0}
+.quick-pin-divider:before,.quick-pin-divider:after{content:'';height:1px;background:var(--line);flex:1}
+#loginPin{width:100%;text-align:center;font-size:26px;letter-spacing:14px;padding-left:14px;font-weight:800}
+#pinLoginError,#setupQuickPinError{display:block;color:var(--red);min-height:16px}
+.quick-pin-setup{text-align:center;max-width:440px;margin:auto}.quick-pin-setup .quick-pin-shield{font-size:48px}.quick-pin-setup h2{margin:6px 0}.quick-pin-setup p{color:var(--muted);line-height:1.5}
+.quick-pin-setup label{text-align:left;display:grid;gap:6px;margin:14px 0;color:var(--muted)}
+.quick-pin-setup input{text-align:center;font-size:25px;letter-spacing:12px;padding-left:12px}
+.phone-gps-test{margin:0 0 16px;border-color:#285a85;background:linear-gradient(145deg,rgba(22,66,104,.32),rgba(7,23,37,.9))}
+.phone-gps-test-controls{display:grid;grid-template-columns:minmax(180px,1fr) auto auto;gap:8px;margin:13px 0 7px}
+.phone-gps-test-controls input{min-width:0}
+.gps-test-state{font-size:11px;font-weight:900;color:var(--muted);white-space:nowrap}.gps-test-state.on{color:var(--green)}
+.credential-table{overflow:auto;max-height:58vh;border:1px solid var(--line);border-radius:12px;margin:12px 0}.credential-table table{width:100%;border-collapse:collapse}.credential-table th,.credential-table td{padding:10px;border-bottom:1px solid var(--line);text-align:left;white-space:nowrap}.credential-table code{font-size:12px}
+.driver-account-login span small{display:block;color:var(--muted);font-size:10px;margin-top:2px}
+.toolbar-actions{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}
+@media(max-width:650px){.phone-gps-test-controls{grid-template-columns:1fr}.toolbar-actions{width:100%}.toolbar-actions button{flex:1}.login-card{padding:22px}.login-card>img{width:min(180px,54%)}}
+
+/* Crisp app-only loading artwork */
+.loading-screen{background:radial-gradient(circle at 50% 34%,#123b7a 0,#071b39 38%,#020914 75%)}
+.loading-brand{gap:18px}
+.loading-screen .loading-brand img{width:min(74vw,360px)!important;max-height:44vh;aspect-ratio:1/1;object-fit:cover;border-radius:34px!important;box-shadow:0 26px 80px rgba(0,18,65,.58),0 0 50px rgba(24,133,255,.28)!important}
+.loading-brand span{font-size:12px;letter-spacing:.16em;color:#f7fbff}
