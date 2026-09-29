@@ -17,8 +17,8 @@
     <application
         android:allowBackup="false"
         android:label="@string/app_name"
-        android:icon="@drawable/angermund_app_icon_original"
-        android:roundIcon="@drawable/angermund_app_icon_original"
+        android:icon="@drawable/angermund_app_icon_hq"
+        android:roundIcon="@drawable/angermund_app_icon_hq"
         android:supportsRtl="true"
         android:theme="@android:style/Theme.Material.Light.NoActionBar"
         android:usesCleartextTraffic="false">
