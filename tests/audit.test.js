@@ -91,9 +91,17 @@ test('targeted notifications stay private in realtime and read endpoints',async(
   assert.ok(!text.includes('Finance confidential'));assert.ok(text.includes('Angermund Transport test alert'));
  }finally{controller.abort()}
 });
+test('reading a shared alert does not clear it for another user',async()=>{
+ const n=(await request('/api/notifications/test',{method:'POST'})).body;
+ await request('/api/notifications/'+n.id+'/read',{method:'PATCH',token:driver});
+ assert.equal((await request('/api/notifications',{token:driver})).body.find(x=>x.id===n.id).read,true);
+ assert.equal((await request('/api/notifications',{token:finance})).body.find(x=>x.id===n.id).read,false);
+});
 test('account updates and password reset revoke authorization immediately',async()=>{
  await request('/api/users/'+driverId,{method:'PATCH',body:{active:false}});assert.equal((await request('/api/session',{token:driver})).status,401);
  await request('/api/users/'+driverId,{method:'PATCH',body:{active:true}});driver=await login('driver@audit.test');
+ const device=(await request('/api/mobile/register',{method:'POST',token:driver,body:{deviceId:'audit-device'}})).body;
  assert.equal((await request('/api/users/'+driverId+'/reset-password',{method:'POST',body:{password}})).status,200);assert.equal((await request('/api/session',{token:driver})).status,401);
+ assert.equal((await request('/api/mobile/context',{token:null,headers:{'x-device-token':device.deviceToken}})).status,401);
  driver=await login('driver@audit.test');assert.equal((await request('/api/session',{token:driver})).body.user.id,driverId);
 });
