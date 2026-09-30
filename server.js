@@ -531,20 +531,39 @@ async function deviceAuth(req,res,next){
 }
 function emit(type,data){const msg=`event: ${type}\ndata: ${JSON.stringify(data)}\n\n`;for(const res of clients)res.write(msg)}
 const distance=(a,b)=>{const R=6371000,p=x=>x*Math.PI/180,dLat=p(b.latitude-a.latitude),dLon=p(b.longitude-a.longitude),x=Math.sin(dLat/2)**2+Math.cos(p(a.latitude))*Math.cos(p(b.latitude))*Math.sin(dLon/2)**2;return 2*R*Math.atan2(Math.sqrt(x),Math.sqrt(1-x))};
-async function createNotification(n){const row={id:crypto.randomUUID(),type:n.type||'system',severity:n.severity||'info',title:n.title,message:n.message,role:n.role||null,user_id:n.userId||null,driver_id:n.driverId||null,linked_type:n.linkedType||null,linked_id:n.linkedId||null,read:false,created_at:new Date().toISOString()};if(pool)await q('INSERT INTO notifications(id,type,severity,title,message,role,user_id,driver_id,linked_type,linked_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[row.id,row.type,row.severity,row.title,row.message,row.role,row.user_id,row.driver_id,row.linked_type,row.linked_id]);else memory.notifications.unshift(row);emit('notification',row);await sendExternal(row);return row}
+async function createNotification(n){
+  const row={id:crypto.randomUUID(),type:n.type||'system',severity:n.severity||'info',title:n.title,message:n.message,role:n.role||null,user_id:n.userId||null,driver_id:n.driverId||null,linked_type:n.linkedType||null,linked_id:n.linkedId||null,read:false,created_at:new Date().toISOString()};
+  if(row.type==='geofence'){
+    if(pool){
+      const existing=(await q("SELECT id,type,severity,title,message,role,user_id,driver_id,linked_type,linked_id,read,created_at FROM notifications WHERE type='geofence' AND title=$1 AND coalesce(message,'')=coalesce($2,'') AND coalesce(linked_id,'')=coalesce($3,'') AND created_at>now()-interval '5 minutes' ORDER BY created_at DESC LIMIT 1",[row.title,row.message,row.linked_id]))[0];
+      if(existing)return existing
+    }else{
+      const cutoff=Date.now()-5*60*1000,existing=memory.notifications.find(x=>x.type==='geofence'&&x.title===row.title&&x.message===row.message&&String(x.linked_id||x.linkedId||'')===String(row.linked_id||'')&&new Date(x.created_at||x.createdAt).getTime()>cutoff);
+      if(existing)return existing
+    }
+  }
+  if(pool)await q('INSERT INTO notifications(id,type,severity,title,message,role,user_id,driver_id,linked_type,linked_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[row.id,row.type,row.severity,row.title,row.message,row.role,row.user_id,row.driver_id,row.linked_type,row.linked_id]);
+  else memory.notifications.unshift(row);
+  emit('notification',row);await sendExternal(row);return row
+}
 async function sendExternal(n){
   const tasks=[];
   if(!n.user_id&&n.role!=='driver'&&process.env.RESEND_API_KEY&&process.env.ALERT_EMAIL_TO)tasks.push(fetch('https://api.resend.com/emails',{method:'POST',headers:{Authorization:`Bearer ${process.env.RESEND_API_KEY}`,'Content-Type':'application/json'},body:JSON.stringify({from:'Angermund Alerts <alerts@resend.dev>',to:[process.env.ALERT_EMAIL_TO],subject:n.title,html:`<h2>${n.title}</h2><p>${n.message}</p>`})}));
   if(!n.user_id&&n.role!=='driver'&&process.env.META_WHATSAPP_TOKEN&&process.env.META_PHONE_NUMBER_ID&&process.env.WHATSAPP_ALERT_TO)tasks.push(fetch(`https://graph.facebook.com/v21.0/${process.env.META_PHONE_NUMBER_ID}/messages`,{method:'POST',headers:{Authorization:`Bearer ${process.env.META_WHATSAPP_TOKEN}`,'Content-Type':'application/json'},body:JSON.stringify({messaging_product:'whatsapp',to:process.env.WHATSAPP_ALERT_TO,type:'text',text:{body:`${n.title}\n${n.message}`}})}));
   let subs=[];
   if(pool){
-    if(n.user_id)subs=await q('SELECT ps.id,ps.subscription FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id WHERE u.active=true AND u.id=$1',[n.user_id]);
-    else if(n.driver_id)subs=await q('SELECT ps.id,ps.subscription FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id WHERE u.active=true AND u.driver_id=$1',[n.driver_id]);
-    else if(n.role)subs=await q('SELECT ps.id,ps.subscription FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id WHERE u.active=true AND u.role=$1',[n.role]);
-    else subs=await q('SELECT id,subscription FROM push_subscriptions');
-  }else subs=memory.subscriptions.filter(x=>n.user_id?x.userId===n.user_id:n.driver_id?x.driverId===n.driver_id:n.role?x.role===n.role:true);
+    const base="SELECT ps.id,ps.subscription,ps.user_id AS \"userId\",EXISTS(SELECT 1 FROM mobile_devices md WHERE md.user_id=ps.user_id AND md.active=true AND md.last_seen>now()-interval '10 minutes') AS \"nativeActive\" FROM push_subscriptions ps JOIN users u ON u.id=ps.user_id WHERE u.active=true";
+    if(n.user_id)subs=await q(base+' AND u.id=$1',[n.user_id]);
+    else if(n.driver_id)subs=await q(base+' AND u.driver_id=$1',[n.driver_id]);
+    else if(n.role)subs=await q(base+' AND u.role=$1',[n.role]);
+    else subs=await q(base);
+  }else{
+    subs=memory.subscriptions.filter(x=>n.user_id?x.userId===n.user_id:n.driver_id?x.driverId===n.driver_id:n.role?x.role===n.role:true).map(x=>({...x,nativeActive:memory.mobileDevices.some(d=>d.userId===x.userId&&d.active&&(!d.lastSeen||Date.now()-new Date(d.lastSeen).getTime()<10*60*1000))}))
+  }
   if(process.env.VAPID_PUBLIC_KEY&&process.env.VAPID_PRIVATE_KEY){
-    for(const row of subs)tasks.push((async()=>{
+    for(const row of subs){
+      if(row.nativeActive)continue;
+      tasks.push((async()=>{
       try{return await webpush.sendNotification(row.subscription||row,JSON.stringify({title:n.title,body:n.message,linkedType:n.linked_type,linkedId:n.linked_id,url:'/'}))}
       catch(e){
         const code=num(e.statusCode);
@@ -555,6 +574,7 @@ async function sendExternal(n){
         return null
       }
     })())
+    }
   }
   await Promise.allSettled(tasks);
 }
