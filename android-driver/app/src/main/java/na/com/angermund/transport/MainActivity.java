@@ -7,6 +7,9 @@ import android.content.ActivityNotFoundException;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
+import android.graphics.ImageDecoder;
 import android.location.LocationManager;
 import android.net.Uri;
 import android.os.Build;
@@ -36,6 +39,7 @@ import org.json.JSONObject;
 import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -100,7 +104,7 @@ public class MainActivity extends Activity {
         settings.setGeolocationEnabled(true);
         settings.setAllowFileAccess(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " AngermundTransportNative/1.3");
+        settings.setUserAgentString(settings.getUserAgentString() + " AngermundTransportNative/1.3.2");
 
         webView.addJavascriptInterface(new NativeBridge(), "AngermundNative");
         webView.setWebViewClient(new WebViewClient() {
@@ -337,6 +341,48 @@ public class MainActivity extends Activity {
         return sb.toString();
     }
 
+    private Uri normalizeImageForUpload(Uri source) {
+        if (source == null) return null;
+        try {
+            String mime = getContentResolver().getType(source);
+            if (mime == null || !mime.toLowerCase().startsWith("image/")) return source;
+
+            Bitmap bitmap;
+            if (Build.VERSION.SDK_INT >= 28) {
+                ImageDecoder.Source decoderSource = ImageDecoder.createSource(getContentResolver(), source);
+                bitmap = ImageDecoder.decodeBitmap(decoderSource, (decoder, info, src) -> {
+                    decoder.setAllocator(ImageDecoder.ALLOCATOR_SOFTWARE);
+                });
+            } else {
+                try (InputStream in = getContentResolver().openInputStream(source)) {
+                    bitmap = BitmapFactory.decodeStream(in);
+                }
+            }
+            if (bitmap == null) return source;
+
+            final int maxSide = 2400;
+            int w = bitmap.getWidth(), h = bitmap.getHeight();
+            Bitmap out = bitmap;
+            if (Math.max(w, h) > maxSide) {
+                float scale = (float) maxSide / (float) Math.max(w, h);
+                out = Bitmap.createScaledBitmap(bitmap, Math.max(1, Math.round(w * scale)), Math.max(1, Math.round(h * scale)), true);
+            }
+
+            File dir = new File(getCacheDir(), "camera");
+            if (!dir.exists()) dir.mkdirs();
+            File jpg = new File(dir, "upload-" + System.currentTimeMillis() + ".jpg");
+            try (FileOutputStream fos = new FileOutputStream(jpg)) {
+                if (!out.compress(Bitmap.CompressFormat.JPEG, 92, fos)) return source;
+            }
+
+            if (out != bitmap) out.recycle();
+            bitmap.recycle();
+            return FileProvider.getUriForFile(this, getPackageName() + ".files", jpg);
+        } catch (Exception e) {
+            return source;
+        }
+    }
+
     private void openFileChooser() {
         try {
             File dir = new File(getCacheDir(), "camera");
@@ -367,14 +413,27 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         if (requestCode == REQ_FILE) {
-            Uri[] result = null;
-            if (resultCode == RESULT_OK) {
-                if (data != null && data.getData() != null) result = new Uri[]{data.getData()};
-                else if (cameraUri != null) result = new Uri[]{cameraUri};
-            }
-            if (fileCallback != null) fileCallback.onReceiveValue(result);
+            final ValueCallback<Uri[]> callback = fileCallback;
             fileCallback = null;
+
+            Uri chosen = null;
+            if (resultCode == RESULT_OK) {
+                if (data != null && data.getData() != null) chosen = data.getData();
+                else if (cameraUri != null) chosen = cameraUri;
+            }
             cameraUri = null;
+
+            if (callback == null) return;
+            if (chosen == null) {
+                callback.onReceiveValue(null);
+                return;
+            }
+
+            final Uri selected = chosen;
+            io.execute(() -> {
+                Uri normalized = normalizeImageForUpload(selected);
+                runOnUiThread(() -> callback.onReceiveValue(new Uri[]{normalized != null ? normalized : selected}));
+            });
             return;
         }
         super.onActivityResult(requestCode, resultCode, data);
