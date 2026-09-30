@@ -453,22 +453,52 @@ async function openAiReceiptExtract(buffer,mimeType,ocrText,model,detail='high')
   }finally{clearTimeout(timer)}
 }
 async function analyzeReceiptHybrid(buffer,mimeType,state={}){
-  const source=receiptOcrBuffer(buffer,mimeType),ocr=await recognizeReceiptBest(source),ocrExtractions=ocr.results.map(r=>extractReceiptFields(r.text,state)),ocrExtracted=finalizeReceiptExtraction(mergeReceiptExtractions(ocrExtractions)),raw=ocr.results.map(r=>'['+r.label+']\n'+r.text).join('\n\n--- OCR PASS ---\n\n');
-  let extracted=ocrExtracted,aiPrimary=null,aiEscalated=null,aiError='';
-  if(OPENAI_API_KEY){
+  const source=receiptOcrBuffer(buffer,mimeType),supportedMime=receiptImageMime(source,mimeType);
+  let extracted={},aiPrimary=null,aiEscalated=null,aiError='',raw='',ocr={best:{confidence:0,text:'',label:'none'},results:[]};
+
+  // With an OpenAI key configured, use vision first. This avoids running four
+  // Tesseract passes before every scan and prevents malformed/unsupported phone
+  // images from crashing the Node worker process.
+  if(OPENAI_API_KEY&&supportedMime){
     try{
-      aiPrimary=await openAiReceiptExtract(source,mimeType,raw,RECEIPT_AI_PRIMARY_MODEL,'high');
-      if(aiPrimary)extracted=finalizeReceiptExtraction(mergeReceiptExtractions([aiPrimary,ocrExtracted]));
-      if(receiptNeedsSol(extracted,aiPrimary,ocrExtracted,ocr.best.confidence)){
-        aiEscalated=await openAiReceiptExtract(source,mimeType,raw,RECEIPT_AI_ESCALATION_MODEL,'original');
-        if(aiEscalated)extracted=finalizeReceiptExtraction(mergeReceiptExtractions([aiEscalated,aiPrimary,ocrExtracted].filter(Boolean)))
+      aiPrimary=await openAiReceiptExtract(source,supportedMime,'',RECEIPT_AI_PRIMARY_MODEL,'high');
+      if(aiPrimary){
+        extracted=finalizeReceiptExtraction(aiPrimary);
+        const learned=classifyReceipt('',aiPrimary.supplier,state,{litres:aiPrimary.litres,pricePerLitre:aiPrimary.pricePerLitre,suggestedAmount:aiPrimary.suggestedAmount});
+        if((extracted.category==='Other'||num(extracted.categoryConfidence)<70)&&learned.category!=='Other'){
+          extracted.category=learned.category;extracted.categoryConfidence=Math.max(num(extracted.categoryConfidence),learned.confidence);extracted.categoryReason=learned.reason;extracted.categorySource=learned.source
+        }
+      }
+      if(receiptNeedsSol(extracted,aiPrimary,null,0)){
+        aiEscalated=await openAiReceiptExtract(source,supportedMime,'',RECEIPT_AI_ESCALATION_MODEL,'original');
+        if(aiEscalated)extracted=finalizeReceiptExtraction(mergeReceiptExtractions([aiEscalated,aiPrimary].filter(Boolean)))
       }
     }catch(e){aiError=e.message||String(e)}
+    if(aiPrimary||aiEscalated){
+      const aiUsed=true,model=aiEscalated?.aiModel||aiPrimary?.aiModel||null;
+      extracted.aiUsed=true;extracted.aiModel=model;extracted.aiEscalated=Boolean(aiEscalated);extracted.aiAvailable=true;if(aiError)extracted.aiError=aiError;
+      const confidence=Math.max(num(aiEscalated?.extractionConfidence),num(aiPrimary?.extractionConfidence),num(extracted.categoryConfidence));
+      return{extracted,confidence,raw:'AI vision scan',ocr,ai:{available:true,used:aiUsed,primaryModel:RECEIPT_AI_PRIMARY_MODEL,escalationModel:RECEIPT_AI_ESCALATION_MODEL,model,escalated:Boolean(aiEscalated),error:aiError||null}}
+    }
+    // Do not hand an image that OpenAI could not decode to Tesseract in the same
+    // request. Tesseract's worker can terminate the whole service on bad phone
+    // image bytes. Return a controlled failure instead.
+    throw Error(aiError||'AI could not read this image. Retake the slip photo or choose a JPG/PNG image.')
   }
-  const aiUsed=Boolean(aiPrimary||aiEscalated),model=aiEscalated?.aiModel||aiPrimary?.aiModel||null;
-  extracted.aiUsed=aiUsed;extracted.aiModel=model;extracted.aiEscalated=Boolean(aiEscalated);extracted.aiAvailable=Boolean(OPENAI_API_KEY);if(aiError)extracted.aiError=aiError;
-  const confidence=Math.max(num(ocr.best.confidence),num(aiEscalated?.extractionConfidence),num(aiPrimary?.extractionConfidence));
-  return{extracted,confidence,raw,ocr,ai:{available:Boolean(OPENAI_API_KEY),used:aiUsed,primaryModel:RECEIPT_AI_PRIMARY_MODEL,escalationModel:RECEIPT_AI_ESCALATION_MODEL,model,escalated:Boolean(aiEscalated),error:aiError||null}}
+
+  if(OPENAI_API_KEY&&!supportedMime)throw Error('Unsupported slip image format. Please retake or upload a JPG, PNG or WebP image.');
+
+  // OCR-only fallback for installations where OpenAI is not configured.
+  try{
+    ocr=await recognizeReceiptBest(source);
+    const ocrExtractions=ocr.results.map(r=>extractReceiptFields(r.text,state));
+    extracted=finalizeReceiptExtraction(mergeReceiptExtractions(ocrExtractions));
+    raw=ocr.results.map(r=>'['+r.label+']\n'+r.text).join('\n\n--- OCR PASS ---\n\n');
+  }catch(e){
+    throw Error('Could not read this slip image. Please retake it clearly as a JPG or PNG.')
+  }
+  extracted.aiUsed=false;extracted.aiModel=null;extracted.aiEscalated=false;extracted.aiAvailable=false;
+  return{extracted,confidence:num(ocr.best.confidence),raw,ocr,ai:{available:false,used:false,primaryModel:RECEIPT_AI_PRIMARY_MODEL,escalationModel:RECEIPT_AI_ESCALATION_MODEL,model:null,escalated:false,error:null}}
 }
 
 if(!DATABASE_URL)console.warn('DATABASE_URL missing: using development memory store. Set PostgreSQL for multi-device persistence.');
