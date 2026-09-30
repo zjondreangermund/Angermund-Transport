@@ -536,6 +536,105 @@ async function scanDriverReceipt(file){
   }catch{return{}}
 }
 
+
+function plateKey(v){return String(v||'').toUpperCase().replace(/[^A-Z0-9]/g,'')}
+function suggestedSlipTruck(x){
+  const k=plateKey(x&&x.registration);if(!k)return null;
+  return (db.trucks||[]).find(t=>{const tk=plateKey(t.registration);return tk&&(tk===k||tk.includes(k)||k.includes(tk))})||null
+}
+function suggestedSlipTrip(x){
+  const tr=suggestedSlipTruck(x);if(!tr)return null;
+  return (db.trips||[]).filter(t=>t.truckId===tr.id&&!['Closed','Invoiced'].includes(t.status)).sort((a,b)=>new Date(b.createdAt||b.date||0)-new Date(a.createdAt||a.date||0))[0]||null
+}
+function adminSlipDestination(category,tripId){
+  if(category==='Diesel')return tripId?'Diesel Control → selected trip':'Diesel Control → company fleet';
+  if(category==='Mass distance charge (MDC)')return tripId?'Road Charges / trip expense':'Company expense · MDC';
+  if(['Emergency repair','Breakdown parts','Workshop / spares','Tyre repair','Wash bay'].includes(category))return tripId?'Trip expense · workshop/vehicle cost':'Company vehicle/workshop expense';
+  if(['Customs / clearing','Road permit / RFA','Border permit','Weighbridge','Ferry / crossing','Toll','Loading / offloading','Parking'].includes(category))return tripId?'Route expense → selected trip':'Company operating expense';
+  if(['Meals','Accommodation'].includes(category))return tripId?'Driver/trip expense → selected trip':'Company operating expense';
+  if(category==='Police / traffic fine')return tripId?'Trip expense · non-reimbursable fine':'Company expense · non-reimbursable fine';
+  return tripId?'Trip expense → selected trip':'Company operating expense'
+}
+async function openAdminSmartSlip(file){
+  $('modalTitle').textContent='✨ AI slip scanner';
+  $('entryForm').innerHTML='<div class="driver-scan-loading"><div class="driver-scan-camera">📷</div><h2>Reading slip with AI…</h2><p>Identifying the expense, supplier, amount and where it should be posted.</p></div>';
+  $('modal').classList.remove('hidden');
+  const x=await scanDriverReceipt(file);
+  if($('modal').classList.contains('hidden'))return;
+  renderAdminSmartSlip(file,x||{})
+}
+function renderAdminSmartSlip(file,x){
+  const matchedTruck=suggestedSlipTruck(x),matchedTrip=suggestedSlipTrip(x);
+  const fuelStructure=num(x.litres)>0||num(x.pricePerLitre)>0||(Array.isArray(x.fuelTransactions)&&x.fuelTransactions.length>0);
+  const detected=fuelStructure&&(!x.category||x.category==='Other')?'Diesel':(SMART_SLIP_CATEGORIES.includes(x.category)?x.category:'Other');
+  const confidence=Math.max(0,Math.min(100,num(x.categoryConfidence)||num(x.extractionConfidence)));
+  const scope=matchedTrip?'trip':'company';
+  const tripOptions='<option value="">— Company / no trip —</option>'+(db.trips||[]).slice().sort((a,b)=>new Date(b.createdAt||b.date||0)-new Date(a.createdAt||a.date||0)).map(t=>'<option value="'+esc(t.id)+'" '+(matchedTrip&&matchedTrip.id===t.id?'selected':'')+'>'+esc(t.number)+' · '+esc(truck(t.truckId))+' · '+esc(t.status)+'</option>').join('');
+  const truckOptions='<option value="">— Select truck if applicable —</option>'+(db.trucks||[]).map(t=>'<option value="'+esc(t.id)+'" '+(matchedTruck&&matchedTruck.id===t.id?'selected':'')+'>'+esc(truck(t.id))+'</option>').join('');
+  const categoryOptions=SMART_SLIP_CATEGORIES.map(c=>'<option value="'+esc(c)+'" '+(c===detected?'selected':'')+'>'+esc(c)+'</option>').join('');
+  const aiName=x.aiModel?String(x.aiModel):'AI/OCR';
+  const dateValue=(String(x.date||'').match(/^\d{4}-\d{2}-\d{2}/)||[])[0]||today();
+  let matchNote='';
+  if(matchedTrip)matchNote='<div class="support-merge-note">✓ Registration matched '+esc(truck(matchedTruck.id))+' and suggested trip <b>'+esc(matchedTrip.number)+'</b>.</div>';
+  else if(matchedTruck)matchNote='<div class="support-merge-note">✓ Registration matched '+esc(truck(matchedTruck.id))+'. Choose a trip if this expense belongs to one.</div>';
+  $('modalTitle').textContent='✨ Check scanned slip';
+  $('entryForm').innerHTML='<div class="driver-smart-slip admin-smart-slip">'
+    +'<div class="driver-detection '+(confidence>=85?'high':confidence>=65?'medium':'low')+'"><span>'+(confidence>=85?'✨':'🔎')+'</span><div><strong>Looks like: '+esc(detected)+'</strong><small>'+(confidence?confidence.toFixed(0)+'% confidence · ':'')+esc(aiName)+(x.categoryReason?' · '+esc(x.categoryReason):'')+'</small></div></div>'
+    +matchNote
+    +'<div class="form-grid">'
+      +'<div class="field full"><label>Expense type</label><select id="adminSlipCategory">'+categoryOptions+'</select></div>'
+      +'<div class="field"><label>Date</label><input id="adminSlipDate" type="date" value="'+esc(dateValue)+'"></div>'
+      +'<div class="field"><label>Amount / receipt total</label><input id="adminSlipAmount" type="number" step="0.01" inputmode="decimal" value="'+esc(String(x.printedTotal||x.suggestedAmount||''))+'"></div>'
+      +'<div class="field"><label>Supplier / place</label><input id="adminSlipSupplier" value="'+esc(String(x.supplier||''))+'"></div>'
+      +'<div class="field"><label>Slip / receipt no.</label><input id="adminSlipNumber" value="'+esc(String(x.documentNumber||''))+'"></div>'
+      +'<div class="field"><label>Belongs to</label><select id="adminSlipScope"><option value="company" '+(scope==='company'?'selected':'')+'>Company / general</option><option value="trip" '+(scope==='trip'?'selected':'')+'>Trip</option></select></div>'
+      +'<div class="field"><label>Trip</label><select id="adminSlipTrip">'+tripOptions+'</select></div>'
+      +'<div class="field full"><label>Truck / vehicle</label><select id="adminSlipTruck">'+truckOptions+'</select></div>'
+    +'</div>'
+    +'<div id="adminSlipDieselFields" class="smart-diesel-fields">'
+      +'<label>Litres<input id="adminSlipLitres" type="number" step="0.001" value="'+esc(String(x.litres||''))+'"></label>'
+      +'<label>Price / litre<input id="adminSlipPrice" type="number" step="0.0001" value="'+esc(String(x.pricePerLitre||''))+'"></label>'
+      +'<label>Odometer<input id="adminSlipOdo" type="number" step="1" value="'+esc(String(x.odometer||''))+'"></label>'
+    +'</div>'
+    +'<div class="policy" id="adminSlipDestination"></div>'
+    +(x.needsReview?'<div class="fuel-review-warning">⚠ AI found conflicting or unclear values. Check the fields before confirming.</div>':'')
+    +'<div class="driver-modal-actions"><button type="button" class="ghost" id="cancelForm">Cancel</button><button class="driver-save">✓ CONFIRM & POST</button></div>'
+  +'</div>';
+  $('modal').classList.remove('hidden');
+
+  const sync=()=>{
+    const category=$('adminSlipCategory').value,isDiesel=category==='Diesel',scopeValue=$('adminSlipScope').value;
+    $('adminSlipDieselFields').classList.toggle('hidden',!isDiesel);
+    $('adminSlipTrip').disabled=scopeValue!=='trip';
+    if(scopeValue!=='trip')$('adminSlipTrip').value='';
+    const tripId=$('adminSlipTrip').value,t=get('trips',tripId);
+    if(scopeValue==='trip'&&t.id){$('adminSlipTruck').value=t.truckId||'';$('adminSlipTruck').disabled=true}else $('adminSlipTruck').disabled=false;
+    $('adminSlipDestination').innerHTML='<h3>Where this will go</h3><p><b>'+esc(adminSlipDestination(category,tripId))+'</b></p><small>Nothing is posted until you press Confirm & Post.</small>'
+  };
+  $('adminSlipCategory').onchange=sync;$('adminSlipScope').onchange=sync;$('adminSlipTrip').onchange=sync;sync();
+  $('cancelForm').onclick=()=>$('modal').classList.add('hidden');
+  $('entryForm').onsubmit=async e=>{
+    e.preventDefault();
+    const category=$('adminSlipCategory').value,scopeValue=$('adminSlipScope').value,tripId=scopeValue==='trip'?$('adminSlipTrip').value:'';
+    const amount=num($('adminSlipAmount').value),litres=num($('adminSlipLitres')&&$('adminSlipLitres').value),price=num($('adminSlipPrice')&&$('adminSlipPrice').value);
+    if(scopeValue==='trip'&&!tripId)return notify('Select the trip this slip belongs to');
+    if(category==='Diesel'&&litres<=0)return notify('Enter diesel litres');
+    if(category!=='Diesel'&&amount<=0)return notify('Enter the amount');
+    const fd=new FormData(),odoEl=$('adminSlipOdo');
+    fd.append('receipt',file,file.name||'slip.jpg');fd.append('category',category);fd.append('detectedCategory',detected);fd.append('categoryConfidence',String(confidence));
+    fd.append('date',$('adminSlipDate').value||today());fd.append('amount',String(amount));fd.append('supplier',$('adminSlipSupplier').value.trim());fd.append('receiptNo',$('adminSlipNumber').value.trim());
+    fd.append('tripId',tripId);fd.append('truckId',$('adminSlipTruck').value||'');fd.append('registration',String(x.registration||''));fd.append('litres',String(litres));fd.append('price',String(price));fd.append('odometer',String(num(odoEl&&odoEl.value)));
+    fd.append('fuelTransactionCount',String(num(x.fuelTransactionCount)||0));fd.append('fuelTransactions',JSON.stringify(Array.isArray(x.fuelTransactions)?x.fuelTransactions:[]));
+    try{
+      const result=await api('/api/admin/slips/post',{method:'POST',body:fd});
+      $('modal').classList.add('hidden');await refreshCentralState(false);
+      if(result.destination==='diesel'){go('diesel');notify('✓ Slip posted to Diesel Control'+(tripId?' and linked to '+(get('trips',tripId).number||'trip'):' · company fleet'))}
+      else if(tripId){notify('✓ '+category+' posted to '+(get('trips',tripId).number||'trip'));setTimeout(()=>openTrip(tripId),80)}
+      else notify('✓ '+category+' posted as a company expense')
+    }catch(err){notify(err.message)}
+  }
+}
+
 async function openDriverSmartSlip(t,file){
   $('modalTitle').textContent='📷 Scan slip';
   $('entryForm').innerHTML='<div class="driver-scan-loading"><div class="driver-scan-camera">📷</div><h2>Reading main slip…</h2><p>Finding supplier, amount, litres and expense type.</p></div>';
@@ -557,7 +656,7 @@ function smartSlipDraft(){
 }
 function renderDriverSmartSlip(t,mainFile,supportFile,primary,supporting,draft={}){
   const x=mergeSupportingReceipt(primary,supporting);
-  const categories=['Diesel','Toll','Meals','Accommodation','Parking','Border permit','Loading / offloading','Emergency repair','Other'];
+  const categories=SMART_SLIP_CATEGORIES;
   const fuelStructure=num(x.litres)>0||num(x.pricePerLitre)>0||(Array.isArray(x.fuelTransactions)&&x.fuelTransactions.length>0);
   const detected=fuelStructure&&(!x.category||x.category==='Other')?'Diesel':(categories.includes(x.category)?x.category:'Other');
   const confidence=fuelStructure&&detected==='Diesel'&&!x.needsReview
