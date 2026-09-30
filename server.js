@@ -557,6 +557,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS staff_id text;
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
 ALTER TABLE users ADD CONSTRAINT users_role_check CHECK(role IN ('admin','manager','dispatcher','driver','warehouse','workshop','finance','site_worker'));
 CREATE TABLE IF NOT EXISTS app_state(id integer PRIMARY KEY DEFAULT 1 CHECK(id=1),payload jsonb NOT NULL DEFAULT '{}'::jsonb,revision bigint NOT NULL DEFAULT 0,updated_at timestamptz DEFAULT now());
+CREATE TABLE IF NOT EXISTS app_state_backups(id uuid PRIMARY KEY,version text UNIQUE NOT NULL,payload jsonb NOT NULL,note text,created_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS gps_positions(id bigserial PRIMARY KEY,vehicle_id text NOT NULL,driver_id text,trip_id text,latitude double precision NOT NULL,longitude double precision NOT NULL,speed double precision DEFAULT 0,heading double precision DEFAULT 0,accuracy double precision,source text DEFAULT 'driver',recorded_at timestamptz DEFAULT now());
 CREATE INDEX IF NOT EXISTS gps_vehicle_time ON gps_positions(vehicle_id,recorded_at DESC);
 CREATE TABLE IF NOT EXISTS geofences(id uuid PRIMARY KEY,name text NOT NULL,latitude double precision NOT NULL,longitude double precision NOT NULL,radius_m double precision NOT NULL,event_types text[] DEFAULT ARRAY['enter','exit'],kind text DEFAULT 'custom',active boolean DEFAULT true,created_at timestamptz DEFAULT now());
@@ -1487,6 +1488,150 @@ async function ensureCanonicalFleet(){
   return changed.result
 }
 
+
+const TRIP_WORKBOOK_TEST_IMPORT={"version":"2026-09-30-sheet1-current-v1","source":"Trip Reports Vernon.xlsx / Sheet1","expected":{"trips":7,"distance":10136,"income":122066,"expenses":123605.12,"profit":-1539.12},"trips":[
+{"sourceIndex":1,"sourceRow":1,"driver":"JOSEF","client":"NBL","registration":"N 46928 W","fleet":12,"date":"2026-08-28","startKm":1750255,"endKm":1751736,"origin":"Windhoek","destination":"Rundu","returnOrigin":"Rundu","returnDestination":"Windhoek","note":"","distance":1481,"income":17438,"fuel":[{"date":"2026-01-09","supplier":"Bonsmara","litres":610.26,"amount":16324.57,"price":26.750188444269657}],"fuelTotal":16324.57,"tolls":0,"sAndT":500,"driverTripMoney":740.5,"offloading":0,"other":0,"expectedTotalExpenses":17565.07,"expectedProfit":-127.07},
+{"sourceIndex":2,"sourceRow":47,"driver":"JOSEF","client":"NBL","registration":"N 46928 W","fleet":12,"date":"2026-01-09","startKm":1751736,"endKm":1752579,"origin":"Windhoek","destination":"Walvis","returnOrigin":"Walvis","returnDestination":"Windhoek","note":"","distance":843,"income":17438,"fuel":[{"date":"2026-03-09","supplier":"Bonsmara","litres":300,"amount":8505,"price":28.35}],"fuelTotal":8505,"tolls":0,"sAndT":500,"driverTripMoney":421.5,"offloading":0,"other":0,"expectedTotalExpenses":9426.5,"expectedProfit":8011.5},
+{"sourceIndex":3,"sourceRow":93,"driver":"JOSEF","client":"NBL","registration":"N 46928 W","fleet":12,"date":"2026-03-09","startKm":1752579,"endKm":1754181,"origin":"Windhoek","destination":"Tsandi","returnOrigin":"Tsandi","returnDestination":"Windhoek","note":"","distance":1602,"income":17438,"fuel":[{"date":"2026-07-09","supplier":"Bonsmara","litres":680.23,"amount":19284.57,"price":28.350072769504433}],"fuelTotal":19284.57,"tolls":0,"sAndT":500,"driverTripMoney":801,"offloading":0,"other":0,"expectedTotalExpenses":20585.57,"expectedProfit":-3147.57},
+{"sourceIndex":4,"sourceRow":139,"driver":"JOSEF","client":"NBL","registration":"N 46928 W","fleet":12,"date":"2026-07-09","startKm":1754181,"endKm":1755660,"origin":"Windhoek","destination":"Rundu","returnOrigin":"Rundu","returnDestination":"Windhoek","note":"","distance":1479,"income":17438,"fuel":[{"date":"2026-09-14","supplier":"Bonsmara","litres":514.15,"amount":14576.11,"price":28.34991733929787}],"fuelTotal":14576.11,"tolls":0,"sAndT":500,"driverTripMoney":739.5,"offloading":0,"other":0,"expectedTotalExpenses":15815.61,"expectedProfit":1622.39},
+{"sourceIndex":5,"sourceRow":185,"driver":"ANTON","client":"NBL","registration":"N 46928 W","fleet":12,"date":"2026-09-15","startKm":1755660,"endKm":1757388,"origin":"Windhoek","destination":"Oshakati","returnOrigin":"Oshakati","returnDestination":"Windhoek","note":"Load Emoties in Kongoloa","distance":1728,"income":17438,"fuel":[{"date":"2026-09-22","supplier":"Bonsmara","litres":705.4,"amount":19998,"price":28.349872412815426}],"fuelTotal":19998,"tolls":0,"sAndT":500,"driverTripMoney":864,"offloading":0,"other":0,"expectedTotalExpenses":21362,"expectedProfit":-3924},
+{"sourceIndex":6,"sourceRow":231,"driver":"JOSEF","client":"NBL","registration":"N 46928 W","fleet":12,"date":"2026-09-22","startKm":1757388,"endKm":1758911,"origin":"Windhoek","destination":"Endola","returnOrigin":"Endola","returnDestination":"Windhoek","note":"","distance":1523,"income":17438,"fuel":[{"date":"2026-09-24","supplier":"Bonsmara","litres":653.06,"amount":18514.21,"price":28.349937218632284}],"fuelTotal":18514.21,"tolls":0,"sAndT":500,"driverTripMoney":761.5,"offloading":0,"other":0,"expectedTotalExpenses":19775.71,"expectedProfit":-2337.71},
+{"sourceIndex":7,"sourceRow":277,"driver":"JOSEF","client":"NBL","registration":"N 46928 W","fleet":12,"date":"2026-09-24","startKm":1758911,"endKm":1760391,"origin":"Windhoek","destination":"Oshakati","returnOrigin":"Oshakati","returnDestination":"Windhoek","note":"","distance":1480,"income":17438,"fuel":[{"date":"2026-09-28","supplier":"Bonsmara","litres":629.09,"amount":17834.66,"price":28.349934031696577}],"fuelTotal":17834.66,"tolls":0,"sAndT":500,"driverTripMoney":740,"offloading":0,"other":0,"expectedTotalExpenses":19074.66,"expectedProfit":-1636.66}
+]};
+
+function workbookImportKey(v){return String(v||'').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,' ').trim().replace(/\s+/g,' ')}
+function workbookImportSlug(v){return workbookImportKey(v).replace(/\s+/g,'_')||'item'}
+function applyWorkbookTripsToState(state){
+  const data=TRIP_WORKBOOK_TEST_IMPORT,oldTripIds=new Set((state.trips||[]).map(x=>String(x.id)));
+  state.trucks??=[];state.drivers??=[];state.clients??=[];state.routes??=[];
+
+  const findDriver=name=>{
+    const key=workbookImportKey(name),first=key.split(' ')[0];
+    let d=(state.drivers||[]).find(x=>workbookImportKey(x.name)===key);
+    if(!d&&first){
+      const matches=(state.drivers||[]).filter(x=>workbookImportKey(x.name).split(' ')[0]===first);
+      if(matches.length===1)d=matches[0]
+    }
+    if(!d){
+      d={id:'drv_xlsx_'+workbookImportSlug(name),name:String(name||'Imported Driver').trim(),phone:'',license:'CE',prdpExpiry:'',passportExpiry:'',status:'Available',role:'Driver',score:0,source:'Trip Reports Vernon.xlsx'};
+      state.drivers.push(d)
+    }
+    return d
+  };
+  const findClient=name=>{
+    const key=workbookImportKey(name);
+    let c=(state.clients||[]).find(x=>x.id==='cli_nbl'||workbookImportKey(x.name)===key||(/\bnbl\b/.test(key)&&/namibian breweries|\bnbl\b/.test(workbookImportKey(x.name))));
+    if(!c){
+      c={id:'cli_xlsx_'+workbookImportSlug(name),name:name==='NBL'?'Namibian Breweries Limited':String(name||'Imported Client'),terms:30,contact:'',email:'',status:'Active',source:'Trip Reports Vernon.xlsx'};
+      state.clients.push(c)
+    }
+    return c
+  };
+  const findTruck=registration=>{
+    const k=fleetKey(registration);
+    let t=(state.trucks||[]).find(x=>fleetKey(x.registration)===k);
+    if(!t){
+      t={id:'trk_xlsx_'+workbookImportSlug(registration),fleetName:'Imported '+registration,registration:String(registration||''),make:'',type:'Truck',status:'Available',odometer:0,serviceDue:0,licenseExpiry:'',roadworthyExpiry:'',trackerId:'',trackerModel:'',gps:'Not linked'};
+      state.trucks.push(t)
+    }
+    return t
+  };
+  const findRoute=src=>{
+    const origin=String(src.origin||'').trim(),dest=String(src.destination||'').trim(),name=origin+' ↔ '+dest;
+    const ok=v=>workbookImportKey(v);
+    let r=(state.routes||[]).find(x=>ok(x.name)===ok(name));
+    if(!r){
+      r={id:'rte_xlsx_'+workbookImportSlug(origin+'_'+dest),name,distance:num(src.distance),rate:num(src.income),crossBorder:/south africa|cape town|johannesburg|durban|rosslyn|ottery/i.test(name),roundTrip:true,notes:'Imported from Trip Reports Vernon.xlsx for workbook reconciliation'};
+      state.routes.push(r)
+    }
+    return r
+  };
+
+  // Remove current trip/test financial records while keeping company masters,
+  // workforce, fleet setup, permits, maintenance and unrelated operational history.
+  state.trips=[];
+  state.diesel=[];
+  state.expenses=[];
+  state.invoices=[];
+  state.payments=[];
+  state.advances=[];
+  state.tripIssues=[];
+  state.inspections=(state.inspections||[]).filter(x=>!x.tripId||!oldTripIds.has(String(x.tripId)));
+  state.tasks=(state.tasks||[]).filter(x=>!(x.linkedType==='trip'||oldTripIds.has(String(x.linkedId||''))));
+  state.approvals=(state.approvals||[]).filter(x=>!(x.linkedType==='trip'||oldTripIds.has(String(x.linkedId||''))));
+  state.incidents=(state.incidents||[]).map(x=>x.tripId&&oldTripIds.has(String(x.tripId))?{...x,tripId:''}:x);
+
+  const importedTrips=[],importedDiesel=[],importedExpenses=[];
+  for(const src of data.trips){
+    const n=String(src.sourceIndex).padStart(2,'0'),id='trip_xlsx_'+n,driver=findDriver(src.driver),client=findClient(src.client),truck=findTruck(src.registration),route=findRoute(src);
+    const trip={id,number:'AT-XLS-'+n,date:src.date,routeId:route.id,truckId:truck.id,trailerId:'',driverId:driver.id,clientId:client.id,load:'NBL load · '+src.origin+' → '+src.destination+' → '+src.returnDestination,tons:0,pallets:0,startKm:num(src.startKm),endKm:num(src.endKm),distance:num(src.distance),income:num(src.income),dieselCost:0,tolls:0,allowance:0,other:0,status:'Closed',stage:5,pod:true,invoiceId:'',approved:true,sourceWorkbook:data.source,sourceRow:src.sourceRow,sourceExpectedTotalExpenses:num(src.expectedTotalExpenses),sourceExpectedProfit:num(src.expectedProfit),notes:src.note||''};
+    importedTrips.push(trip);
+
+    for(let i=0;i<(src.fuel||[]).length;i++){
+      const f=src.fuel[i],amount=num(f.amount),litres=num(f.litres),price=num(f.price)||(litres?amount/litres:0);
+      importedDiesel.push({id:'fuel_xlsx_'+n+'_'+String(i+1).padStart(2,'0'),tripId:id,date:f.date||src.date,truckId:truck.id,driverId:driver.id,litres,price:Number(price.toFixed(6)),total:Number(amount.toFixed(2)),printedTotal:Number(amount.toFixed(2)),odometer:0,supplier:f.supplier||'',slip:'Workbook import row '+src.sourceRow,verified:true,status:'Verified',scope:'trip',companyPaid:true,receiptCount:0,receiptSource:'workbook',sourceWorkbook:data.source})
+    }
+    const addExpense=(suffix,category,amount,notes='')=>{if(num(amount)<=0)return;importedExpenses.push({id:'expense_xlsx_'+n+'_'+suffix,date:src.date,tripId:id,truckId:truck.id,driverId:driver.id,category,supplier:category==='Toll'?'Toll gates':'Trip report',amount:Number(num(amount).toFixed(2)),receiptNo:'',notes,status:'Approved',reimbursable:false,systemGenerated:false,sourceWorkbook:data.source})};
+    addExpense('st','S&T / trip allowance',src.sAndT,'Imported S&T from trip report');
+    addExpense('driver','Driver trip money',src.driverTripMoney,'Imported driver trip money · '+num(src.distance).toFixed(0)+' km × N$0.50');
+    addExpense('toll','Toll',src.tolls,'Imported toll total');
+    addExpense('offload','Loading / offloading',src.offloading,'Imported offloading expense');
+    addExpense('other','Other',src.other,'Imported other expense');
+  }
+  state.trips=importedTrips;
+  state.diesel=importedDiesel;
+  state.expenses=importedExpenses;
+  for(const t of state.trips)recalcTripCosts(state,t);
+
+  const maxEnd=Math.max(0,...state.trips.map(x=>num(x.endKm)));
+  for(const t of state.trucks){
+    if(state.trips.some(x=>x.truckId===t.id)){
+      t.odometer=Math.max(num(t.odometer),maxEnd);
+      if(!/workshop|out of service/i.test(String(t.status||'')))t.status='Available'
+    }
+  }
+  for(const d of state.drivers)if(state.trips.some(x=>x.driverId===d.id)&&/on trip|on duty/i.test(String(d.status||'')))d.status='Available';
+
+  const actual={
+    trips:state.trips.length,
+    distance:Number(state.trips.reduce((a,x)=>a+num(x.distance),0).toFixed(2)),
+    income:Number(state.trips.reduce((a,x)=>a+num(x.income),0).toFixed(2)),
+    expenses:Number(state.trips.reduce((a,x)=>a+num(x.actualTripCost),0).toFixed(2)),
+    profit:Number(state.trips.reduce((a,x)=>a+num(x.actualProfit),0).toFixed(2))
+  };
+  const expected=data.expected;
+  for(const k of ['trips','distance','income','expenses','profit'])if(Math.abs(num(actual[k])-num(expected[k]))>.02)throw Error('Workbook import validation failed for '+k+': expected '+expected[k]+' got '+actual[k]);
+
+  state.tripWorkbookImportVersion=data.version;
+  state.tripWorkbookImportSource=data.source;
+  state.tripWorkbookImportExpected=expected;
+  state.tripWorkbookImportActual=actual;
+  state.audit??=[];
+  state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:'System',action:'Trip test data reset + workbook import · 7 trips · income N$122,066.00 · expenses N$123,605.12 · profit -N$1,539.12',linkedType:'workbook-import',linkedId:data.version});
+  state.audit=state.audit.slice(0,100);
+  return{oldTripIds:[...oldTripIds],actual,expected,drivers:[...new Set(state.trips.map(t=>t.driverId))],truckIds:[...new Set(state.trips.map(t=>t.truckId))]}
+}
+async function applyTripWorkbookTestImport(){
+  const version=TRIP_WORKBOOK_TEST_IMPORT.version;
+  if(pool){
+    const c=await pool.connect();
+    try{
+      await c.query('BEGIN');
+      const row=(await c.query('SELECT payload,revision FROM app_state WHERE id=1 FOR UPDATE')).rows[0]||{payload:{},revision:0};
+      const state=row.payload||{};
+      if(state.tripWorkbookImportVersion===version){await c.query('ROLLBACK');return{skipped:true,version,actual:state.tripWorkbookImportActual||null}}
+      await c.query('INSERT INTO app_state_backups(id,version,payload,note) VALUES($1,$2,$3,$4) ON CONFLICT(version) DO NOTHING',[crypto.randomUUID(),version,state,'Backup before Trip Reports Vernon.xlsx test import']);
+      const result=applyWorkbookTripsToState(state);
+      const updated=(await c.query('UPDATE app_state SET payload=$1,revision=revision+1,updated_at=now() WHERE id=1 RETURNING revision,updated_at',[state])).rows[0];
+      await c.query('COMMIT');
+      emit('state',{revision:updated.revision,updatedAt:updated.updated_at});
+      return{skipped:false,version,...result}
+    }catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}
+  }
+  const state=memory.state||{};if(state.tripWorkbookImportVersion===version)return{skipped:true,version,actual:state.tripWorkbookImportActual||null};
+  const result=applyWorkbookTripsToState(state);memory.state=state;emit('state',{revision:Date.now()});return{skipped:false,version,...result}
+}
+
 async function applyWorkforceEnvImport(){
   const version=String(process.env.WORKFORCE_IMPORT_VERSION||'').trim();
   if(!version)return {skipped:true};
@@ -2283,4 +2428,4 @@ app.get('/download/android',async(req,res)=>{
   }
 });
 app.get('/login',(req,res)=>{res.setHeader('Cache-Control','no-store, no-cache, must-revalidate');res.sendFile(path.join(root,'index.html'))});app.use(express.static(root,{maxAge:'1h',setHeaders:(res,file)=>{if(file.endsWith('.html')||file.endsWith('/app.js')||file.endsWith('/styles.css')||file.endsWith('/sw.js'))res.setHeader('Cache-Control','no-store, no-cache, must-revalidate')}}));app.use((req,res)=>res.sendFile(path.join(root,'index.html')));
-initDb().then(async()=>{if(process.argv.includes('--init-only'))return pool?.end();const fleet=await ensureCanonicalFleet();if(!fleet?.skipped)console.log('Canonical fleet applied',fleet);const imported=await applyWorkforceEnvImport();if(!imported?.skipped)console.log('Workforce import applied',imported);const linked=await reconcileWorkforceUserLinks();if(linked.linkedDrivers||linked.linkedStaff)console.log('Workforce user links reconciled',linked);app.listen(PORT,()=>console.log(`Angermund Transport V3 running on port ${PORT}`));setTimeout(ensureMonthEndPayroll,15000);setInterval(ensureMonthEndPayroll,6*60*60*1000);setTimeout(ensureOperationalAlerts,20000);setInterval(ensureOperationalAlerts,10*60*1000)}).catch(e=>{console.error('Startup failed',e);process.exit(1)});
+initDb().then(async()=>{if(process.argv.includes('--init-only'))return pool?.end();const fleet=await ensureCanonicalFleet();if(!fleet?.skipped)console.log('Canonical fleet applied',fleet);const imported=await applyWorkforceEnvImport();if(!imported?.skipped)console.log('Workforce import applied',imported);const linked=await reconcileWorkforceUserLinks();if(linked.linkedDrivers||linked.linkedStaff)console.log('Workforce user links reconciled',linked);const tripImport=await applyTripWorkbookTestImport();if(!tripImport?.skipped)console.log('Trip workbook test import applied',tripImport.actual);else console.log('Trip workbook test import already applied',tripImport.actual||'');app.listen(PORT,()=>console.log(`Angermund Transport V3 running on port ${PORT}`));setTimeout(ensureMonthEndPayroll,15000);setInterval(ensureMonthEndPayroll,6*60*60*1000);setTimeout(ensureOperationalAlerts,20000);setInterval(ensureOperationalAlerts,10*60*1000)}).catch(e=>{console.error('Startup failed',e);process.exit(1)});
