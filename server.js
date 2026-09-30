@@ -1905,6 +1905,13 @@ app.delete('/api/admin/diesel/:id',auth,roles('admin','manager','finance'),async
     res.json(changed.result)
   }catch(e){res.status(e.status||500).json({error:e.message})}
 });
+app.post('/api/gps/test',auth,async(req,res)=>{
+  try{
+    const label=String(req.body.testLabel||req.user.name||'Phone GPS Test').trim().slice(0,80).replace(/[^a-zA-Z0-9 ._-]/g,'')||'Phone GPS Test';
+    req.body={...req.body,vehicleId:'phone-test:'+label,driverId:req.user.driverId||null,tripId:null};
+    return gpsIn(req,res,'phone-test')
+  }catch(e){res.status(500).json({error:e.message})}
+});
 app.get('/api/gps/latest',auth,async(req,res)=>{const rows=pool?await q("SELECT DISTINCT ON(vehicle_id) vehicle_id AS \"vehicleId\",driver_id AS \"driverId\",trip_id AS \"tripId\",latitude,longitude,speed,heading,accuracy,source,recorded_at AS \"recordedAt\" FROM gps_positions WHERE source IN ('telematics','truck-device','tracker','vehicle-tracker','phone-test') ORDER BY vehicle_id,recorded_at DESC"):Object.values(memory.gps.filter(x=>trustedVehicleGpsSource(x.source)).reduce((a,x)=>(a[x.vehicleId]=x,a),{}));res.json(rows)});
 app.get('/api/gps/history/:vehicleId',auth,async(req,res)=>{const hours=Math.min(168,Math.max(1,num(req.query.hours)||24)),rows=pool?await q('SELECT vehicle_id AS "vehicleId",latitude,longitude,speed,heading,recorded_at AS "recordedAt" FROM gps_positions WHERE vehicle_id=$1 AND recorded_at>now()-($2||\' hours\')::interval ORDER BY recorded_at',[req.params.vehicleId,String(hours)]):memory.gps.filter(x=>x.vehicleId===req.params.vehicleId&&Date.now()-new Date(x.recordedAt)<hours*3600000);res.json(rows)});
 app.get('/api/geofences',auth,async(req,res)=>res.json(pool?await q('SELECT id,name,latitude,longitude,radius_m AS "radiusM",event_types AS "eventTypes",kind,active FROM geofences ORDER BY name'):memory.geofences));
@@ -2020,6 +2027,21 @@ async function ensureMonthEndPayroll(){
     await mutateOpsState(state=>generatePayrollPeriod(state,period,true))
   }catch(e){console.error('Month-end payroll check failed',e.message)}
 }
-app.get('/download/android',(req,res)=>res.redirect(302,'https://github.com/zjondreangermund/Angermund-Transport/releases/download/android-latest/Angermund-Transport.apk'));
+app.get('/download/android',async(req,res)=>{
+  const url='https://github.com/zjondreangermund/Angermund-Transport/releases/download/android-latest/Angermund-Transport.apk';
+  try{
+    const upstream=await fetch(url,{redirect:'follow'});
+    if(!upstream.ok||!upstream.body)throw new Error('APK upstream '+upstream.status);
+    res.status(200);
+    res.setHeader('Content-Type','application/vnd.android.package-archive');
+    res.setHeader('Content-Disposition','attachment; filename="Angermund-Transport.apk"');
+    res.setHeader('Cache-Control','no-store');
+    const {Readable}=require('stream');
+    Readable.fromWeb(upstream.body).pipe(res)
+  }catch(e){
+    console.error('APK proxy failed',e.message);
+    res.redirect(302,url)
+  }
+});
 app.get('/login',(req,res)=>{res.setHeader('Cache-Control','no-store, no-cache, must-revalidate');res.sendFile(path.join(root,'index.html'))});app.use(express.static(root,{maxAge:'1h',setHeaders:(res,file)=>{if(file.endsWith('.html')||file.endsWith('/app.js')||file.endsWith('/styles.css')||file.endsWith('/sw.js'))res.setHeader('Cache-Control','no-store, no-cache, must-revalidate')}}));app.use((req,res)=>res.sendFile(path.join(root,'index.html')));
 initDb().then(async()=>{if(process.argv.includes('--init-only'))return pool?.end();const fleet=await ensureCanonicalFleet();if(!fleet?.skipped)console.log('Canonical fleet applied',fleet);const imported=await applyWorkforceEnvImport();if(!imported?.skipped)console.log('Workforce import applied',imported);const linked=await reconcileWorkforceUserLinks();if(linked.linkedDrivers||linked.linkedStaff)console.log('Workforce user links reconciled',linked);app.listen(PORT,()=>console.log(`Angermund Transport V3 running on port ${PORT}`));setTimeout(ensureMonthEndPayroll,15000);setInterval(ensureMonthEndPayroll,6*60*60*1000);setTimeout(ensureOperationalAlerts,20000);setInterval(ensureOperationalAlerts,10*60*1000)}).catch(e=>{console.error('Startup failed',e);process.exit(1)});
