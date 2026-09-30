@@ -476,6 +476,10 @@ CREATE INDEX IF NOT EXISTS gps_vehicle_time ON gps_positions(vehicle_id,recorded
 CREATE TABLE IF NOT EXISTS geofences(id uuid PRIMARY KEY,name text NOT NULL,latitude double precision NOT NULL,longitude double precision NOT NULL,radius_m double precision NOT NULL,event_types text[] DEFAULT ARRAY['enter','exit'],kind text DEFAULT 'custom',active boolean DEFAULT true,created_at timestamptz DEFAULT now());
 ALTER TABLE geofences ADD COLUMN IF NOT EXISTS kind text DEFAULT 'custom';
 CREATE TABLE IF NOT EXISTS geofence_state(vehicle_id text NOT NULL,geofence_id uuid REFERENCES geofences(id) ON DELETE CASCADE,inside boolean NOT NULL,updated_at timestamptz DEFAULT now(),PRIMARY KEY(vehicle_id,geofence_id));
+ALTER TABLE geofence_state ADD COLUMN IF NOT EXISTS candidate_inside boolean;
+ALTER TABLE geofence_state ADD COLUMN IF NOT EXISTS candidate_count integer DEFAULT 0;
+ALTER TABLE geofence_state ADD COLUMN IF NOT EXISTS last_notified_at timestamptz;
+ALTER TABLE geofence_state ADD COLUMN IF NOT EXISTS last_position_at timestamptz;
 CREATE TABLE IF NOT EXISTS notifications(id uuid PRIMARY KEY,type text NOT NULL,severity text DEFAULT 'info',title text NOT NULL,message text NOT NULL,role text,user_id uuid,driver_id text,linked_type text,linked_id text,read boolean DEFAULT false,created_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS push_subscriptions(id bigserial PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE CASCADE,subscription jsonb NOT NULL,created_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS scan_jobs(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id),filename text,status text NOT NULL DEFAULT 'processing',raw_text text,extracted jsonb,confidence double precision,error text,created_at timestamptz DEFAULT now(),completed_at timestamptz);\nCREATE TABLE IF NOT EXISTS driver_uploads(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,trip_id text NOT NULL,kind text NOT NULL,filename text NOT NULL,mime_type text NOT NULL,content bytea NOT NULL,created_at timestamptz DEFAULT now());\nCREATE TABLE IF NOT EXISTS company_receipts(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,linked_type text NOT NULL,linked_id text NOT NULL,kind text NOT NULL,filename text NOT NULL,mime_type text NOT NULL,content bytea NOT NULL,created_at timestamptz DEFAULT now());\nCREATE INDEX IF NOT EXISTS company_receipts_link ON company_receipts(linked_type,linked_id,created_at DESC);\nCREATE TABLE IF NOT EXISTS trip_documents(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,trip_id text NOT NULL,leg_id text,kind text NOT NULL,reference text,filename text,mime_type text,content bytea,created_at timestamptz DEFAULT now());\nCREATE INDEX IF NOT EXISTS trip_documents_trip ON trip_documents(trip_id,created_at DESC);\nCREATE TABLE IF NOT EXISTS mobile_devices(id uuid PRIMARY KEY,device_id text UNIQUE NOT NULL,user_id uuid REFERENCES users(id) ON DELETE CASCADE,driver_id text,token_hash text UNIQUE NOT NULL,name text,platform text,active boolean DEFAULT true,last_seen timestamptz,created_at timestamptz DEFAULT now());
@@ -556,15 +560,66 @@ async function sendExternal(n){
 }
 async function evaluateGeofences(pos){
   if(!trustedVehicleGpsSource(pos.source))return;
+  const phoneTest=String(pos.source||'').toLowerCase()==='phone-test';
+  const recordedAt=new Date(pos.recordedAt||Date.now()),accuracy=Math.max(0,num(pos.accuracy));
+  if(!Number.isFinite(recordedAt.getTime()))return;
+  // Phone GPS can occasionally report a very poor fix. Do not let that flip a geofence.
+  if(phoneTest&&accuracy>200)return;
+  // Ignore stale/out-of-order positions. This also prevents a browser and native app
+  // from replaying an old fix and repeatedly toggling the same test geofence.
+  if(pool){
+    const latest=(await q('SELECT recorded_at AS "recordedAt" FROM gps_positions WHERE vehicle_id=$1 ORDER BY recorded_at DESC,id DESC LIMIT 1',[pos.vehicleId]))[0];
+    if(latest&&new Date(latest.recordedAt).getTime()>recordedAt.getTime()+1000)return
+  }else{
+    const latest=memory.gps.filter(x=>x.vehicleId===pos.vehicleId).sort((a,b)=>new Date(b.recordedAt)-new Date(a.recordedAt))[0];
+    if(latest&&new Date(latest.recordedAt).getTime()>recordedAt.getTime()+1000)return
+  }
   const fences=pool?await q('SELECT * FROM geofences WHERE active=true'):memory.geofences.filter(x=>x.active!==false);
   for(const f of fences){
-    const inside=distance(pos,{latitude:num(f.latitude),longitude:num(f.longitude)})<=num(f.radius_m||f.radiusM);
-    const prev=pool?(await q('SELECT inside FROM geofence_state WHERE vehicle_id=$1 AND geofence_id=$2',[pos.vehicleId,f.id]))[0]:f.states?.[pos.vehicleId];
-    if(prev!==undefined&&Boolean(prev.inside??prev)!==inside){
-      const phoneTest=String(pos.source||'').toLowerCase()==='phone-test',label=phoneTest?String(pos.vehicleId||'Phone').replace(/^phone-test:/i,''):pos.vehicleId;await createNotification({type:'geofence',severity:inside?'info':'warning',title:(phoneTest?'GPS TEST · ':'')+(inside?'Entered ':'Exited ')+f.name,message:label+' '+(inside?'entered':'left')+' the '+f.name+' geofence.',linkedType:'vehicle',linkedId:pos.vehicleId});
+    const radius=Math.max(5,num(f.radius_m||f.radiusM)),d=distance(pos,{latitude:num(f.latitude),longitude:num(f.longitude)});
+    const margin=Math.min(Math.max(phoneTest?50:25,accuracy*1.5),Math.max(50,radius*.35));
+    const rawInside=d<=radius;
+    const prev=pool?(await q('SELECT inside,candidate_inside AS "candidateInside",candidate_count AS "candidateCount",last_notified_at AS "lastNotifiedAt",last_position_at AS "lastPositionAt" FROM geofence_state WHERE vehicle_id=$1 AND geofence_id=$2',[pos.vehicleId,f.id]))[0]:f.states?.[pos.vehicleId];
+    if(!prev){
+      if(pool)await q('INSERT INTO geofence_state(vehicle_id,geofence_id,inside,candidate_inside,candidate_count,last_position_at) VALUES($1,$2,$3,NULL,0,$4) ON CONFLICT(vehicle_id,geofence_id) DO NOTHING',[pos.vehicleId,f.id,rawInside,recordedAt.toISOString()]);
+      else{f.states??={};f.states[pos.vehicleId]={inside:rawInside,candidateInside:null,candidateCount:0,lastNotifiedAt:null,lastPositionAt:recordedAt.toISOString()}}
+      continue
     }
-    if(pool)await q('INSERT INTO geofence_state(vehicle_id,geofence_id,inside) VALUES($1,$2,$3) ON CONFLICT(vehicle_id,geofence_id) DO UPDATE SET inside=$3,updated_at=now()',[pos.vehicleId,f.id,inside]);
-    else{f.states??={};f.states[pos.vehicleId]=inside}
+    const wasInside=Boolean(prev.inside??prev);
+    let desired=wasInside;
+    if(wasInside){
+      // Once inside, require a clearly outside fix before considering an exit.
+      if(d>radius+margin)desired=false
+    }else{
+      // Once outside, require a clearly inside fix before considering an entry.
+      if(d<Math.max(5,radius-margin))desired=true
+    }
+    let candidateInside=prev.candidateInside,candidateCount=num(prev.candidateCount);
+    if(desired===wasInside){
+      candidateInside=null;candidateCount=0
+    }else if(candidateInside===desired){
+      candidateCount+=1
+    }else{
+      candidateInside=desired;candidateCount=1
+    }
+    let finalInside=wasInside,notify=false;
+    // Phone tests need two consecutive fixes on the new side of the fence.
+    const needed=phoneTest?2:1;
+    if(desired!==wasInside&&candidateCount>=needed){
+      finalInside=desired;candidateInside=null;candidateCount=0;
+      const lastNotified=prev.lastNotifiedAt?new Date(prev.lastNotifiedAt).getTime():0;
+      // Short cooldown protects against GPS boundary chatter without masking normal travel.
+      notify=!lastNotified||Date.now()-lastNotified>2*60*1000
+    }
+    if(notify){
+      const label=phoneTest?String(pos.vehicleId||'Phone').replace(/^phone-test:/i,''):pos.vehicleId;
+      await createNotification({type:'geofence',severity:finalInside?'info':'warning',title:(phoneTest?'GPS TEST · ':'')+(finalInside?'Entered ':'Exited ')+f.name,message:label+' '+(finalInside?'entered':'left')+' the '+f.name+' geofence.',linkedType:'vehicle',linkedId:pos.vehicleId})
+    }
+    if(pool){
+      await q('INSERT INTO geofence_state(vehicle_id,geofence_id,inside,candidate_inside,candidate_count,last_notified_at,last_position_at) VALUES($1,$2,$3,$4,$5,$6,$7) ON CONFLICT(vehicle_id,geofence_id) DO UPDATE SET inside=$3,candidate_inside=$4,candidate_count=$5,last_notified_at=CASE WHEN $6::timestamptz IS NULL THEN geofence_state.last_notified_at ELSE $6::timestamptz END,last_position_at=$7,updated_at=now()',[pos.vehicleId,f.id,finalInside,candidateInside,candidateCount,notify?new Date().toISOString():null,recordedAt.toISOString()])
+    }else{
+      f.states??={};f.states[pos.vehicleId]={inside:finalInside,candidateInside,candidateCount,lastNotifiedAt:notify?new Date().toISOString():(prev.lastNotifiedAt||null),lastPositionAt:recordedAt.toISOString()}
+    }
   }
 }
 function routeTripZones(route){
