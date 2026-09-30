@@ -1501,20 +1501,20 @@ async function ensureCanonicalFleet(){
 }
 
 
-const TRIP_WORKBOOK_TEST_IMPORT={"version":"2026-09-30-sheet1-current-v1","source":"Trip Reports Vernon.xlsx / Sheet1","expected":{"trips":7,"distance":10136,"income":122066,"expenses":123605.12,"profit":-1539.12},"trips":[
-{"sourceIndex":1,"sourceRow":1,"driver":"JOSEF","client":"NBL","registration":"N 46928 W","fleet":12,"date":"2026-08-28","startKm":1750255,"endKm":1751736,"origin":"Windhoek","destination":"Rundu","returnOrigin":"Rundu","returnDestination":"Windhoek","note":"","distance":1481,"income":17438,"fuel":[{"date":"2026-01-09","supplier":"Bonsmara","litres":610.26,"amount":16324.57,"price":26.750188444269657}],"fuelTotal":16324.57,"tolls":0,"sAndT":500,"driverTripMoney":740.5,"offloading":0,"other":0,"expectedTotalExpenses":17565.07,"expectedProfit":-127.07},
+const TRIP_WORKBOOK_TEST_IMPORT={"version":"2026-09-30-sheet1-current-v2","source":"Trip Reports Vernon (1).xlsx / Sheet1","expected":{"trips":7,"distance":10136,"income":238188,"expenses":123605.12,"profit":114582.88},"trips":[
+{"sourceIndex":1,"sourceRow":1,"driver":"JOSEF","client":"NBL","registration":"N 46928 W","fleet":12,"date":"2026-08-28","startKm":1750255,"endKm":1751736,"origin":"Windhoek","destination":"Rundu","returnOrigin":"Rundu","returnDestination":"Windhoek","note":"","distance":1481,"income":34361,"fuel":[{"date":"2026-01-09","supplier":"Bonsmara","litres":610.26,"amount":16324.57,"price":26.750188444269657}],"fuelTotal":16324.57,"tolls":0,"sAndT":500,"driverTripMoney":740.5,"offloading":0,"other":0,"expectedTotalExpenses":17565.07,"expectedProfit":16795.93},
 {"sourceIndex":2,"sourceRow":47,"driver":"JOSEF","client":"NBL","registration":"N 46928 W","fleet":12,"date":"2026-01-09","startKm":1751736,"endKm":1752579,"origin":"Windhoek","destination":"Walvis","returnOrigin":"Walvis","returnDestination":"Windhoek","note":"","distance":843,"income":17438,"fuel":[{"date":"2026-03-09","supplier":"Bonsmara","litres":300,"amount":8505,"price":28.35}],"fuelTotal":8505,"tolls":0,"sAndT":500,"driverTripMoney":421.5,"offloading":0,"other":0,"expectedTotalExpenses":9426.5,"expectedProfit":8011.5},
-{"sourceIndex":3,"sourceRow":93,"driver":"JOSEF","client":"NBL","registration":"N 46928 W","fleet":12,"date":"2026-03-09","startKm":1752579,"endKm":1754181,"origin":"Windhoek","destination":"Tsandi","returnOrigin":"Tsandi","returnDestination":"Windhoek","note":"","distance":1602,"income":17438,"fuel":[{"date":"2026-07-09","supplier":"Bonsmara","litres":680.23,"amount":19284.57,"price":28.350072769504433}],"fuelTotal":19284.57,"tolls":0,"sAndT":500,"driverTripMoney":801,"offloading":0,"other":0,"expectedTotalExpenses":20585.57,"expectedProfit":-3147.57},
-{"sourceIndex":4,"sourceRow":139,"driver":"JOSEF","client":"NBL","registration":"N 46928 W","fleet":12,"date":"2026-07-09","startKm":1754181,"endKm":1755660,"origin":"Windhoek","destination":"Rundu","returnOrigin":"Rundu","returnDestination":"Windhoek","note":"","distance":1479,"income":17438,"fuel":[{"date":"2026-09-14","supplier":"Bonsmara","litres":514.15,"amount":14576.11,"price":28.34991733929787}],"fuelTotal":14576.11,"tolls":0,"sAndT":500,"driverTripMoney":739.5,"offloading":0,"other":0,"expectedTotalExpenses":15815.61,"expectedProfit":1622.39},
-{"sourceIndex":5,"sourceRow":185,"driver":"ANTON","client":"NBL","registration":"N 46928 W","fleet":12,"date":"2026-09-15","startKm":1755660,"endKm":1757388,"origin":"Windhoek","destination":"Oshakati","returnOrigin":"Oshakati","returnDestination":"Windhoek","note":"Load Emoties in Kongoloa","distance":1728,"income":17438,"fuel":[{"date":"2026-09-22","supplier":"Bonsmara","litres":705.4,"amount":19998,"price":28.349872412815426}],"fuelTotal":19998,"tolls":0,"sAndT":500,"driverTripMoney":864,"offloading":0,"other":0,"expectedTotalExpenses":21362,"expectedProfit":-3924},
-{"sourceIndex":6,"sourceRow":231,"driver":"JOSEF","client":"NBL","registration":"N 46928 W","fleet":12,"date":"2026-09-22","startKm":1757388,"endKm":1758911,"origin":"Windhoek","destination":"Endola","returnOrigin":"Endola","returnDestination":"Windhoek","note":"","distance":1523,"income":17438,"fuel":[{"date":"2026-09-24","supplier":"Bonsmara","litres":653.06,"amount":18514.21,"price":28.349937218632284}],"fuelTotal":18514.21,"tolls":0,"sAndT":500,"driverTripMoney":761.5,"offloading":0,"other":0,"expectedTotalExpenses":19775.71,"expectedProfit":-2337.71},
-{"sourceIndex":7,"sourceRow":277,"driver":"JOSEF","client":"NBL","registration":"N 46928 W","fleet":12,"date":"2026-09-24","startKm":1758911,"endKm":1760391,"origin":"Windhoek","destination":"Oshakati","returnOrigin":"Oshakati","returnDestination":"Windhoek","note":"","distance":1480,"income":17438,"fuel":[{"date":"2026-09-28","supplier":"Bonsmara","litres":629.09,"amount":17834.66,"price":28.349934031696577}],"fuelTotal":17834.66,"tolls":0,"sAndT":500,"driverTripMoney":740,"offloading":0,"other":0,"expectedTotalExpenses":19074.66,"expectedProfit":-1636.66}
+{"sourceIndex":3,"sourceRow":93,"driver":"JOSEF","client":"NBL","registration":"N 46928 W","fleet":12,"date":"2026-03-09","startKm":1752579,"endKm":1754181,"origin":"Windhoek","destination":"Tsandi","returnOrigin":"Tsandi","returnDestination":"Windhoek","note":"","distance":1602,"income":39191,"fuel":[{"date":"2026-07-09","supplier":"Bonsmara","litres":680.23,"amount":19284.57,"price":28.350072769504433}],"fuelTotal":19284.57,"tolls":0,"sAndT":500,"driverTripMoney":801,"offloading":0,"other":0,"expectedTotalExpenses":20585.57,"expectedProfit":18605.43},
+{"sourceIndex":4,"sourceRow":139,"driver":"JOSEF","client":"NBL","registration":"N 46928 W","fleet":12,"date":"2026-07-09","startKm":1754181,"endKm":1755660,"origin":"Windhoek","destination":"Rundu","returnOrigin":"Rundu","returnDestination":"Windhoek","note":"","distance":1479,"income":35459,"fuel":[{"date":"2026-09-14","supplier":"Bonsmara","litres":514.15,"amount":14576.11,"price":28.34991733929787}],"fuelTotal":14576.11,"tolls":0,"sAndT":500,"driverTripMoney":739.5,"offloading":0,"other":0,"expectedTotalExpenses":15815.61,"expectedProfit":19643.39},
+{"sourceIndex":5,"sourceRow":185,"driver":"ANTON","client":"NBL","registration":"N 46928 W","fleet":12,"date":"2026-09-15","startKm":1755660,"endKm":1757388,"origin":"Windhoek","destination":"Oshakati","returnOrigin":"Oshakati","returnDestination":"Windhoek","note":"Load Emoties in Kongoloa","distance":1728,"income":40919,"fuel":[{"date":"2026-09-22","supplier":"Bonsmara","litres":705.4,"amount":19998,"price":28.349872412815426}],"fuelTotal":19998,"tolls":0,"sAndT":500,"driverTripMoney":864,"offloading":0,"other":0,"expectedTotalExpenses":21362,"expectedProfit":19557},
+{"sourceIndex":6,"sourceRow":231,"driver":"JOSEF","client":"NBL","registration":"N 46928 W","fleet":12,"date":"2026-09-22","startKm":1757388,"endKm":1758911,"origin":"Windhoek","destination":"Endola","returnOrigin":"Endola","returnDestination":"Windhoek","note":"","distance":1523,"income":36101,"fuel":[{"date":"2026-09-24","supplier":"Bonsmara","litres":653.06,"amount":18514.21,"price":28.349937218632284}],"fuelTotal":18514.21,"tolls":0,"sAndT":500,"driverTripMoney":761.5,"offloading":0,"other":0,"expectedTotalExpenses":19775.71,"expectedProfit":16325.29},
+{"sourceIndex":7,"sourceRow":277,"driver":"JOSEF","client":"NBL","registration":"N 46928 W","fleet":12,"date":"2026-09-24","startKm":1758911,"endKm":1760391,"origin":"Windhoek","destination":"Oshakati","returnOrigin":"Oshakati","returnDestination":"Windhoek","note":"","distance":1480,"income":34719,"fuel":[{"date":"2026-09-28","supplier":"Bonsmara","litres":629.09,"amount":17834.66,"price":28.349934031696577}],"fuelTotal":17834.66,"tolls":0,"sAndT":500,"driverTripMoney":740,"offloading":0,"other":0,"expectedTotalExpenses":19074.66,"expectedProfit":15644.34}
 ]};
 
 function workbookImportKey(v){return String(v||'').toLowerCase().normalize('NFKD').replace(/[^a-z0-9]+/g,' ').trim().replace(/\s+/g,' ')}
 function workbookImportSlug(v){return workbookImportKey(v).replace(/\s+/g,'_')||'item'}
 function applyWorkbookTripsToState(state){
-  const data=TRIP_WORKBOOK_TEST_IMPORT,oldTripIds=new Set((state.trips||[]).map(x=>String(x.id)));
+  const data=TRIP_WORKBOOK_TEST_IMPORT,oldWorkbookTrips=(state.trips||[]).filter(x=>/^trip_xlsx_\d+$/.test(String(x.id||''))||/Trip Reports Vernon/i.test(String(x.sourceWorkbook||''))),oldTripIds=new Set(oldWorkbookTrips.map(x=>String(x.id)));
   state.trucks??=[];state.drivers??=[];state.clients??=[];state.routes??=[];
 
   const findDriver=name=>{
@@ -1559,18 +1559,17 @@ function applyWorkbookTripsToState(state){
     return r
   };
 
-  // Remove current trip/test financial records while keeping company masters,
-  // workforce, fleet setup, permits, maintenance and unrelated operational history.
-  state.trips=[];
-  state.diesel=[];
-  state.expenses=[];
-  state.invoices=[];
-  state.payments=[];
-  state.advances=[];
-  state.tripIssues=[];
+  // Replace only the workbook test trips. Keep unrelated operational data intact.
+  state.trips=(state.trips||[]).filter(x=>!oldTripIds.has(String(x.id)));
+  state.diesel=(state.diesel||[]).filter(x=>!oldTripIds.has(String(x.tripId))&&!/Trip Reports Vernon/i.test(String(x.sourceWorkbook||'')));
+  state.expenses=(state.expenses||[]).filter(x=>!oldTripIds.has(String(x.tripId))&&!/Trip Reports Vernon/i.test(String(x.sourceWorkbook||'')));
+  state.invoices=(state.invoices||[]).filter(x=>!oldTripIds.has(String(x.tripId)));
+  state.payments=(state.payments||[]).filter(x=>!oldTripIds.has(String(x.tripId)));
+  state.advances=(state.advances||[]).filter(x=>!oldTripIds.has(String(x.tripId)));
+  state.tripIssues=(state.tripIssues||[]).filter(x=>!oldTripIds.has(String(x.tripId)));
   state.inspections=(state.inspections||[]).filter(x=>!x.tripId||!oldTripIds.has(String(x.tripId)));
-  state.tasks=(state.tasks||[]).filter(x=>!(x.linkedType==='trip'||oldTripIds.has(String(x.linkedId||''))));
-  state.approvals=(state.approvals||[]).filter(x=>!(x.linkedType==='trip'||oldTripIds.has(String(x.linkedId||''))));
+  state.tasks=(state.tasks||[]).filter(x=>!(x.linkedType==='trip'&&oldTripIds.has(String(x.linkedId||''))));
+  state.approvals=(state.approvals||[]).filter(x=>!(x.linkedType==='trip'&&oldTripIds.has(String(x.linkedId||''))));
   state.incidents=(state.incidents||[]).map(x=>x.tripId&&oldTripIds.has(String(x.tripId))?{...x,tripId:''}:x);
 
   const importedTrips=[],importedDiesel=[],importedExpenses=[];
@@ -1590,10 +1589,10 @@ function applyWorkbookTripsToState(state){
     addExpense('offload','Loading / offloading',src.offloading,'Imported offloading expense');
     addExpense('other','Other',src.other,'Imported other expense');
   }
-  state.trips=importedTrips;
-  state.diesel=importedDiesel;
-  state.expenses=importedExpenses;
-  for(const t of state.trips)recalcTripCosts(state,t);
+  state.trips=[...importedTrips,...state.trips];
+  state.diesel=[...importedDiesel,...state.diesel];
+  state.expenses=[...importedExpenses,...state.expenses];
+  for(const t of importedTrips)recalcTripCosts(state,t);
 
   const maxEnd=Math.max(0,...state.trips.map(x=>num(x.endKm)));
   for(const t of state.trucks){
@@ -1605,11 +1604,11 @@ function applyWorkbookTripsToState(state){
   for(const d of state.drivers)if(state.trips.some(x=>x.driverId===d.id)&&/on trip|on duty/i.test(String(d.status||'')))d.status='Available';
 
   const actual={
-    trips:state.trips.length,
-    distance:Number(state.trips.reduce((a,x)=>a+num(x.distance),0).toFixed(2)),
-    income:Number(state.trips.reduce((a,x)=>a+num(x.income),0).toFixed(2)),
-    expenses:Number(state.trips.reduce((a,x)=>a+num(x.actualTripCost),0).toFixed(2)),
-    profit:Number(state.trips.reduce((a,x)=>a+num(x.actualProfit),0).toFixed(2))
+    trips:importedTrips.length,
+    distance:Number(importedTrips.reduce((a,x)=>a+num(x.distance),0).toFixed(2)),
+    income:Number(importedTrips.reduce((a,x)=>a+num(x.income),0).toFixed(2)),
+    expenses:Number(importedTrips.reduce((a,x)=>a+num(x.actualTripCost),0).toFixed(2)),
+    profit:Number(importedTrips.reduce((a,x)=>a+num(x.actualProfit),0).toFixed(2))
   };
   const expected=data.expected;
   for(const k of ['trips','distance','income','expenses','profit'])if(Math.abs(num(actual[k])-num(expected[k]))>.02)throw Error('Workbook import validation failed for '+k+': expected '+expected[k]+' got '+actual[k]);
@@ -1619,7 +1618,7 @@ function applyWorkbookTripsToState(state){
   state.tripWorkbookImportExpected=expected;
   state.tripWorkbookImportActual=actual;
   state.audit??=[];
-  state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:'System',action:'Trip test data reset + workbook import · 7 trips · income N$122,066.00 · expenses N$123,605.12 · profit -N$1,539.12',linkedType:'workbook-import',linkedId:data.version});
+  state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:'System',action:'Workbook trips refreshed from uploaded Sheet1 · 7 trips · income N$238,188.00 · expenses N$123,605.12 · profit N$114,582.88',linkedType:'workbook-import',linkedId:data.version});
   state.audit=state.audit.slice(0,100);
   return{oldTripIds:[...oldTripIds],actual,expected,drivers:[...new Set(state.trips.map(t=>t.driverId))],truckIds:[...new Set(state.trips.map(t=>t.truckId))]}
 }
