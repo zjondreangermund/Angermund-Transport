@@ -25,6 +25,7 @@ import android.widget.TextView;
 import android.widget.FrameLayout;
 import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
+import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
@@ -53,6 +54,7 @@ import java.util.concurrent.Executors;
 public class MainActivity extends Activity {
     private static final int REQ_LOCATION = 2010;
     private static final int REQ_FILE = 2011;
+    private static final int REQ_CAMERA_WEB = 2012;
     private static final String PREFS = "angermund_driver_gps";
     private static final String START_URL = BuildConfig.SERVER_URL + "/login";
 
@@ -60,6 +62,7 @@ public class MainActivity extends Activity {
     private FrameLayout splashOverlay;
     private ValueCallback<Uri[]> fileCallback;
     private Uri cameraUri;
+    private PermissionRequest pendingWebPermissionRequest;
     private String pendingJwt = "";
     private long lastExitBackAt = 0;
     private volatile boolean registeringDevice = false;
@@ -105,7 +108,7 @@ public class MainActivity extends Activity {
         settings.setGeolocationEnabled(true);
         settings.setAllowFileAccess(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " AngermundTransportNative/1.3.3");
+        settings.setUserAgentString(settings.getUserAgentString() + " AngermundTransportNative/1.3.4");
 
         webView.addJavascriptInterface(new NativeBridge(), "AngermundNative");
         webView.setWebViewClient(new WebViewClient() {
@@ -120,6 +123,27 @@ public class MainActivity extends Activity {
             public void onGeolocationPermissionsShowPrompt(String origin, GeolocationPermissions.Callback callback) {
                 boolean allowed = checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
                 callback.invoke(origin, allowed, false);
+            }
+
+            @Override
+            public void onPermissionRequest(PermissionRequest request) {
+                boolean wantsCamera = false;
+                for (String resource : request.getResources()) {
+                    if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)) {
+                        wantsCamera = true;
+                        break;
+                    }
+                }
+                if (!wantsCamera) {
+                    request.deny();
+                    return;
+                }
+                if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
+                    request.grant(new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE});
+                } else {
+                    pendingWebPermissionRequest = request;
+                    requestPermissions(new String[]{Manifest.permission.CAMERA}, REQ_CAMERA_WEB);
+                }
             }
 
             @Override
@@ -386,15 +410,6 @@ public class MainActivity extends Activity {
 
     private void openFileChooser() {
         try {
-            File dir = new File(getCacheDir(), "camera");
-            if (!dir.exists()) dir.mkdirs();
-            File photo = new File(dir, "capture-" + System.currentTimeMillis() + ".jpg");
-            cameraUri = FileProvider.getUriForFile(this, getPackageName() + ".files", photo);
-
-            Intent camera = new Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE);
-            camera.putExtra(android.provider.MediaStore.EXTRA_OUTPUT, cameraUri);
-            camera.addFlags(Intent.FLAG_GRANT_WRITE_URI_PERMISSION | Intent.FLAG_GRANT_READ_URI_PERMISSION);
-
             Intent files = new Intent(Intent.ACTION_GET_CONTENT);
             files.addCategory(Intent.CATEGORY_OPENABLE);
             files.setType("*/*");
@@ -402,13 +417,12 @@ public class MainActivity extends Activity {
 
             Intent chooser = new Intent(Intent.ACTION_CHOOSER);
             chooser.putExtra(Intent.EXTRA_INTENT, files);
-            chooser.putExtra(Intent.EXTRA_TITLE, "Take photo or choose file");
-            chooser.putExtra(Intent.EXTRA_INITIAL_INTENTS, new Intent[]{camera});
+            chooser.putExtra(Intent.EXTRA_TITLE, "Choose existing slip photo(s)");
             startActivityForResult(chooser, REQ_FILE);
         } catch (Exception e) {
             if (fileCallback != null) fileCallback.onReceiveValue(null);
             fileCallback = null;
-            toast("Could not open camera/files");
+            toast("Could not open files");
         }
     }
 
@@ -461,6 +475,16 @@ public class MainActivity extends Activity {
             String jwt = pendingJwt;
             pendingJwt = "";
             ensureRegistered(jwt, true);
+        }
+        if (requestCode == REQ_CAMERA_WEB && pendingWebPermissionRequest != null) {
+            PermissionRequest request = pendingWebPermissionRequest;
+            pendingWebPermissionRequest = null;
+            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
+                request.grant(new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE});
+            } else {
+                request.deny();
+                toast("Camera permission is required to scan slips");
+            }
         }
     }
 
