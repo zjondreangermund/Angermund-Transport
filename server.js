@@ -53,6 +53,43 @@ function uploadCategoryFromKind(kind){
   if(k.includes('expense')||k.includes('receipt')||k.includes('slip'))return'Expense';
   return'Document'
 }
+function jpegsToPdfBuffer(jpegs){
+  const imgs=(jpegs||[]).filter(Buffer.isBuffer).map(buf=>({buf,dim:jpegDimensions(buf)})).filter(x=>x.dim);
+  if(!imgs.length)return null;
+  const pageW=595.28,pageH=841.89,margin=18,totalObjects=2+imgs.length*3;
+  const parts=[Buffer.from('%PDF-1.4\n%\xE2\xE3\xCF\xD3\n','binary')],offsets=[0];let total=parts[0].length;
+  const add=(n,chunks)=>{offsets[n]=total;const head=Buffer.from(n+' 0 obj\n','ascii'),tail=Buffer.from('\nendobj\n','ascii');parts.push(head,...chunks,tail);total+=head.length+chunks.reduce((a,b)=>a+b.length,0)+tail.length};
+  const pageIds=imgs.map((_,i)=>3+i*3);
+  add(1,[Buffer.from('<< /Type /Catalog /Pages 2 0 R >>','ascii')]);
+  add(2,[Buffer.from('<< /Type /Pages /Kids ['+pageIds.map(id=>id+' 0 R').join(' ')+'] /Count '+imgs.length+' >>','ascii')]);
+  imgs.forEach((img,i)=>{
+    const pageId=3+i*3,imageId=pageId+1,contentId=pageId+2;
+    const scale=Math.min((pageW-margin*2)/img.dim.width,(pageH-margin*2)/img.dim.height),drawW=img.dim.width*scale,drawH=img.dim.height*scale,x=(pageW-drawW)/2,y=(pageH-drawH)/2;
+    const content=Buffer.from('q\n'+drawW.toFixed(2)+' 0 0 '+drawH.toFixed(2)+' '+x.toFixed(2)+' '+y.toFixed(2)+' cm\n/Im'+i+' Do\nQ\n','ascii');
+    add(pageId,[Buffer.from('<< /Type /Page /Parent 2 0 R /MediaBox [0 0 '+pageW+' '+pageH+'] /Resources << /XObject << /Im'+i+' '+imageId+' 0 R >> >> /Contents '+contentId+' 0 R >>','ascii')]);
+    add(imageId,[Buffer.from('<< /Type /XObject /Subtype /Image /Width '+img.dim.width+' /Height '+img.dim.height+' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length '+img.buf.length+' >>\nstream\n','ascii'),img.buf,Buffer.from('\nendstream','ascii')]);
+    add(contentId,[Buffer.from('<< /Length '+content.length+' >>\nstream\n','ascii'),content,Buffer.from('endstream','ascii')])
+  });
+  const xrefAt=total,xref=['xref','0 '+(totalObjects+1),'0000000000 65535 f '];
+  for(let n=1;n<=totalObjects;n++)xref.push(String(offsets[n]||0).padStart(10,'0')+' 00000 n ');
+  xref.push('trailer','<< /Size '+(totalObjects+1)+' /Root 1 0 R >>','startxref',String(xrefAt),'%%EOF','');
+  parts.push(Buffer.from(xref.join('\n'),'ascii'));
+  return Buffer.concat(parts)
+}
+function archiveStoredFiles(files){
+  const list=(files||[]).filter(Boolean);
+  if(!list.length)return null;
+  if(list.length===1)return archiveStoredFile(list[0]);
+  const jpgs=list.filter(f=>/^image\/jpe?g$/i.test(String(f.mimetype||'')));
+  if(jpgs.length===list.length){
+    const pdf=jpegsToPdfBuffer(jpgs.map(f=>f.buffer));
+    if(pdf){
+      const base=String(jpgs[0].originalname||'receipt').replace(/\.[^.]+$/,'');
+      return{buffer:pdf,mimeType:'application/pdf',filename:base+'-'+list.length+'pages.pdf',originalSize:list.reduce((a,f)=>a+(f.buffer?.length||0),0),size:pdf.length,convertedToPdf:true,pageCount:list.length}
+    }
+  }
+  return archiveStoredFile(list[0])
+}
 function archiveStoredFile(file){
   if(!file)return null;
   const mime=String(file.mimetype||'').toLowerCase(),name=String(file.originalname||'document');
@@ -1148,12 +1185,15 @@ function financialContext(state,linkedType,linkedId,body={}){
   if(tripId){const t=(state.trips||[]).find(x=>x.id===tripId);if(t){truckId=t.truckId||truckId;driverId=t.driverId||driverId}}
   return{tripId,truckId,driverId,maintenanceId,tyreId}
 }
-async function storeCompanyReceipt(file,user,linkedType,linkedId,kind='expense'){
-  if(!file)return null;
-  const archived=archiveStoredFile(file),id=crypto.randomUUID(),createdAt=new Date().toISOString(),row={id,userId:user.sub,linkedType:String(linkedType||'expense'),linkedId:String(linkedId||''),kind:String(kind||'expense'),filename:archived.filename,mimeType:archived.mimeType,content:archived.buffer,createdAt};
+async function storeCompanyReceiptFiles(files,user,linkedType,linkedId,kind='expense'){
+  const list=(files||[]).filter(Boolean);if(!list.length)return null;
+  const archived=archiveStoredFiles(list),id=crypto.randomUUID(),createdAt=new Date().toISOString(),row={id,userId:user.sub,linkedType:String(linkedType||'expense'),linkedId:String(linkedId||''),kind:String(kind||'expense'),filename:archived.filename,mimeType:archived.mimeType,content:archived.buffer,createdAt};
   if(pool)await q('INSERT INTO company_receipts(id,user_id,linked_type,linked_id,kind,filename,mime_type,content,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[id,user.sub,row.linkedType,row.linkedId,row.kind,row.filename,row.mimeType,row.content,createdAt]);
   else memory.companyReceipts.push(row);
-  return{id,filename:row.filename,mimeType:row.mimeType,createdAt}
+  return{id,filename:row.filename,mimeType:row.mimeType,createdAt,pageCount:archived.pageCount||1}
+}
+async function storeCompanyReceipt(file,user,linkedType,linkedId,kind='expense'){
+  return storeCompanyReceiptFiles(file?[file]:[],user,linkedType,linkedId,kind)
 }
 function applyLinkedCost(state,ctx,amount){
   if(ctx.maintenanceId){const m=(state.maintenance||[]).find(x=>x.id===ctx.maintenanceId);if(m&&num(m.cost)<=0)m.cost=amount}
@@ -2011,10 +2051,11 @@ app.post('/api/integrations/traccar/position',async(req,res)=>{
   }catch(e){res.status(500).json({error:e.message})}
 });
 async function gpsIn(req,res,source){const p={vehicleId:String(req.body.vehicleId||req.body.vehicle_id||''),driverId:req.body.driverId||req.user.driverId||null,tripId:req.body.tripId||null,latitude:Number(req.body.latitude),longitude:Number(req.body.longitude),speed:num(req.body.speed),heading:num(req.body.heading),accuracy:req.body.accuracy==null?null:num(req.body.accuracy),source,recordedAt:req.body.recordedAt||new Date().toISOString()};if(!p.vehicleId||!Number.isFinite(p.latitude)||!Number.isFinite(p.longitude))return res.status(400).json({error:'vehicleId, latitude and longitude are required'});if(pool)await q('INSERT INTO gps_positions(vehicle_id,driver_id,trip_id,latitude,longitude,speed,heading,accuracy,source,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[p.vehicleId,p.driverId,p.tripId,p.latitude,p.longitude,p.speed,p.heading,p.accuracy,p.source,p.recordedAt]);else memory.gps.push(p);await evaluateGeofences(p);if(source!=='phone-test')await evaluateTripZones(p);emit('gps',p);res.status(201).json(p)}
-app.post('/api/admin/slips/post',auth,roles('admin','manager','dispatcher','workshop','finance'),upload.single('receipt'),async(req,res)=>{
+app.post('/api/admin/slips/post',auth,roles('admin','manager','dispatcher','workshop','finance'),upload.fields([{name:'receipt',maxCount:1},{name:'receipts',maxCount:20}]),async(req,res)=>{
   let receipt=null;
   try{
-    if(!req.file)return res.status(400).json({error:'Slip or receipt image is required'});
+    const slipFiles=[...((req.files&&req.files.receipts)||[]),...((req.files&&req.files.receipt)||[])];
+    if(!slipFiles.length)return res.status(400).json({error:'Slip or receipt image is required'});
     const body=req.body||{},category=String(body.category||'Other').slice(0,80),tripId=String(body.tripId||''),requestedTruck=String(body.truckId||''),snapshot=await readOpsState();
     const trip=tripId?(snapshot.trips||[]).find(x=>x.id===tripId):null;
     if(tripId&&!trip)return res.status(400).json({error:'Selected trip was not found'});
@@ -2025,11 +2066,11 @@ app.post('/api/admin/slips/post',auth,roles('admin','manager','dispatcher','work
       if(litres<=0)return res.status(400).json({error:'Enter diesel litres'});
       if(total<=0&&enteredPrice<=0)return res.status(400).json({error:'Enter receipt total or price per litre'});
       if(!truckId||!(snapshot.trucks||[]).some(x=>x.id===truckId))return res.status(400).json({error:'Select the truck that received the fuel'});
-      const id='fuel_'+crypto.randomUUID();receipt=await storeCompanyReceipt(req.file,req.user,'fuel',id,'ai-slip');
+      const id='fuel_'+crypto.randomUUID();receipt=await storeCompanyReceiptFiles(slipFiles,req.user,'fuel',id,'ai-slip');
       const price=enteredPrice||(total/litres),printedTotal=total||(litres*price);
       const changed=await mutateOpsState(state=>{
         state.diesel??=[];
-        const rec={id,scope:trip?'trip':'company',companyPaid:true,tripId:trip?.id||'',legId:trip?activeTripLegServer((state.trips||[]).find(x=>x.id===trip.id))?.id||'':'',date,truckId,driverId,litres,price:Number(price.toFixed(4)),total:Number(printedTotal.toFixed(2)),printedTotal:Number(printedTotal.toFixed(2)),odometer:num(body.odometer),supplier:String(body.supplier||'').slice(0,160),slip:String(body.receiptNo||body.slip||'').slice(0,120),paymentMethod:String(body.paymentMethod||'Company card').slice(0,80),receiptUploadId:receipt.id,receiptUploadIds:[receipt.id],receiptCount:1,receiptSource:'company-ai',verified:directApproval,status:directApproval?'Verified':'Review',detectedCategory:category,categoryConfidence:num(body.categoryConfidence),fuelTransactions:body.fuelTransactions?JSON.parse(String(body.fuelTransactions||'[]')):[],fuelTransactionCount:num(body.fuelTransactionCount)||1,recordedBy:req.user.sub,recordedAt:new Date().toISOString(),aiSlip:true};
+        const rec={id,scope:trip?'trip':'company',companyPaid:true,tripId:trip?.id||'',legId:trip?activeTripLegServer((state.trips||[]).find(x=>x.id===trip.id))?.id||'':'',date,truckId,driverId,litres,price:Number(price.toFixed(4)),total:Number(printedTotal.toFixed(2)),printedTotal:Number(printedTotal.toFixed(2)),odometer:num(body.odometer),supplier:String(body.supplier||'').slice(0,160),slip:String(body.receiptNo||body.slip||'').slice(0,120),paymentMethod:String(body.paymentMethod||'Company card').slice(0,80),receiptUploadId:receipt.id,receiptUploadIds:[receipt.id],receiptCount:slipFiles.length,receiptPageCount:slipFiles.length,receiptSource:'company-ai',verified:directApproval,status:directApproval?'Verified':'Review',detectedCategory:category,categoryConfidence:num(body.categoryConfidence),fuelTransactions:body.fuelTransactions?JSON.parse(String(body.fuelTransactions||'[]')):[],fuelTransactionCount:num(body.fuelTransactionCount)||1,recordedBy:req.user.sub,recordedAt:new Date().toISOString(),aiSlip:true};
         state.diesel.unshift(rec);rememberSupplierCategory(state,rec.supplier,'Diesel');if(trip){const t=(state.trips||[]).find(x=>x.id===trip.id);if(t)recalcTripCosts(state,t)}
         state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:req.user.name||req.user.email||req.user.role,action:'AI slip confirmed → Diesel Control · '+rec.litres+' L · N$'+rec.printedTotal.toFixed(2),linkedType:trip?'trip':'truck',linkedId:trip?.id||truckId});state.audit=state.audit.slice(0,100);
         return rec
@@ -2037,11 +2078,11 @@ app.post('/api/admin/slips/post',auth,roles('admin','manager','dispatcher','work
       return res.status(201).json({destination:'diesel',record:changed.result,receipt,revision:changed.revision})
     }
     const amount=num(body.amount);if(amount<=0)return res.status(400).json({error:'Enter the expense amount'});
-    const id='expense_'+crypto.randomUUID();receipt=await storeCompanyReceipt(req.file,req.user,'expense',id,'ai-slip');
+    const id='expense_'+crypto.randomUUID();receipt=await storeCompanyReceiptFiles(slipFiles,req.user,'expense',id,'ai-slip');
     const changed=await mutateOpsState(state=>{
       const status=directApproval?'Approved':'Review';
       const rec=buildCompanyExpense(state,{sourceType:'ai-slip',sourceId:id,title:'AI scanned slip',body:{...body,date,tripId:trip?.id||'',truckId,driverId,amount,category},receiptId:receipt.id,status,linkedType:trip?'trip':(truckId?'truck':''),linkedId:trip?.id||truckId||''});
-      rec.aiSlip=true;rec.detectedCategory=String(body.detectedCategory||category);rec.categoryConfidence=num(body.categoryConfidence);rec.registration=String(body.registration||'').slice(0,40);
+      rec.aiSlip=true;rec.receiptPageCount=slipFiles.length;rec.detectedCategory=String(body.detectedCategory||category);rec.categoryConfidence=num(body.categoryConfidence);rec.registration=String(body.registration||'').slice(0,40);
       if(category==='Mass distance charge (MDC)')rec.mdc=true;
       if(category==='Police / traffic fine')rec.reimbursable=false;
       rememberSupplierCategory(state,rec.supplier,category);
