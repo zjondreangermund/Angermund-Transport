@@ -98,12 +98,23 @@ function classifyReceipt(raw,supplier,state={},facts={}){
   if(Number(facts.litres)>0&&Number(facts.pricePerLitre)>0)return{category:'Diesel',confidence:99,reason:'Litres and price per litre detected',source:'structure'};
   if(Number(facts.litres)>0&&has(/\b(pump|nozzle|truck\s*stop|service\s*station)\b/))return{category:'Diesel',confidence:97,reason:'Fuel volume and filling-station details detected',source:'structure'};
   if(has(/\btoll\b|toll\s*plaza|e[ -]?tag|vehicle\s*class|lane\s*\d+/))return{category:'Toll',confidence:96,reason:'Toll or plaza wording detected',source:'ocr'};
-  if(has(/cross[ -]?border|border\s*post|road\s*fund|customs|transit\s*permit|border\s*permit|entry\s*permit/))return{category:'Border permit',confidence:94,reason:'Border/permit wording detected',source:'ocr'};
+  if(has(/mass\s*distance|\bmdc\b|road\s*fund\s*administration|\brfa\b.*(?:distance|charge)|distance\s*charge/))return{category:'Mass distance charge (MDC)',confidence:97,reason:'RFA / mass-distance charge wording detected',source:'ocr'};
+  if(has(/customs\s*(?:clearance|entry|declaration)?|clearing\s*(?:agent|fee)|customs\s*broker|sad\s*500|import\s*dut(?:y|ies)|export\s*clearance/))return{category:'Customs / clearing',confidence:96,reason:'Customs or clearing wording detected',source:'ocr'};
+  if(has(/abnormal\s*load\s*permit|road\s*permit|road\s*fund|\brfa\b|cross[ -]?border\s*permit|transit\s*permit/))return{category:'Road permit / RFA',confidence:94,reason:'Road permit/RFA wording detected',source:'ocr'};
+  if(has(/border\s*post|border\s*permit|entry\s*permit|immigration\s*fee|cross[ -]?border\s*fee/))return{category:'Border permit',confidence:94,reason:'Border/entry permit wording detected',source:'ocr'};
+  if(has(/weighbridge|weigh\s*bridge|weighing\s*fee|axle\s*mass|gross\s*vehicle\s*mass/))return{category:'Weighbridge',confidence:95,reason:'Weighbridge wording detected',source:'ocr'};
+  if(has(/ferry|pontoon|river\s*crossing|crossing\s*fee/))return{category:'Ferry / crossing',confidence:93,reason:'Ferry/crossing wording detected',source:'ocr'};
+  if(has(/wash\s*bay|truck\s*wash|vehicle\s*wash|car\s*wash/))return{category:'Wash bay',confidence:93,reason:'Vehicle wash wording detected',source:'ocr'};
+  if(has(/tyre|tire|puncture|wheel\s*alignment|wheel\s*balanc|tube\s*repair/))return{category:'Tyre repair',confidence:95,reason:'Tyre/wheel repair wording detected',source:'ocr'};
+  if(has(/breakdown\s*(?:part|spare)|roadside\s*part|emergency\s*part/))return{category:'Breakdown parts',confidence:94,reason:'Breakdown parts wording detected',source:'ocr'};
+  if(has(/workshop|mechanic|battery|brake|spare\s*part|auto\s*parts|vehicle\s*repair|repair\s*labou?r/))return{category:'Emergency repair',confidence:91,reason:'Vehicle repair/parts wording detected',source:'ocr'};
+  if(has(/hardware|lubricant|oil\s*filter|service\s*part|workshop\s*supply|spares\s*shop/))return{category:'Workshop / spares',confidence:88,reason:'Workshop/spares wording detected',source:'ocr'};
+  if(has(/traffic\s*fine|police\s*fine|speeding\s*fine|notice\s*of\s*offence|admission\s*of\s*guilt/))return{category:'Police / traffic fine',confidence:95,reason:'Traffic/police fine wording detected',source:'ocr'};
+  if(has(/offload|offloading|loading\s*fee|handling\s*fee|warehouse|forklift|cargo\s*handling|labou?r\s*fee/))return{category:'Loading / offloading',confidence:90,reason:'Loading/handling wording detected',source:'ocr'};
   if(has(/\bparking\b|parkade|parking\s*ticket|entry\s*time|exit\s*time/))return{category:'Parking',confidence:94,reason:'Parking wording detected',source:'ocr'};
   if(has(/hotel|lodge|guest\s*house|guesthouse|accommodation|room\s*(?:no|number|rate)|check[ -]?in|check[ -]?out|overnight/))return{category:'Accommodation',confidence:92,reason:'Hotel/lodge/room wording detected',source:'ocr'};
-  if(has(/tyre|tire|puncture|workshop|mechanic|wheel\s*alignment|battery|brake|spare\s*part|auto\s*parts|vehicle\s*repair|repair\s*labou?r/))return{category:'Emergency repair',confidence:91,reason:'Vehicle repair/parts wording detected',source:'ocr'};
-  if(has(/offload|offloading|loading\s*fee|handling\s*fee|warehouse|forklift|weighbridge|cargo\s*handling/))return{category:'Loading / offloading',confidence:90,reason:'Loading/handling wording detected',source:'ocr'};
   if(has(/restaurant|take[ -]?away|\bfood\b|\bmeal\b|burger|chicken|pizza|coffee|cafe|\bkfc\b|hungry\s*lion|wimpy|steers|spur|nando'?s|debonairs|shoprite|checkers|pick\s*n\s*pay|woermann|\bspar\b|grocery|grocer/))return{category:'Meals',confidence:89,reason:'Food/restaurant wording detected',source:'ocr'};
+  if(has(/stationery|general\s*supply|consumable|cleaning\s*supply|office\s*supply/))return{category:'General supplies',confidence:82,reason:'General supplies wording detected',source:'ocr'};
   let learned=rules[key];
   if(!learned&&key.length>=4){const match=Object.keys(rules).find(k=>k.length>=4&&(key.includes(k)||k.includes(key)));if(match)learned=rules[match]}
   if(learned?.category)return{category:learned.category,confidence:99,reason:'Recognised supplier from a previous confirmed slip',source:'learned'};
@@ -307,7 +318,7 @@ async function recognizeReceiptBest(buffer){
 }
 
 
-const RECEIPT_AI_CATEGORIES=['Diesel','Toll','Meals','Accommodation','Parking','Border permit','Loading / offloading','Emergency repair','Other'];
+const RECEIPT_AI_CATEGORIES=['Diesel','Toll','Meals','Accommodation','Parking','Border permit','Customs / clearing','Road permit / RFA','Mass distance charge (MDC)','Weighbridge','Loading / offloading','Ferry / crossing','Wash bay','Tyre repair','Emergency repair','Breakdown parts','Workshop / spares','Police / traffic fine','General supplies','Other'];
 const RECEIPT_AI_SCHEMA={
   type:'object',
   properties:{
@@ -416,7 +427,7 @@ async function openAiReceiptExtract(buffer,mimeType,ocrText,model,detail='high')
       'Read this transport expense receipt/slip image and return only the requested structured fields.',
       'This is for Angermund Transport in Namibia. Never invent a value that is not visible.',
       'Use 0 for unknown numeric values and an empty string for unknown text.',
-      'Recognise diesel/fuel, toll, meals, accommodation, parking, border permit, loading/offloading and emergency repair slips.',
+      'Recognise diesel/fuel, toll, meals, accommodation, parking, border permits, customs/clearing, RFA/road permits, mass distance charges, weighbridge, loading/offloading, ferry/crossing, wash bay, tyre repair, emergency repair, breakdown parts, workshop/spares, police/traffic fines, general supplies and other transport expenses.',
       'For fuel: carefully read litres, price per litre, printed total and each visible fuel transaction. Check litres × price against amount.',
       'If the image is unclear, numbers conflict, or a required fuel value is missing, set needsReview=true and lower extractionConfidence.',
       'OCR text is provided only as a clue; trust the visible image over bad OCR.',
@@ -1928,6 +1939,46 @@ app.post('/api/integrations/traccar/position',async(req,res)=>{
   }catch(e){res.status(500).json({error:e.message})}
 });
 async function gpsIn(req,res,source){const p={vehicleId:String(req.body.vehicleId||req.body.vehicle_id||''),driverId:req.body.driverId||req.user.driverId||null,tripId:req.body.tripId||null,latitude:Number(req.body.latitude),longitude:Number(req.body.longitude),speed:num(req.body.speed),heading:num(req.body.heading),accuracy:req.body.accuracy==null?null:num(req.body.accuracy),source,recordedAt:req.body.recordedAt||new Date().toISOString()};if(!p.vehicleId||!Number.isFinite(p.latitude)||!Number.isFinite(p.longitude))return res.status(400).json({error:'vehicleId, latitude and longitude are required'});if(pool)await q('INSERT INTO gps_positions(vehicle_id,driver_id,trip_id,latitude,longitude,speed,heading,accuracy,source,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[p.vehicleId,p.driverId,p.tripId,p.latitude,p.longitude,p.speed,p.heading,p.accuracy,p.source,p.recordedAt]);else memory.gps.push(p);await evaluateGeofences(p);if(source!=='phone-test')await evaluateTripZones(p);emit('gps',p);res.status(201).json(p)}
+app.post('/api/admin/slips/post',auth,roles('admin','manager','dispatcher','workshop','finance'),upload.single('receipt'),async(req,res)=>{
+  let receipt=null;
+  try{
+    if(!req.file)return res.status(400).json({error:'Slip or receipt image is required'});
+    const body=req.body||{},category=String(body.category||'Other').slice(0,80),tripId=String(body.tripId||''),requestedTruck=String(body.truckId||''),snapshot=await readOpsState();
+    const trip=tripId?(snapshot.trips||[]).find(x=>x.id===tripId):null;
+    if(tripId&&!trip)return res.status(400).json({error:'Selected trip was not found'});
+    const truckId=trip?.truckId||requestedTruck,driverId=trip?.driverId||String(body.driverId||''),date=String(body.date||new Date().toISOString().slice(0,10)).slice(0,10);
+    const directApproval=['admin','manager','finance'].includes(req.user.role);
+    if(category==='Diesel'){
+      const litres=num(body.litres),total=num(body.amount||body.total),enteredPrice=num(body.price);
+      if(litres<=0)return res.status(400).json({error:'Enter diesel litres'});
+      if(total<=0&&enteredPrice<=0)return res.status(400).json({error:'Enter receipt total or price per litre'});
+      if(!truckId||!(snapshot.trucks||[]).some(x=>x.id===truckId))return res.status(400).json({error:'Select the truck that received the fuel'});
+      const id='fuel_'+crypto.randomUUID();receipt=await storeCompanyReceipt(req.file,req.user,'fuel',id,'ai-slip');
+      const price=enteredPrice||(total/litres),printedTotal=total||(litres*price);
+      const changed=await mutateOpsState(state=>{
+        state.diesel??=[];
+        const rec={id,scope:trip?'trip':'company',companyPaid:true,tripId:trip?.id||'',legId:trip?activeTripLegServer((state.trips||[]).find(x=>x.id===trip.id))?.id||'':'',date,truckId,driverId,litres,price:Number(price.toFixed(4)),total:Number(printedTotal.toFixed(2)),printedTotal:Number(printedTotal.toFixed(2)),odometer:num(body.odometer),supplier:String(body.supplier||'').slice(0,160),slip:String(body.receiptNo||body.slip||'').slice(0,120),paymentMethod:String(body.paymentMethod||'Company card').slice(0,80),receiptUploadId:receipt.id,receiptUploadIds:[receipt.id],receiptCount:1,receiptSource:'company-ai',verified:directApproval,status:directApproval?'Verified':'Review',detectedCategory:category,categoryConfidence:num(body.categoryConfidence),fuelTransactions:body.fuelTransactions?JSON.parse(String(body.fuelTransactions||'[]')):[],fuelTransactionCount:num(body.fuelTransactionCount)||1,recordedBy:req.user.sub,recordedAt:new Date().toISOString(),aiSlip:true};
+        state.diesel.unshift(rec);rememberSupplierCategory(state,rec.supplier,'Diesel');if(trip){const t=(state.trips||[]).find(x=>x.id===trip.id);if(t)recalcTripCosts(state,t)}
+        state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:req.user.name||req.user.email||req.user.role,action:'AI slip confirmed → Diesel Control · '+rec.litres+' L · N$'+rec.printedTotal.toFixed(2),linkedType:trip?'trip':'truck',linkedId:trip?.id||truckId});state.audit=state.audit.slice(0,100);
+        return rec
+      });
+      return res.status(201).json({destination:'diesel',record:changed.result,receipt,revision:changed.revision})
+    }
+    const amount=num(body.amount);if(amount<=0)return res.status(400).json({error:'Enter the expense amount'});
+    const id='expense_'+crypto.randomUUID();receipt=await storeCompanyReceipt(req.file,req.user,'expense',id,'ai-slip');
+    const changed=await mutateOpsState(state=>{
+      const status=directApproval?'Approved':'Review';
+      const rec=buildCompanyExpense(state,{sourceType:'ai-slip',sourceId:id,title:'AI scanned slip',body:{...body,date,tripId:trip?.id||'',truckId,driverId,amount,category},receiptId:receipt.id,status,linkedType:trip?'trip':(truckId?'truck':''),linkedId:trip?.id||truckId||''});
+      rec.aiSlip=true;rec.detectedCategory=String(body.detectedCategory||category);rec.categoryConfidence=num(body.categoryConfidence);rec.registration=String(body.registration||'').slice(0,40);
+      if(category==='Mass distance charge (MDC)')rec.mdc=true;
+      if(category==='Police / traffic fine')rec.reimbursable=false;
+      rememberSupplierCategory(state,rec.supplier,category);
+      state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:req.user.name||req.user.email||req.user.role,action:'AI slip confirmed → '+category+' · N$'+amount.toFixed(2)+(trip?' · '+trip.number:' · company expense'),linkedType:trip?'trip':'expense',linkedId:trip?.id||rec.id});state.audit=state.audit.slice(0,100);
+      return rec
+    });
+    res.status(201).json({destination:'expense',record:changed.result,receipt,revision:changed.revision})
+  }catch(err){res.status(err.status||500).json({error:err.message})}
+});
 app.post('/api/admin/fuel',auth,roles('admin','manager','dispatcher','workshop','finance'),upload.single('receipt'),async(req,res)=>{
   try{
     const litres=num(req.body.litres),total=num(req.body.total),enteredPrice=num(req.body.price),tripId=String(req.body.tripId||''),requestedTruck=String(req.body.truckId||'');
