@@ -22,6 +22,8 @@ import java.net.URL;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -88,6 +90,11 @@ public class NotificationService extends Service {
         String title = a.optString("title", "Angermund Transport");
         String message = a.optString("message", "New operational alert");
         String id = a.optString("id", title + message);
+
+        Set<String> saved = prefs().getStringSet("seen_alert_ids", null);
+        Set<String> seen = saved == null ? new HashSet<>() : new HashSet<>(saved);
+        if (seen.contains(id)) return;
+
         Notification.Builder b = Build.VERSION.SDK_INT >= 26 ? new Notification.Builder(this, ALERT_CHANNEL) : new Notification.Builder(this);
         Notification n = b.setContentTitle(title)
                 .setContentText(message)
@@ -97,6 +104,9 @@ public class NotificationService extends Service {
                 .setContentIntent(openAppIntent())
                 .build();
         ((NotificationManager) getSystemService(NOTIFICATION_SERVICE)).notify(Math.abs(id.hashCode()), n);
+        if (seen.size() >= 200) seen.clear();
+        seen.add(id);
+        prefs().edit().putStringSet("seen_alert_ids", seen).apply();
     }
 
     private void pollAlerts() {
