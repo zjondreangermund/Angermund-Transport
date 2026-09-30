@@ -45,6 +45,14 @@ Q
   parts.push(Buffer.from(xref.join('\n'),'ascii'));
   return Buffer.concat(parts)
 }
+function uploadCategoryFromKind(kind){
+  const k=String(kind||'').toLowerCase();
+  if(k.includes('diesel')||k.includes('fuel'))return'Diesel';
+  if(k.includes('pod'))return'POD';
+  if(k.includes('problem'))return'Problem';
+  if(k.includes('expense')||k.includes('receipt')||k.includes('slip'))return'Expense';
+  return'Document'
+}
 function archiveStoredFile(file){
   if(!file)return null;
   const mime=String(file.mimetype||'').toLowerCase(),name=String(file.originalname||'document');
@@ -1794,16 +1802,50 @@ app.post('/api/driver/trips/:tripId/upload',auth,roles('driver'),upload.single('
   }catch(e){res.status(e.status||500).json({error:e.message})}
 });
 app.get('/api/driver/uploads',auth,roles('admin','manager','dispatcher','finance','workshop'),async(req,res)=>{
-  const limit=Math.max(1,Math.min(500,num(req.query.limit)||200)),state=await readOpsState();
+  const limit=Math.max(1,Math.min(500,num(req.query.limit)||300)),state=await readOpsState();
   const refs=new Map();
-  for(const x of state.diesel||[])for(const id of (x.receiptUploadIds||[x.receiptUploadId]).filter(Boolean))refs.set(id,{posted:true,linkedRecordType:'diesel',linkedRecordId:x.id});
-  for(const x of state.expenses||[])for(const id of (x.receiptUploadIds||[x.receiptUploadId]).filter(Boolean))refs.set(id,{posted:true,linkedRecordType:'expense',linkedRecordId:x.id});
-  for(const x of state.tripIssues||[])if(x.photoUploadId)refs.set(x.photoUploadId,{posted:true,linkedRecordType:'problem',linkedRecordId:x.id});
-  for(const x of state.trips||[]){if(x.podUploadId)refs.set(x.podUploadId,{posted:true,linkedRecordType:'pod',linkedRecordId:x.id});for(const l of x.legs||[])if(l.podUploadId)refs.set(l.podUploadId,{posted:true,linkedRecordType:'pod',linkedRecordId:l.id})}
-  let rows;
-  if(pool)rows=await q('SELECT du.id,du.user_id AS "userId",u.driver_id AS "driverId",u.name AS "userName",du.trip_id AS "tripId",du.kind,du.filename,du.mime_type AS "mimeType",octet_length(du.content) AS size,du.created_at AS "createdAt" FROM driver_uploads du LEFT JOIN users u ON u.id=du.user_id ORDER BY du.created_at DESC LIMIT $1',[limit]);
-  else rows=memory.uploads.slice().sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))).slice(0,limit).map(x=>({id:x.id,userId:x.userId,driverId:x.driverId||null,userName:x.userName||'',tripId:x.tripId,kind:x.kind,filename:x.filename,mimeType:x.mimeType,size:x.content?.length||0,createdAt:x.createdAt}));
-  res.json(rows.map(x=>({...x,...(refs.get(x.id)||{posted:false,linkedRecordType:null,linkedRecordId:null})})))
+  for(const x of state.diesel||[])for(const id of (x.receiptUploadIds||[x.receiptUploadId]).filter(Boolean))refs.set(id,{posted:true,linkedRecordType:'diesel',linkedRecordId:x.id,tripId:x.tripId||'',truckId:x.truckId||'',driverId:x.driverId||'',category:'Diesel'});
+  for(const x of state.expenses||[])for(const id of (x.receiptUploadIds||[x.receiptUploadId]).filter(Boolean))refs.set(id,{posted:true,linkedRecordType:'expense',linkedRecordId:x.id,tripId:x.tripId||'',truckId:x.truckId||'',driverId:x.driverId||'',category:x.category||'Other'});
+  for(const x of state.tripIssues||[])if(x.photoUploadId)refs.set(x.photoUploadId,{posted:true,linkedRecordType:'problem',linkedRecordId:x.id,tripId:x.tripId||'',truckId:x.truckId||'',driverId:x.driverId||'',category:'Problem'});
+  for(const x of state.trips||[]){
+    if(x.podUploadId)refs.set(x.podUploadId,{posted:true,linkedRecordType:'pod',linkedRecordId:x.id,tripId:x.id,truckId:x.truckId||'',driverId:x.driverId||'',category:'POD'});
+    for(const l of x.legs||[])if(l.podUploadId)refs.set(l.podUploadId,{posted:true,linkedRecordType:'pod',linkedRecordId:l.id,tripId:x.id,truckId:x.truckId||'',driverId:x.driverId||'',category:'POD'})
+  }
+  const tripById=id=>(state.trips||[]).find(x=>x.id===id);
+  const locationFor=meta=>{
+    const t=tripById(meta.tripId),cat=String(meta.category||'Document');
+    if(t)return 'Trip '+String(t.number||t.id)+' / '+cat;
+    if(meta.linkedRecordType==='diesel'||cat==='Diesel')return 'Company / Diesel Control';
+    if(meta.linkedRecordType==='expense')return 'Company / Expenses / '+cat;
+    return 'Company / Uploads'
+  };
+  let driverRows=[],companyRows=[];
+  if(pool){
+    driverRows=await q('SELECT du.id,du.user_id AS "userId",u.driver_id AS "driverId",u.name AS "userName",du.trip_id AS "tripId",du.kind,du.filename,du.mime_type AS "mimeType",octet_length(du.content) AS size,du.created_at AS "createdAt" FROM driver_uploads du LEFT JOIN users u ON u.id=du.user_id ORDER BY du.created_at DESC LIMIT $1',[limit]);
+    companyRows=await q('SELECT cr.id,cr.user_id AS "userId",u.name AS "userName",cr.linked_type AS "linkedType",cr.linked_id AS "linkedId",cr.kind,cr.filename,cr.mime_type AS "mimeType",octet_length(cr.content) AS size,cr.created_at AS "createdAt" FROM company_receipts cr LEFT JOIN users u ON u.id=cr.user_id ORDER BY cr.created_at DESC LIMIT $1',[limit])
+  }else{
+    driverRows=memory.uploads.slice().sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))).slice(0,limit).map(x=>({id:x.id,userId:x.userId,driverId:x.driverId||null,userName:x.userName||'',tripId:x.tripId,kind:x.kind,filename:x.filename,mimeType:x.mimeType,size:x.content?.length||0,createdAt:x.createdAt}));
+    companyRows=(memory.companyReceipts||[]).slice().sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))).slice(0,limit).map(x=>({id:x.id,userId:x.userId,userName:'',linkedType:x.linkedType,linkedId:x.linkedId,kind:x.kind,filename:x.filename,mimeType:x.mimeType,size:x.content?.length||0,createdAt:x.createdAt}))
+  }
+  const driver=driverRows.map(x=>{
+    const ref=refs.get(x.id)||{posted:false,linkedRecordType:null,linkedRecordId:null,tripId:x.tripId||'',truckId:'',driverId:x.driverId||'',category:uploadCategoryFromKind(x.kind)};
+    const meta={...x,...ref,source:'driver'};
+    meta.location=locationFor(meta);
+    return meta
+  });
+  const company=companyRows.map(x=>{
+    let rec=null,type='';
+    if(x.linkedType==='fuel'){rec=(state.diesel||[]).find(r=>r.id===x.linkedId);type='diesel'}
+    else if(x.linkedType==='expense'){rec=(state.expenses||[]).find(r=>r.id===x.linkedId);type='expense'}
+    else{
+      rec=(state.diesel||[]).find(r=>r.receiptUploadId===x.id)||(state.expenses||[]).find(r=>r.receiptUploadId===x.id);
+      type=rec&&Object.prototype.hasOwnProperty.call(rec,'litres')?'diesel':(rec?'expense':'')
+    }
+    const meta={...x,source:'company',posted:true,linkedRecordType:type||x.linkedType||'document',linkedRecordId:(rec&&rec.id)||x.linkedId||'',tripId:(rec&&rec.tripId)||'',truckId:(rec&&rec.truckId)||'',driverId:(rec&&rec.driverId)||'',category:type==='diesel'?'Diesel':((rec&&rec.category)||uploadCategoryFromKind(x.kind))};
+    meta.location=locationFor(meta);
+    return meta
+  });
+  res.json([...driver,...company].sort((a,b)=>String(b.createdAt).localeCompare(String(a.createdAt))).slice(0,limit))
 });
 
 app.post('/api/admin/driver-uploads/:id/scan',auth,roles('admin','manager','dispatcher','finance'),async(req,res)=>{
