@@ -40,6 +40,7 @@ import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.InputStream;
+import java.util.ArrayList;
 import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
@@ -104,7 +105,7 @@ public class MainActivity extends Activity {
         settings.setGeolocationEnabled(true);
         settings.setAllowFileAccess(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " AngermundTransportNative/1.3.2");
+        settings.setUserAgentString(settings.getUserAgentString() + " AngermundTransportNative/1.3.3");
 
         webView.addJavascriptInterface(new NativeBridge(), "AngermundNative");
         webView.setWebViewClient(new WebViewClient() {
@@ -397,6 +398,7 @@ public class MainActivity extends Activity {
             Intent files = new Intent(Intent.ACTION_GET_CONTENT);
             files.addCategory(Intent.CATEGORY_OPENABLE);
             files.setType("*/*");
+            files.putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true);
 
             Intent chooser = new Intent(Intent.ACTION_CHOOSER);
             chooser.putExtra(Intent.EXTRA_INTENT, files);
@@ -416,23 +418,36 @@ public class MainActivity extends Activity {
             final ValueCallback<Uri[]> callback = fileCallback;
             fileCallback = null;
 
-            Uri chosen = null;
+            ArrayList<Uri> chosen = new ArrayList<>();
             if (resultCode == RESULT_OK) {
-                if (data != null && data.getData() != null) chosen = data.getData();
-                else if (cameraUri != null) chosen = cameraUri;
+                if (data != null && data.getClipData() != null) {
+                    android.content.ClipData clip = data.getClipData();
+                    for (int i = 0; i < clip.getItemCount() && i < 20; i++) {
+                        Uri uri = clip.getItemAt(i).getUri();
+                        if (uri != null) chosen.add(uri);
+                    }
+                } else if (data != null && data.getData() != null) {
+                    chosen.add(data.getData());
+                } else if (cameraUri != null) {
+                    chosen.add(cameraUri);
+                }
             }
             cameraUri = null;
 
             if (callback == null) return;
-            if (chosen == null) {
+            if (chosen.isEmpty()) {
                 callback.onReceiveValue(null);
                 return;
             }
 
-            final Uri selected = chosen;
+            final ArrayList<Uri> selected = chosen;
             io.execute(() -> {
-                Uri normalized = normalizeImageForUpload(selected);
-                runOnUiThread(() -> callback.onReceiveValue(new Uri[]{normalized != null ? normalized : selected}));
+                ArrayList<Uri> normalized = new ArrayList<>();
+                for (Uri uri : selected) {
+                    Uri out = normalizeImageForUpload(uri);
+                    normalized.add(out != null ? out : uri);
+                }
+                runOnUiThread(() -> callback.onReceiveValue(normalized.toArray(new Uri[0])));
             });
             return;
         }
