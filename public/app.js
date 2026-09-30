@@ -2,6 +2,7 @@ const STORE='angermund_transport_ops_v2',LEGACY_STORE='angermund_transport_erp_v
 const $=id=>document.getElementById(id),today=()=>new Date().toISOString().slice(0,10),uid=(p='id')=>`${p}_${Date.now().toString(36)}${Math.random().toString(36).slice(2,6)}`;
 const SMART_SLIP_CATEGORIES=['Diesel','Toll','Meals','Accommodation','Parking','Border permit','Customs / clearing','Road permit / RFA','Mass distance charge (MDC)','Weighbridge','Loading / offloading','Ferry / crossing','Wash bay','Tyre repair','Emergency repair','Breakdown parts','Workshop / spares','Police / traffic fine','General supplies','Other'];
 let authToken=localStorage.getItem('angermund_token')||'',sessionUser=null,liveGps=[],geofences=[],serverNotifications=[],providerConfig={},pushDeviceStatus={supported:false,permission:typeof Notification!=='undefined'?Notification.permission:'unsupported',subscribed:false,serverCount:0},mapInstance=null,mapLayers=[],geofencePickerMap=null,geofencePickerMarker=null,geofencePickerCircle=null,geofenceDraftPoint=null,appUsers=[],usersLoaded=false,driverUploads=[],driverUploadsLoaded=false,activeUploadObjectUrl='',driverPreviewId='',driverGeoWatchId=null,phoneGpsTestWatchId=null,lastPhoneGpsTestSentAt=0,lastDriverGpsSentAt=0,lastDriverGpsPoint=null,payrollPeriodFilter=new Date().toISOString().slice(0,7),mdcTripPrefill='',journeyQuoteLegs=[],crossBorderPackTripId='',crossBorderDocs=[],crossBorderDocsLoadedFor='';
+let adminSlipBatch=null;
 const QUICK_PIN_DEVICE_KEY='angermund_quick_pin_device',QUICK_PIN_READY_KEY='angermund_quick_pin_ready',QUICK_PIN_LOGIN_KEY='angermund_quick_pin_login',PHONE_GPS_TEST_KEY='angermund_phone_gps_test';
 function quickPinDeviceId(){let id=localStorage.getItem(QUICK_PIN_DEVICE_KEY);if(!id){id=(crypto.randomUUID?crypto.randomUUID():'web-'+Date.now().toString(36)+Math.random().toString(36).slice(2));localStorage.setItem(QUICK_PIN_DEVICE_KEY,id)}return id}
 function accountUsername(u){return String(u?.username||u?.email||'').split('@')[0]}
@@ -562,6 +563,173 @@ function adminSlipDestination(category,tripId){
   if(category==='Police / traffic fine')return tripId?'Trip expense · non-reimbursable fine':'Company expense · non-reimbursable fine';
   return tripId?'Trip expense → selected trip':'Company operating expense'
 }
+
+function adminScanDetectedCategory(x={}){
+  const fuelStructure=num(x.litres)>0||num(x.pricePerLitre)>0||(Array.isArray(x.fuelTransactions)&&x.fuelTransactions.length>0);
+  return fuelStructure&&(!x.category||x.category==='Other')?'Diesel':(SMART_SLIP_CATEGORIES.includes(x.category)?x.category:'Other')
+}
+function adminScanDraft(x={}){
+  const matchedTruck=suggestedSlipTruck(x),matchedTrip=suggestedSlipTrip(x),category=adminScanDetectedCategory(x);
+  return{
+    category,
+    detectedCategory:category,
+    categoryConfidence:Math.max(0,Math.min(100,num(x.categoryConfidence)||num(x.extractionConfidence))),
+    date:(String(x.date||'').match(/^\d{4}-\d{2}-\d{2}/)||[])[0]||today(),
+    amount:num(x.printedTotal||x.suggestedAmount)||'',
+    supplier:String(x.supplier||''),
+    receiptNo:String(x.documentNumber||''),
+    scope:matchedTrip?'trip':'company',
+    tripId:matchedTrip?.id||'',
+    truckId:matchedTrip?.truckId||matchedTruck?.id||'',
+    registration:String(x.registration||''),
+    litres:num(x.litres)||'',
+    price:num(x.pricePerLitre)||'',
+    odometer:num(x.odometer)||'',
+    fuelTransactions:Array.isArray(x.fuelTransactions)?x.fuelTransactions:[],
+    fuelTransactionCount:num(x.fuelTransactionCount)||0
+  }
+}
+async function adminSlipFormData(files,x,draft){
+  const fd=new FormData(),list=(files||[]).filter(Boolean);
+  for(let i=0;i<list.length;i++){
+    const archived=await prepareArchiveImage(list[i],2400,.90);
+    fd.append(list.length>1?'receipts':'receipt',archived,archived.name||('slip-'+(i+1)+'.jpg'))
+  }
+  fd.append('category',draft.category||'Other');
+  fd.append('detectedCategory',draft.detectedCategory||adminScanDetectedCategory(x));
+  fd.append('categoryConfidence',String(num(draft.categoryConfidence)));
+  fd.append('date',draft.date||today());
+  fd.append('amount',String(num(draft.amount)));
+  fd.append('supplier',String(draft.supplier||''));
+  fd.append('receiptNo',String(draft.receiptNo||''));
+  fd.append('tripId',draft.scope==='trip'?String(draft.tripId||''):'');
+  fd.append('truckId',String(draft.truckId||''));
+  fd.append('registration',String(draft.registration||x?.registration||''));
+  fd.append('litres',String(num(draft.litres)));
+  fd.append('price',String(num(draft.price)));
+  fd.append('odometer',String(num(draft.odometer)));
+  fd.append('fuelTransactionCount',String(num(draft.fuelTransactionCount)));
+  fd.append('fuelTransactions',JSON.stringify(Array.isArray(draft.fuelTransactions)?draft.fuelTransactions:[]));
+  return fd
+}
+async function postAdminSlipDraft(item){
+  const d=item.draft||{},category=d.category||'Other';
+  if(d.scope==='trip'&&!d.tripId)throw Error('Select the trip this slip belongs to');
+  if(category==='Diesel'&&num(d.litres)<=0)throw Error('Enter diesel litres');
+  if(category!=='Diesel'&&num(d.amount)<=0)throw Error('Enter the amount');
+  const fd=await adminSlipFormData(item.files||[item.file],item.scan||{},d);
+  return api('/api/admin/slips/post',{method:'POST',body:fd})
+}
+async function handleAdminScanSelection(files){
+  const list=Array.from(files||[]).filter(Boolean).slice(0,20);
+  if(!list.length)return;
+  if(list.length===1)return openAdminSmartSlip(list[0]);
+  $('modalTitle').textContent='📚 Multiple slip scans';
+  $('entryForm').innerHTML='<div class="batch-mode-choice"><h2>'+list.length+' images selected</h2><p>Tell Angermund how these photos should be treated.</p>'
+    +'<button type="button" class="batch-mode-card" id="batchSeparate"><b>🧾 '+list.length+' separate slips</b><span>Each photo is its own expense. AI scans each one and you review the full batch before posting.</span></button>'
+    +'<button type="button" class="batch-mode-card" id="batchPages"><b>📄 One receipt · '+list.length+' pages</b><span>All photos belong to the same invoice/receipt. AI combines the readings and stores one multi-page PDF.</span></button>'
+    +'<div class="form-actions"><button type="button" class="ghost" id="cancelForm">Cancel</button></div></div>';
+  $('modal').classList.remove('hidden');
+  $('cancelForm').onclick=()=>$('modal').classList.add('hidden');
+  $('batchSeparate').onclick=()=>openAdminBatchSlips(list);
+  $('batchPages').onclick=()=>openAdminMultiPageSlip(list)
+}
+async function openAdminMultiPageSlip(files){
+  $('modalTitle').textContent='📄 Multi-page receipt';
+  const results=[];
+  for(let i=0;i<files.length;i++){
+    $('entryForm').innerHTML='<div class="driver-scan-loading"><div class="driver-scan-camera">📄</div><h2>Reading page '+(i+1)+' of '+files.length+'…</h2><p>AI is combining all pages into one receipt.</p><div class="batch-progress"><span style="width:'+Math.round((i/files.length)*100)+'%"></span></div></div>';
+    try{results.push(await scanDriverReceipt(files[i]))}catch(e){results.push({needsReview:true,scanError:e.message||'Could not read page'})}
+  }
+  let merged={};
+  for(const r of results)merged=Object.keys(merged).length?mergeClientReceiptResults(merged,r):r;
+  merged.receiptPageCount=files.length;
+  renderAdminSmartSlip(files[0],merged,{files,multiPage:true})
+}
+async function openAdminBatchSlips(files){
+  adminSlipBatch={items:[],createdAt:Date.now()};
+  $('modalTitle').textContent='✨ Batch AI scan';
+  for(let i=0;i<files.length;i++){
+    $('entryForm').innerHTML='<div class="driver-scan-loading"><div class="driver-scan-camera">🧾</div><h2>Scanning slip '+(i+1)+' of '+files.length+'…</h2><p>Nothing will be posted until the batch review.</p><div class="batch-progress"><span style="width:'+Math.round((i/files.length)*100)+'%"></span></div></div>';
+    try{
+      const scan=await scanDriverReceipt(files[i]);
+      adminSlipBatch.items.push({file:files[i],files:[files[i]],scan,draft:adminScanDraft(scan),include:true,status:'ready'})
+    }catch(e){
+      adminSlipBatch.items.push({file:files[i],files:[files[i]],scan:{},draft:adminScanDraft({}),include:false,status:'error',error:e.message||'Scan failed'})
+    }
+  }
+  renderAdminBatchReview()
+}
+function batchTripOptions(selected=''){
+  return '<option value="">— Company / no trip —</option>'+(db.trips||[]).slice().sort((a,b)=>new Date(b.createdAt||b.date||0)-new Date(a.createdAt||a.date||0)).map(t=>'<option value="'+esc(t.id)+'" '+(selected===t.id?'selected':'')+'>'+esc(t.number)+' · '+esc(truck(t.truckId))+'</option>').join('')
+}
+function batchTruckOptions(selected=''){
+  return '<option value="">— Truck if applicable —</option>'+(db.trucks||[]).map(t=>'<option value="'+esc(t.id)+'" '+(selected===t.id?'selected':'')+'>'+esc(truck(t.id))+'</option>').join('')
+}
+function renderAdminBatchReview(){
+  if(!adminSlipBatch)return;
+  $('modalTitle').textContent='🧾 Review batch · '+adminSlipBatch.items.length+' slips';
+  const ready=adminSlipBatch.items.filter(x=>x.status==='ready').length,errors=adminSlipBatch.items.length-ready;
+  $('entryForm').innerHTML='<div class="batch-review"><div class="notice"><b>'+ready+' ready to review'+(errors?' · '+errors+' need attention':'')+'.</b><br>Check the detected destination for each slip. Confirm All posts only the checked slips.</div>'
+    +adminSlipBatch.items.map((item,i)=>{
+      const d=item.draft,x=item.scan,confidence=num(d.categoryConfidence);
+      if(item.status==='error')return '<article class="batch-slip-card batch-error"><div><b>Slip '+(i+1)+'</b><span>'+esc(item.file?.name||'Photo')+'</span></div><p>⚠ '+esc(item.error||'Could not read')+'</p><button type="button" class="ghost batchRetry" data-i="'+i+'">Retry</button></article>';
+      const cats=SMART_SLIP_CATEGORIES.map(c=>'<option value="'+esc(c)+'" '+(d.category===c?'selected':'')+'>'+esc(c)+'</option>').join('');
+      return '<article class="batch-slip-card"><div class="batch-slip-head"><label><input type="checkbox" class="batchInclude" data-i="'+i+'" '+(item.include?'checked':'')+'> Slip '+(i+1)+'</label><span class="'+(confidence>=85?'upload-posted':'upload-file-only')+'">'+(confidence?confidence.toFixed(0)+'%':'Review')+'</span></div>'
+        +'<div class="batch-slip-summary"><b>'+esc(d.supplier||'Unknown supplier')+'</b><strong>'+money(d.amount)+'</strong></div>'
+        +'<div class="batch-grid"><label>Type<select class="batchCategory" data-i="'+i+'">'+cats+'</select></label><label>Amount<input class="batchAmount" data-i="'+i+'" type="number" step="0.01" value="'+esc(String(d.amount||''))+'"></label>'
+        +'<label>Belongs to<select class="batchScope" data-i="'+i+'"><option value="company" '+(d.scope==='company'?'selected':'')+'>Company</option><option value="trip" '+(d.scope==='trip'?'selected':'')+'>Trip</option></select></label>'
+        +'<label>Trip<select class="batchTrip" data-i="'+i+'" '+(d.scope==='trip'?'':'disabled')+'>'+batchTripOptions(d.tripId)+'</select></label>'
+        +'<label>Truck<select class="batchTruck" data-i="'+i+'">'+batchTruckOptions(d.truckId)+'</select></label></div>'
+        +'<div class="batch-slip-foot"><span>'+esc(adminSlipDestination(d.category,d.scope==='trip'?d.tripId:''))+'</span><button type="button" class="ghost small batchEdit" data-i="'+i+'">Edit details</button></div></article>'
+    }).join('')
+    +'<div class="driver-modal-actions"><button type="button" class="ghost" id="cancelForm">Cancel</button><button type="button" class="primary" id="batchConfirmAll">✓ CONFIRM ALL CHECKED</button></div></div>';
+  $('modal').classList.remove('hidden');
+  $('cancelForm').onclick=()=>{$('modal').classList.add('hidden');adminSlipBatch=null};
+  document.querySelectorAll('.batchInclude').forEach(el=>el.onchange=()=>{adminSlipBatch.items[num(el.dataset.i)].include=el.checked});
+  document.querySelectorAll('.batchCategory').forEach(el=>el.onchange=()=>{const it=adminSlipBatch.items[num(el.dataset.i)];it.draft.category=el.value;renderAdminBatchReview()});
+  document.querySelectorAll('.batchAmount').forEach(el=>el.onchange=()=>{adminSlipBatch.items[num(el.dataset.i)].draft.amount=el.value});
+  document.querySelectorAll('.batchScope').forEach(el=>el.onchange=()=>{const it=adminSlipBatch.items[num(el.dataset.i)];it.draft.scope=el.value;if(el.value==='company')it.draft.tripId='';renderAdminBatchReview()});
+  document.querySelectorAll('.batchTrip').forEach(el=>el.onchange=()=>{const it=adminSlipBatch.items[num(el.dataset.i)];it.draft.tripId=el.value;const t=get('trips',el.value);if(t.id)it.draft.truckId=t.truckId||'';renderAdminBatchReview()});
+  document.querySelectorAll('.batchTruck').forEach(el=>el.onchange=()=>{adminSlipBatch.items[num(el.dataset.i)].draft.truckId=el.value});
+  document.querySelectorAll('.batchEdit').forEach(el=>el.onclick=()=>editAdminBatchItem(num(el.dataset.i)));
+  document.querySelectorAll('.batchRetry').forEach(el=>el.onclick=()=>retryAdminBatchItem(num(el.dataset.i)));
+  $('batchConfirmAll').onclick=confirmAdminBatch
+}
+function editAdminBatchItem(i){
+  const item=adminSlipBatch?.items[i];if(!item)return;const d=item.draft;
+  $('modalTitle').textContent='Edit batch slip '+(i+1);
+  $('entryForm').innerHTML='<div class="driver-smart-slip"><div class="form-grid">'
+    +'<div class="field"><label>Supplier<input id="batchEditSupplier" value="'+esc(String(d.supplier||''))+'"></label></div>'
+    +'<div class="field"><label>Receipt no.<input id="batchEditNumber" value="'+esc(String(d.receiptNo||''))+'"></label></div>'
+    +'<div class="field"><label>Date<input id="batchEditDate" type="date" value="'+esc(d.date||today())+'"></label></div>'
+    +'<div class="field"><label>Amount<input id="batchEditAmount" type="number" step="0.01" value="'+esc(String(d.amount||''))+'"></label></div>'
+    +'<div class="field"><label>Litres<input id="batchEditLitres" type="number" step="0.001" value="'+esc(String(d.litres||''))+'"></label></div>'
+    +'<div class="field"><label>Price / litre<input id="batchEditPrice" type="number" step="0.0001" value="'+esc(String(d.price||''))+'"></label></div>'
+    +'<div class="field full"><label>Odometer<input id="batchEditOdo" type="number" value="'+esc(String(d.odometer||''))+'"></label></div></div>'
+    +'<div class="driver-modal-actions"><button type="button" class="ghost" id="batchEditBack">Back</button><button type="button" class="primary" id="batchEditSave">Save changes</button></div></div>';
+  $('batchEditBack').onclick=renderAdminBatchReview;
+  $('batchEditSave').onclick=()=>{Object.assign(d,{supplier:$('batchEditSupplier').value.trim(),receiptNo:$('batchEditNumber').value.trim(),date:$('batchEditDate').value||today(),amount:$('batchEditAmount').value,litres:$('batchEditLitres').value,price:$('batchEditPrice').value,odometer:$('batchEditOdo').value});renderAdminBatchReview()}
+}
+async function retryAdminBatchItem(i){
+  const item=adminSlipBatch?.items[i];if(!item)return;
+  $('entryForm').innerHTML='<div class="driver-scan-loading"><div class="driver-scan-camera">🔎</div><h2>Retrying slip '+(i+1)+'…</h2></div>';
+  try{const scan=await scanDriverReceipt(item.file);item.scan=scan;item.draft=adminScanDraft(scan);item.status='ready';item.include=true;delete item.error}catch(e){item.error=e.message||'Scan failed'}
+  renderAdminBatchReview()
+}
+async function confirmAdminBatch(){
+  const items=(adminSlipBatch?.items||[]).filter(x=>x.include&&x.status==='ready');
+  if(!items.length)return notify('Select at least one scanned slip');
+  if(!confirm('Post '+items.length+' checked slip'+(items.length===1?'':'s')+' now?'))return;
+  let posted=0,failed=0;
+  for(let i=0;i<items.length;i++){
+    $('entryForm').innerHTML='<div class="driver-scan-loading"><div class="driver-scan-camera">✓</div><h2>Posting '+(i+1)+' of '+items.length+'…</h2><p>Saving the expense and archiving its PDF.</p><div class="batch-progress"><span style="width:'+Math.round((i/items.length)*100)+'%"></span></div></div>';
+    try{await postAdminSlipDraft(items[i]);posted++}catch(e){items[i].status='error';items[i].error=e.message||'Posting failed';failed++}
+  }
+  await refreshCentralState(false);driverUploadsLoaded=false;
+  const message='✓ '+posted+' slip'+(posted===1?'':'s')+' posted and archived as PDF'+(failed?' · '+failed+' failed':'');
+  adminSlipBatch=null;$('modal').classList.add('hidden');notify(message);go('driverUploads')
+}
 async function openAdminSmartSlip(file){
   $('modalTitle').textContent='✨ AI slip scanner';
   $('entryForm').innerHTML='<div class="driver-scan-loading"><div class="driver-scan-camera">📷</div><h2>Reading slip with AI…</h2><p>This normally takes a few seconds. Keep this screen open.</p></div>';
@@ -577,7 +745,8 @@ async function openAdminSmartSlip(file){
     $('retryAdminSlip').onclick=()=>{$('modal').classList.add('hidden');setTimeout(()=>$('scanInput').click(),80)}
   }
 }
-function renderAdminSmartSlip(file,x){
+function renderAdminSmartSlip(file,x,opts={}){
+  const sourceFiles=Array.isArray(opts.files)&&opts.files.length?opts.files:[file];
   const matchedTruck=suggestedSlipTruck(x),matchedTrip=suggestedSlipTrip(x);
   const fuelStructure=num(x.litres)>0||num(x.pricePerLitre)>0||(Array.isArray(x.fuelTransactions)&&x.fuelTransactions.length>0);
   const detected=fuelStructure&&(!x.category||x.category==='Other')?'Diesel':(SMART_SLIP_CATEGORIES.includes(x.category)?x.category:'Other');
@@ -591,10 +760,11 @@ function renderAdminSmartSlip(file,x){
   let matchNote='';
   if(matchedTrip)matchNote='<div class="support-merge-note">✓ Registration matched '+esc(truck(matchedTruck.id))+' and suggested trip <b>'+esc(matchedTrip.number)+'</b>.</div>';
   else if(matchedTruck)matchNote='<div class="support-merge-note">✓ Registration matched '+esc(truck(matchedTruck.id))+'. Choose a trip if this expense belongs to one.</div>';
-  $('modalTitle').textContent='✨ Check scanned slip';
+  $('modalTitle').textContent=opts.multiPage?'📄 Check multi-page receipt':'✨ Check scanned slip';
   $('entryForm').innerHTML='<div class="driver-smart-slip admin-smart-slip">'
     +'<div class="driver-detection '+(confidence>=85?'high':confidence>=65?'medium':'low')+'"><span>'+(confidence>=85?'✨':'🔎')+'</span><div><strong>Looks like: '+esc(detected)+'</strong><small>'+(confidence?confidence.toFixed(0)+'% confidence · ':'')+esc(aiName)+(x.categoryReason?' · '+esc(x.categoryReason):'')+'</small></div></div>'
     +matchNote
+    +(sourceFiles.length>1?'<div class="support-merge-note">📄 '+sourceFiles.length+' pages will be archived together as one PDF.</div>':'')
     +'<div class="form-grid">'
       +'<div class="field full"><label>Expense type</label><select id="adminSlipCategory">'+categoryOptions+'</select></div>'
       +'<div class="field"><label>Date</label><input id="adminSlipDate" type="date" value="'+esc(dateValue)+'"></div>'
@@ -634,12 +804,8 @@ function renderAdminSmartSlip(file,x){
     if(scopeValue==='trip'&&!tripId)return notify('Select the trip this slip belongs to');
     if(category==='Diesel'&&litres<=0)return notify('Enter diesel litres');
     if(category!=='Diesel'&&amount<=0)return notify('Enter the amount');
-    const fd=new FormData(),odoEl=$('adminSlipOdo');
-    const archiveFile=await prepareArchiveImage(file,2400,.90);
-    fd.append('receipt',archiveFile,archiveFile.name||'slip.jpg');fd.append('category',category);fd.append('detectedCategory',detected);fd.append('categoryConfidence',String(confidence));
-    fd.append('date',$('adminSlipDate').value||today());fd.append('amount',String(amount));fd.append('supplier',$('adminSlipSupplier').value.trim());fd.append('receiptNo',$('adminSlipNumber').value.trim());
-    fd.append('tripId',tripId);fd.append('truckId',$('adminSlipTruck').value||'');fd.append('registration',String(x.registration||''));fd.append('litres',String(litres));fd.append('price',String(price));fd.append('odometer',String(num(odoEl&&odoEl.value)));
-    fd.append('fuelTransactionCount',String(num(x.fuelTransactionCount)||0));fd.append('fuelTransactions',JSON.stringify(Array.isArray(x.fuelTransactions)?x.fuelTransactions:[]));
+    const draft={category,detectedCategory:detected,categoryConfidence:confidence,date:$('adminSlipDate').value||today(),amount,supplier:$('adminSlipSupplier').value.trim(),receiptNo:$('adminSlipNumber').value.trim(),scope:scopeValue,tripId,truckId:$('adminSlipTruck').value||'',registration:String(x.registration||''),litres,price,odometer:num($('adminSlipOdo')&&$('adminSlipOdo').value),fuelTransactionCount:num(x.fuelTransactionCount)||0,fuelTransactions:Array.isArray(x.fuelTransactions)?x.fuelTransactions:[]};
+    const fd=await adminSlipFormData(sourceFiles,x,draft);
     try{
       const result=await api('/api/admin/slips/post',{method:'POST',body:fd});
       $('modal').classList.add('hidden');await refreshCentralState(false);driverUploadsLoaded=false;
