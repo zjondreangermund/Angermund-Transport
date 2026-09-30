@@ -434,13 +434,20 @@ function receiptClientScore(x){
 async function scanReceiptFile(file){
   const fd=new FormData();fd.append('document',file,file.name||'receipt.jpg');
   const job=await api('/api/documents/scan',{method:'POST',body:fd});
-  for(let i=0;i<30;i++){
-    await new Promise(r=>setTimeout(r,650));
-    const row=await api('/api/documents/scans/'+encodeURIComponent(job.id));
-    if(row.status==='review')return row.extracted||{};
-    if(row.status==='failed')return{};
+  let lastError='';
+  for(let i=0;i<90;i++){
+    await new Promise(r=>setTimeout(r,700));
+    try{
+      const row=await api('/api/documents/scans/'+encodeURIComponent(job.id));
+      if(row.status==='review')return row.extracted||{};
+      if(row.status==='failed')throw Error(row.error||'Slip scan failed');
+      lastError=''
+    }catch(e){
+      lastError=e.message||String(e);
+      if(i>8&&/failed|unsupported|could not read/i.test(lastError))throw e
+    }
   }
-  return{};
+  throw Error(lastError||'Slip scan timed out. Please try again.')
 }
 async function prepareReceiptThresholdForOcr(file){
   try{
@@ -518,22 +525,21 @@ function mergeSupportingReceipt(primary,supporting){
 }
 
 async function scanDriverReceipt(file){
-  try{
-    const enhanced=await prepareReceiptForOcr(file);
-    const enhancedResult=await scanReceiptFile(enhanced);
-    if(!weakReceiptResult(enhancedResult))return enhancedResult;
-
-    const originalResult=enhanced===file?{}:await scanReceiptFile(file);
-    let merged=mergeClientReceiptResults(enhancedResult,originalResult);
-    if(!weakReceiptResult(merged))return merged;
-
-    const threshold=await prepareReceiptThresholdForOcr(file);
-    if(threshold!==file){
-      const thresholdResult=await scanReceiptFile(threshold);
-      merged=mergeClientReceiptResults(merged,thresholdResult);
-    }
-    return merged||{};
-  }catch{return{}}
+  const enhanced=await prepareReceiptForOcr(file);
+  if(providerConfig.receiptAI&&providerConfig.receiptAI.enabled){
+    return await scanReceiptFile(enhanced)
+  }
+  const enhancedResult=await scanReceiptFile(enhanced);
+  if(!weakReceiptResult(enhancedResult))return enhancedResult;
+  const originalResult=enhanced===file?{}:await scanReceiptFile(file);
+  let merged=mergeClientReceiptResults(enhancedResult,originalResult);
+  if(!weakReceiptResult(merged))return merged;
+  const threshold=await prepareReceiptThresholdForOcr(file);
+  if(threshold!==file){
+    const thresholdResult=await scanReceiptFile(threshold);
+    merged=mergeClientReceiptResults(merged,thresholdResult)
+  }
+  return merged||{}
 }
 
 
@@ -557,11 +563,18 @@ function adminSlipDestination(category,tripId){
 }
 async function openAdminSmartSlip(file){
   $('modalTitle').textContent='✨ AI slip scanner';
-  $('entryForm').innerHTML='<div class="driver-scan-loading"><div class="driver-scan-camera">📷</div><h2>Reading slip with AI…</h2><p>Identifying the expense, supplier, amount and where it should be posted.</p></div>';
+  $('entryForm').innerHTML='<div class="driver-scan-loading"><div class="driver-scan-camera">📷</div><h2>Reading slip with AI…</h2><p>This normally takes a few seconds. Keep this screen open.</p></div>';
   $('modal').classList.remove('hidden');
-  const x=await scanDriverReceipt(file);
-  if($('modal').classList.contains('hidden'))return;
-  renderAdminSmartSlip(file,x||{})
+  try{
+    const x=await scanDriverReceipt(file);
+    if($('modal').classList.contains('hidden'))return;
+    renderAdminSmartSlip(file,x||{})
+  }catch(e){
+    if($('modal').classList.contains('hidden'))return;
+    $('entryForm').innerHTML='<div class="policy critical"><h3>Could not read this slip</h3><p>'+esc(e.message||'Scan failed')+'</p></div><div class="form-actions"><button type="button" class="ghost" id="cancelForm">Close</button><button type="button" class="primary" id="retryAdminSlip">Try another photo</button></div>';
+    $('cancelForm').onclick=()=>$('modal').classList.add('hidden');
+    $('retryAdminSlip').onclick=()=>{$('modal').classList.add('hidden');setTimeout(()=>$('scanInput').click(),80)}
+  }
 }
 function renderAdminSmartSlip(file,x){
   const matchedTruck=suggestedSlipTruck(x),matchedTrip=suggestedSlipTrip(x);
