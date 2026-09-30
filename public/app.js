@@ -742,7 +742,7 @@ async function openAdminSmartSlip(file){
     if($('modal').classList.contains('hidden'))return;
     $('entryForm').innerHTML='<div class="policy critical"><h3>Could not read this slip</h3><p>'+esc(e.message||'Scan failed')+'</p></div><div class="form-actions"><button type="button" class="ghost" id="cancelForm">Close</button><button type="button" class="primary" id="retryAdminSlip">Try another photo</button></div>';
     $('cancelForm').onclick=()=>$('modal').classList.add('hidden');
-    $('retryAdminSlip').onclick=()=>{$('modal').classList.add('hidden');setTimeout(()=>$('scanInput').click(),80)}
+    $('retryAdminSlip').onclick=()=>{$('modal').classList.add('hidden');setTimeout(()=>openSlipScanSourceChooser({multiple:true}),80)}
   }
 }
 function renderAdminSmartSlip(file,x,opts={}){
