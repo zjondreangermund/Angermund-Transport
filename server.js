@@ -2416,6 +2416,25 @@ async function ensureOperationalAlerts(){
   }catch(e){console.error('Operational alert sweep failed',e.message)}
 }
 
+async function applyPayeThresholdMigration(){
+  const version='2026-09-30-paye-threshold-8000-v1';
+  const changed=await mutateOpsState(state=>{
+    if(state.payeThresholdMigrationVersion===version)return{skipped:true};
+    let updated=0;
+    for(const row of state.payroll||[]){
+      if(['Approved','Paid'].includes(row.status))continue;
+      const employee=workforceEmployee(state,row.employeeId);if(!employee)continue;
+      const next=calculatePayrollRecord(state,employee,row.period,row);
+      Object.assign(row,next);updated++
+    }
+    state.payeThresholdMigrationVersion=version;
+    state.audit??=[];
+    state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:'System',action:'PAYE threshold applied at N$8,000 taxable gross · '+updated+' draft payslip(s) refreshed',linkedType:'payroll',linkedId:version});
+    state.audit=state.audit.slice(0,100);
+    return{skipped:false,updated}
+  });
+  return changed.result
+}
 async function ensureMonthEndPayroll(){
   try{
     const na=new Date(Date.now()+2*60*60*1000),y=na.getUTCFullYear(),m=na.getUTCMonth(),day=na.getUTCDate(),last=new Date(Date.UTC(y,m+1,0)).getUTCDate();
@@ -2444,4 +2463,4 @@ app.get('/download/android',async(req,res)=>{
   }
 });
 app.get('/login',(req,res)=>{res.setHeader('Cache-Control','no-store, no-cache, must-revalidate');res.sendFile(path.join(root,'index.html'))});app.use(express.static(root,{maxAge:'1h',setHeaders:(res,file)=>{if(file.endsWith('.html')||file.endsWith('/app.js')||file.endsWith('/styles.css')||file.endsWith('/sw.js'))res.setHeader('Cache-Control','no-store, no-cache, must-revalidate')}}));app.use((req,res)=>res.sendFile(path.join(root,'index.html')));
-initDb().then(async()=>{if(process.argv.includes('--init-only'))return pool?.end();const fleet=await ensureCanonicalFleet();if(!fleet?.skipped)console.log('Canonical fleet applied',fleet);const imported=await applyWorkforceEnvImport();if(!imported?.skipped)console.log('Workforce import applied',imported);const linked=await reconcileWorkforceUserLinks();if(linked.linkedDrivers||linked.linkedStaff)console.log('Workforce user links reconciled',linked);const tripImport=await applyTripWorkbookTestImport();if(!tripImport?.skipped)console.log('Trip workbook test import applied',tripImport.actual);else console.log('Trip workbook test import already applied',tripImport.actual||'');app.listen(PORT,()=>console.log(`Angermund Transport V3 running on port ${PORT}`));setTimeout(ensureMonthEndPayroll,15000);setInterval(ensureMonthEndPayroll,6*60*60*1000);setTimeout(ensureOperationalAlerts,20000);setInterval(ensureOperationalAlerts,10*60*1000)}).catch(e=>{console.error('Startup failed',e);process.exit(1)});
+initDb().then(async()=>{if(process.argv.includes('--init-only'))return pool?.end();const fleet=await ensureCanonicalFleet();if(!fleet?.skipped)console.log('Canonical fleet applied',fleet);const imported=await applyWorkforceEnvImport();if(!imported?.skipped)console.log('Workforce import applied',imported);const linked=await reconcileWorkforceUserLinks();if(linked.linkedDrivers||linked.linkedStaff)console.log('Workforce user links reconciled',linked);const tripImport=await applyTripWorkbookTestImport();if(!tripImport?.skipped)console.log('Trip workbook test import applied',tripImport.actual);else console.log('Trip workbook test import already applied',tripImport.actual||'');const payeMigration=await applyPayeThresholdMigration();if(!payeMigration?.skipped)console.log('PAYE threshold migration applied',payeMigration);app.listen(PORT,()=>console.log(`Angermund Transport V3 running on port ${PORT}`));setTimeout(ensureMonthEndPayroll,15000);setInterval(ensureMonthEndPayroll,6*60*60*1000);setTimeout(ensureOperationalAlerts,20000);setInterval(ensureOperationalAlerts,10*60*1000)}).catch(e=>{console.error('Startup failed',e);process.exit(1)});
