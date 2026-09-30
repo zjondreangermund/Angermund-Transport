@@ -667,3 +667,29 @@ body.driver-mode main{padding-bottom:94px!important}
 .loading-brand{gap:18px}
 .loading-screen .loading-brand img{width:min(74vw,360px)!important;max-height:44vh;aspect-ratio:1/1;object-fit:cover;border-radius:34px!important;box-shadow:0 26px 80px rgba(0,18,65,.58),0 0 50px rgba(24,133,255,.28)!important}
 .loading-brand span{font-size:12px;letter-spacing:.16em;color:#f7fbff}
+
+
+/* Batch AI slip scanning */
+.batch-mode-choice{display:grid;gap:14px}
+.batch-mode-choice>h2{margin:0}.batch-mode-choice>p{margin:0;color:var(--muted)}
+.batch-mode-card{display:grid;gap:6px;width:100%;text-align:left;padding:18px;border:1px solid var(--line);border-radius:16px;background:rgba(12,35,55,.72);color:var(--text);cursor:pointer}
+.batch-mode-card:hover{border-color:#3887d9;background:rgba(19,55,86,.86)}
+.batch-mode-card b{font-size:17px}.batch-mode-card span{font-size:12px;line-height:1.45;color:var(--muted)}
+.batch-progress{height:8px;border-radius:99px;background:rgba(255,255,255,.08);overflow:hidden;margin-top:15px}
+.batch-progress span{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#1e8fff,#5cc8ff);transition:width .2s}
+.batch-review{display:grid;gap:12px}
+.batch-slip-card{border:1px solid var(--line);border-radius:15px;padding:14px;background:rgba(8,24,39,.7);display:grid;gap:12px}
+.batch-slip-card.batch-error{border-color:rgba(255,96,96,.45)}
+.batch-slip-head,.batch-slip-summary,.batch-slip-foot{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.batch-slip-head label{display:flex;align-items:center;gap:8px;font-weight:800}
+.batch-slip-summary b{font-size:14px}.batch-slip-summary strong{font-size:17px}
+.batch-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px}
+.batch-grid label{display:grid;gap:5px;font-size:11px;color:var(--muted)}
+.batch-grid input,.batch-grid select{width:100%;min-width:0}
+.batch-slip-foot{padding-top:8px;border-top:1px solid var(--line)}
+.batch-slip-foot span{font-size:11px;color:var(--muted);line-height:1.3}
+@media(max-width:650px){
+  .batch-grid{grid-template-columns:1fr}
+  .batch-slip-head,.batch-slip-summary,.batch-slip-foot{align-items:flex-start}
+  .batch-slip-foot{flex-direction:column}
+}
