@@ -1886,12 +1886,58 @@ app.delete('/api/admin/trips/:tripId/legs/:legId',auth,roles('admin','manager','
     res.json(changed.result)
   }catch(e){res.status(e.status||500).json({error:e.message})}
 });
+function isNblClient(client){const k=String((client&&client.name)||'').toLowerCase();return String((client&&client.id)||'')==='cli_nbl'||k==='nbl'||k.indexOf('namibian breweries')>=0}
+function nblInvoiceCycleBounds(endMonth){if(!/^\d{4}-\d{2}$/.test(String(endMonth||''))){const e=Error('Cycle month must be YYYY-MM');e.status=400;throw e}const p=String(endMonth).split('-').map(Number),end=new Date(Date.UTC(p[0],p[1]-1,20)),start=new Date(Date.UTC(p[0],p[1]-2,21));return{start:start.toISOString().slice(0,10),end:end.toISOString().slice(0,10)}}
+function tripInvoiceDate(t){return String((t&&(t.deliveredDate||t.completedDate||t.closedDate||t.date))||'').slice(0,10)}
+function tripReadyForBilling(t,leg){return Boolean((leg&&leg.pod)||(t&&t.pod)||num(t&&t.stage)>=4||/delivered|closed|invoiced/i.test(String((t&&t.status)||'')))}
+function collectNblInvoiceLines(state,nbl,start,end){
+  const lines=[],excluded=[];
+  for(const t of state.trips||[]){
+    const billDate=tripInvoiceDate(t);if(!billDate||billDate<start||billDate>end)continue;
+    const legs=ensureTripLegs(state,t);
+    for(const leg of legs){
+      if(leg.clientId!==nbl.id)continue;
+      if(!tripReadyForBilling(t,leg)){excluded.push({tripId:t.id,tripNumber:t.number||t.id,reason:'Not delivered / no POD'});continue}
+      if(leg.invoiceId){excluded.push({tripId:t.id,tripNumber:t.number||t.id,reason:'Already invoiced'});continue}
+      const r=(state.routes||[]).find(x=>x.id===leg.routeId),tr=(state.trucks||[]).find(x=>x.id===t.truckId),dr=(state.drivers||[]).find(x=>x.id===t.driverId),amount=Number(calculateLegIncome(leg).toFixed(2));
+      lines.push({tripId:t.id,legId:leg.id,date:billDate,tripNumber:t.number||t.id,route:(r&&r.name)||'',truck:(tr&&(tr.fleetName||tr.registration))||'',registration:(tr&&tr.registration)||'',driver:(dr&&dr.name)||'',load:leg.load||t.load||'',amount})
+    }
+  }
+  lines.sort((a,b)=>String(a.date).localeCompare(String(b.date))||String(a.tripNumber).localeCompare(String(b.tripNumber)));
+  return{lines,excluded}
+}
+function linkNblInvoiceLines(state,inv,lines){
+  for(const line of lines){
+    const t=(state.trips||[]).find(x=>x.id===line.tripId);if(!t)continue;
+    const leg=ensureTripLegs(state,t).find(x=>x.id===line.legId);if(!leg)continue;
+    leg.invoiceId=inv.id;leg.invoiceStatus='Unpaid';
+    const all=ensureTripLegs(state,t);
+    if(all.every(x=>x.invoiceId)){t.stage=Math.max(num(t.stage),5);t.status='Invoiced';t.invoiceIds=Array.from(new Set(all.map(x=>x.invoiceId).filter(Boolean)))}
+  }
+}
+function buildNblConsolidatedInvoice(state,cycleMonth){
+  const bounds=nblInvoiceCycleBounds(cycleMonth),start=bounds.start,end=bounds.end;
+  state.invoices=state.invoices||[];
+  const nbl=(state.clients||[]).find(isNblClient);if(!nbl){const e=Error('Namibian Breweries / NBL client was not found');e.status=404;throw e}
+  const existing=state.invoices.find(x=>x.consolidated===true&&x.clientId===nbl.id&&x.periodStart===start&&x.periodEnd===end);
+  if(existing)return{invoice:existing,existing:true,lines:existing.lines||[],excluded:[]};
+  const found=collectNblInvoiceLines(state,nbl,start,end),lines=found.lines,excluded=found.excluded;
+  if(!lines.length){const e=Error('No uninvoiced NBL trips are ready in the '+start+' to '+end+' cycle');e.status=400;throw e}
+  const highest=state.invoices.reduce((m,x)=>{const n=Number(String(x.number||'').split('-').pop())||0;return Math.max(m,n)},999);
+  const terms=num(nbl.terms)||30,endDate=new Date(end+'T00:00:00Z'),dueDate=new Date(endDate.getTime()+terms*86400000),amount=Number(lines.reduce((a,x)=>a+num(x.amount),0).toFixed(2));
+  const inv={id:'inv_'+crypto.randomUUID(),number:'INV-'+(highest+1),date:end,clientId:nbl.id,tripId:'',amount,due:dueDate.toISOString().slice(0,10),status:'Unpaid',consolidated:true,billingCycle:'20th cutoff',periodStart:start,periodEnd:end,cutoffDay:20,lines,tripIds:Array.from(new Set(lines.map(x=>x.tripId))),lineCount:lines.length};
+  state.invoices.unshift(inv);linkNblInvoiceLines(state,inv,lines);
+  return{invoice:inv,existing:false,lines,excluded}
+}
+app.post('/api/invoices/nbl/consolidated',auth,roles('admin','manager','finance'),async(req,res)=>{try{const changed=await mutateOpsState(state=>buildNblConsolidatedInvoice(state,String((req.body&&req.body.cycleMonth)||'')));res.status(changed.result.existing?200:201).json(changed.result)}catch(e){res.status(e.status||500).json({error:e.message})}});
 app.post('/api/admin/trips/:tripId/legs/:legId/invoice',auth,roles('admin','manager','finance'),async(req,res)=>{
   try{
     const changed=await mutateOpsState(async state=>{
       state.invoices??=[];
       const t=(state.trips||[]).find(x=>x.id===req.params.tripId);if(!t){const e=Error('Trip not found');e.status=404;throw e}
       const invoiceLegs=ensureTripLegs(state,t),leg=String(req.params.legId).startsWith('legacy_')?invoiceLegs[0]:invoiceLegs.find(x=>x.id===req.params.legId);if(!leg){const e=Error('Journey leg not found');e.status=404;throw e}
+      const legClient=(state.clients||[]).find(x=>x.id===leg.clientId);
+      if(isNblClient(legClient)){const e=Error('NBL uses one consolidated invoice per 20th billing cycle. Generate it from Invoices & Payments.');e.status=409;throw e}
       if(leg.invoiceId){const existing=state.invoices.find(x=>x.id===leg.invoiceId);if(existing)return{invoice:existing,trip:t,leg,existing:true}}
       const highest=state.invoices.reduce((m,x)=>Math.max(m,Number(String(x.number||'').match(/INV-(\d+)/)?.[1]||0)),999);
       const client=(state.clients||[]).find(x=>x.id===leg.clientId),terms=num(client?.terms)||30,date=new Date(),due=new Date(date.getTime()+terms*86400000).toISOString().slice(0,10);
