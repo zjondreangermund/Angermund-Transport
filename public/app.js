@@ -3383,6 +3383,7 @@ function paintEntryExperience(p){
   const el=$('siteEntry'),stage=$('siteEntryStage');if(!el||!stage)return;
   p=entryClamp(p);const scene=entrySceneFromProgress(p),weights=ENTRY_SCENE_CENTERS.map((c,i)=>entrySceneWeight(p,c,i)),ranked=[...weights].sort((a,b)=>b-a),blendFog=entryClamp(1-(ranked[0]-ranked[1])*2.65),fogOpacity=.10+blendFog*.64;
   el.dataset.scene=String(scene);
+  hydrateEntryScene(scene);hydrateEntryScene(Math.min(ENTRY_SCENE_CENTERS.length-1,scene+1));
   el.dataset.weather=['ice','space','orbit','clear','dust','clear','storm','golden'][scene]||'clear';
   el.style.setProperty('--entry-p',p.toFixed(4));stage.style.setProperty('--entry-fog-transition',blendFog.toFixed(3));stage.style.setProperty('--entry-fog-opacity',fogOpacity.toFixed(3));stage.style.setProperty('--cloud-shift',(-p*17).toFixed(2)+'vw');stage.style.setProperty('--dust-shift',(p*22).toFixed(2)+'vw');
   weights.forEach((w,i)=>{
@@ -3408,7 +3409,16 @@ function entryAnimationLoop(){
 function updateEntryExperience(){
   const el=$('siteEntry');if(!el)return;const max=Math.max(1,el.scrollHeight-el.clientHeight);entryTargetProgress=entryClamp(el.scrollTop/max);if(!entryRaf)entryRaf=requestAnimationFrame(entryAnimationLoop)
 }
-function preloadEntryScenes(){ENTRY_SCENE_URLS.forEach((src,i)=>{if(i<3)return;const img=new Image();img.decoding='async';img.src=src})}
+function hydrateEntryScene(i){
+  const img=document.querySelector('.entry-visual-'+i+' img');if(!img||img.getAttribute('src')||!img.dataset.src)return;
+  img.src=img.dataset.src;img.removeAttribute('data-src')
+}
+function preloadEntryScenes(){
+  const load=()=>{
+    let i=1;const next=()=>{if(i>=ENTRY_SCENE_URLS.length)return;hydrateEntryScene(i++);setTimeout(next,260)};next()
+  };
+  if('requestIdleCallback'in window)requestIdleCallback(load,{timeout:900});else setTimeout(load,450)
+}
 function scrollEntryToScene(scene){const el=$('siteEntry');if(!el)return;const max=Math.max(1,el.scrollHeight-el.clientHeight),idx=Math.max(0,Math.min(ENTRY_SCENE_CENTERS.length-1,scene));el.scrollTo({top:max*ENTRY_SCENE_CENTERS[idx],behavior:'smooth'})}
 function showSiteEntry(){
   if($('siteEntry')){$('siteEntry').classList.remove('hidden','is-exiting');$('siteEntry').scrollTop=0;entryTargetProgress=entrySmoothProgress=0;entryLastScene=-1;requestAnimationFrame(()=>paintEntryExperience(0))}
