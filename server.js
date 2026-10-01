@@ -1725,6 +1725,125 @@ function applyTripReportWorkbook(state,data,source,importId){
   return{created,updated,skipped,total:data.records.length,fuelRecords,expenseRecords,reconciled,sheets:data.sheets.length,summarySheets:data.summarySheets.length,totalIncome:data.totalIncome,totalExpenses:data.totalExpenses,distance:data.distance}
 }
 
+
+function insuranceText(v){return String(v??'').replace(/\s+/g,' ').trim()}
+function insuranceSheetDate(sheet){
+  let best='';
+  for(const row of (sheet.rows||[]).slice(0,10))for(const v of row||[]){
+    let d='';
+    if(typeof v==='number'&&v>=25000&&v<=60000)d=excelImportDate(v);
+    else if(/\b(?:20\d{2}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.](?:20\d{2}|\d{2}))\b/.test(String(v||'')))d=excelImportDate(v);
+    if(d&&(!best||d>best))best=d
+  }
+  return best
+}
+function insurancePolicyNumber(sheet){
+  const text=(sheet.rows||[]).slice(0,12).flat().map(insuranceText).join(' ');
+  const m=text.match(/SANTAM\s+POLICY\s*[-:#]?\s*([0-9]{8,14}(?:\/\d+)?)/i)||text.match(/\b([0-9]{10,14})(?:\/\d+)?\b/);
+  return m?m[1]:''
+}
+function insuranceSectionName(text){
+  const s=insuranceText(text).toUpperCase();
+  if(/^FIRE:?$/.test(s))return'Fire / Property';
+  if(/^GOODS IN TRANSIT:?$/.test(s))return'Goods in Transit';
+  if(/^PUBLIC LIABILITY:?$/.test(s))return'Public Liability';
+  if(/^BUSINESS ALL RISK:?$/.test(s))return'Business All Risk';
+  if(/GROUP PERSONAL ACCIDENT/.test(s))return'Group Personal Accident';
+  if(/MOTOR\s*-\s*TRAILERS/.test(s))return'Motor - Trailers';
+  if(/MOTOR\s*-\s*TRUCKS/.test(s))return'Motor - Trucks';
+  if(/MOTOR\s*-\s*SPECIAL TYPES/.test(s))return'Motor - Special Types';
+  if(/MOTOR\s*-\s*LDV'?S?\/SEDANS/.test(s)||/MOTOR\s*-\s*LDV/.test(s))return'Motor - LDV / Sedans';
+  return''
+}
+function insuranceMotorType(section,description=''){
+  const s=(section+' '+description).toLowerCase();
+  if(/trail/.test(s))return'trailer';
+  if(/special|grader|tractor|plant/.test(s))return'equipment';
+  if(/ldv|sedan|polo|hilux|ranger|mercedes|bakkie/.test(s))return'light-vehicle';
+  return'truck'
+}
+function insurancePolicySheetData(sheet){
+  const rows=sheet.rows||[],date=insuranceSheetDate(sheet),policyNumber=insurancePolicyNumber(sheet);
+  const flat=rows.flat().map(insuranceText).filter(Boolean),joined=flat.join(' ');
+  const marker=/SANTAM\s+POLICY|GOODS IN TRANSIT|PUBLIC LIABILITY|MOTOR\s*-\s*(?:TRAILERS|TRUCKS|LDV|SPECIAL)/i.test(joined);
+  if(!marker)return null;
+  let headerRow=-1,descCol=1,sumCol=5,premiumCol=6;
+  for(let r=0;r<Math.min(rows.length,20);r++){
+    const rr=rows[r]||[];
+    for(let col=0;col<rr.length;col++){
+      const k=excelImportKey(rr[col]);
+      if(k==='item description'){headerRow=r;descCol=col}
+      if(k==='sum insured'||k==='current sum insured')sumCol=col;
+      if(k==='premium'&&col>descCol&&premiumCol===6)premiumCol=col
+    }
+  }
+  let section='',coverCol=2,regCol=3,chassisCol=4,driverMode=false;
+  const sections={},motorAssets=[],insuredDrivers=[],companyAssets=[],notes=[];
+  const addSection=(name)=>{if(name&&!sections[name])sections[name]={name,items:[],notes:[]};return sections[name]};
+  for(let r=0;r<rows.length;r++){
+    const row=rows[r]||[],textCells=row.map(insuranceText),joinedRow=textCells.filter(Boolean).join(' | ');
+    const sec=insuranceSectionName(joinedRow);
+    if(sec){section=sec;addSection(section);driverMode=section==='Group Personal Accident';continue}
+    if(!section)continue;
+    if(/List of drivers\s*:/i.test(joinedRow)){driverMode=true;continue}
+    if(driverMode&&section==='Group Personal Accident'){
+      for(const v of textCells){if(/^\*/.test(v)){const n=v.replace(/^\*+\s*/,'').trim();if(n&&!insuredDrivers.includes(n))insuredDrivers.push(n)}}
+    }
+    if(/^SUB TOTAL$|^STAMPS$|^NAMFISA$|^TOTAL MONTHLY PREMIUM$/i.test(textCells[descCol]||''))continue;
+    if(/^Cover$/i.test(textCells[2]||'')||textCells.some(v=>/^Reg Number$/i.test(v))){
+      const cc=textCells.findIndex(v=>/^Cover$/i.test(v));if(cc>=0)coverCol=cc;
+      const rc=textCells.findIndex(v=>/^Reg Number$/i.test(v));if(rc>=0)regCol=rc;
+      const hc=textCells.findIndex(v=>/^Chassis Number$/i.test(v));if(hc>=0)chassisCol=hc;
+      continue
+    }
+    const regIndex=textCells.findIndex(v=>/\bN\s*\d{2,6}(?:-\d{1,3})?\s*W\b/i.test(v));
+    if(section.startsWith('Motor -')&&regIndex>=0){
+      const registration=(textCells[regIndex].match(/\bN\s*\d{2,6}(?:-\d{1,3})?\s*W\b/i)||[])[0]||textCells[regIndex];
+      const description=insuranceText(row[descCol]||textCells[Math.max(0,regIndex-2)]||'');
+      const cover=insuranceText(row[coverCol]||'');
+      const chassis=insuranceText(row[chassisCol]||'');
+      const insuredValue=excelImportNumber(row[sumCol]),monthlyPremium=excelImportNumber(row[premiumCol]);
+      motorAssets.push({section,assetType:insuranceMotorType(section,description),description,cover,registration,chassis,insuredValue,monthlyPremium,sourceRow:r+1});
+      continue
+    }
+    const description=insuranceText(row[descCol]||'');
+    if(!description)continue;
+    const insuredValue=excelImportNumber(row[sumCol]),monthlyPremium=excelImportNumber(row[premiumCol]);
+    const item={description,insuredValue,monthlyPremium,sourceRow:r+1};
+    if(insuredValue>0||monthlyPremium>0){
+      addSection(section).items.push(item);
+      if(section==='Fire / Property'||section==='Business All Risk')companyAssets.push({category:section,description,insuredValue,monthlyPremium,sourceRow:r+1})
+    }else if(!/^\d+$/.test(description)){
+      addSection(section).notes.push(description);
+      if(/Excess|Hijack|Tow|Wreckage|Windscreen|Sandstorm|link extension|Commodit|No of trucks|Haulage fee|Cross Border|Legal Defence|Wrongful Arrest|Disposal|Salvage/i.test(description))notes.push({section,text:description})
+    }
+  }
+  const rowAmount=label=>{
+    for(const row of rows){const idx=(row||[]).findIndex(v=>new RegExp('^'+label+'$','i').test(insuranceText(v)));if(idx>=0){for(let c=idx+1;c<row.length;c++){const n=excelImportNumber(row[c]);if(n)return n}}}
+    return 0
+  };
+  const findItem=(sectionName,re)=>((sections[sectionName]?.items)||[]).find(x=>re.test(x.description))||{};
+  const truckCount=(()=>{for(const row of rows)for(const v of row||[]){const m=insuranceText(v).match(/No of trucks\s*:\s*(\d+)/i);if(m)return Number(m[1])}return 0})();
+  const declaredDrivers=(()=>{for(const row of rows)for(const v of row||[]){const m=insuranceText(v).match(/(\d+)\s*x?\s*Truck Drivers/i);if(m)return Number(m[1])}return 0})();
+  const totalMonthlyPremium=rowAmount('TOTAL MONTHLY PREMIUM'),subTotal=rowAmount('SUB TOTAL'),stamps=rowAmount('STAMPS'),namfisa=rowAmount('NAMFISA');
+  return{
+    sheet:sheet.name,effectiveDate:date,policyNumber,provider:/santam/i.test(joined)?'Santam':'Insurance provider',
+    sections:Object.values(sections),motorAssets,companyAssets,insuredDrivers,
+    insuredDriverCount:declaredDrivers||insuredDrivers.length,truckCount,
+    goodsInTransitLimit:excelImportNumber(findItem('Goods in Transit',/Load Limit/i).insuredValue),
+    publicLiabilityLimit:excelImportNumber(findItem('Public Liability',/Limit of indemnity/i).insuredValue),
+    totalMonthlyPremium,subTotal,stamps,namfisa,notes,
+    sourceRows:rows.length
+  }
+}
+function insuranceWorkbookData(parsed){
+  const policies=(parsed.sheets||[]).map(insurancePolicySheetData).filter(Boolean);
+  if(!policies.length)return null;
+  const dated=policies.filter(x=>x.effectiveDate).sort((a,b)=>String(b.effectiveDate).localeCompare(String(a.effectiveDate)));
+  const current=dated[0]||policies.slice().sort((a,b)=>(b.motorAssets.length+b.companyAssets.length)-(a.motorAssets.length+a.companyAssets.length))[0];
+  const history=policies.map(x=>({sheet:x.sheet,effectiveDate:x.effectiveDate,policyNumber:x.policyNumber,provider:x.provider,totalMonthlyPremium:x.totalMonthlyPremium,motorAssets:x.motorAssets.length,companyAssets:x.companyAssets.length,insuredDriverCount:x.insuredDriverCount,goodsInTransitLimit:x.goodsInTransitLimit,publicLiabilityLimit:x.publicLiabilityLimit})).sort((a,b)=>String(b.effectiveDate||'').localeCompare(String(a.effectiveDate||'')));
+  return{current,history,policies}
+}
 function insuranceAssetType(description='',section=''){
   const s=(String(section||'')+' '+String(description||'')).toLowerCase();
   if(/truck|truck tractor|scania|isuzu|man\b|volvo|freightliner|horse/.test(s))return'truck';
@@ -1761,6 +1880,11 @@ function excelImportPreviewData(parsed){
     const warnings=[];if(tripData.summarySheets.length)warnings.push(tripData.summarySheets.length+' monthly income/expense summary sheet(s) will be archived with the source workbook but not posted again, preventing double-counting of the detailed trips.');
     return{filename:parsed.name,kind:'trip-reports',sheet:tripData.sheets.map(x=>x.name).join(', '),headers:[],rowCount:tripData.records.length,summary:{rows:tripData.records.length,trips:tripData.records.length,sheets:tripData.sheets.length,summarySheets:tripData.summarySheets.length,totalIncome:tripData.totalIncome,totalExpenses:tripData.totalExpenses,distance:tripData.distance,fuelSlips:tripData.fuelSlips},sample,warnings,tripSheets:tripData.sheets}
   }
+  const insuranceData=insuranceWorkbookData(parsed);
+  if(insuranceData?.current){
+    const p=insuranceData.current,sample=p.motorAssets.slice(0,12),totalInsured=p.motorAssets.reduce((a,x)=>a+excelImportNumber(x.insuredValue),0)+p.companyAssets.reduce((a,x)=>a+excelImportNumber(x.insuredValue),0);
+    return{filename:parsed.name,kind:'insurance',sheet:p.sheet,headers:[],rowCount:p.motorAssets.length+p.companyAssets.length,summary:{rows:p.motorAssets.length+p.companyAssets.length,policy:p.policyNumber,effectiveDate:p.effectiveDate,motorAssets:p.motorAssets.length,companyAssets:p.companyAssets.length,insuredDrivers:p.insuredDriverCount,totalInsured:Number(totalInsured.toFixed(2)),monthlyPremium:p.totalMonthlyPremium,goodsInTransitLimit:p.goodsInTransitLimit,publicLiabilityLimit:p.publicLiabilityLimit,policySheets:insuranceData.history.length},sample,warnings:insuranceData.history.length>1?['The newest policy sheet ('+p.sheet+' · '+(p.effectiveDate||'date not stated')+') will become the current policy. '+(insuranceData.history.length-1)+' older policy/quote sheet(s) will be kept as insurance history.']:[]}
+  }
   let best=null;for(const sheet of parsed.sheets){const table=excelSheetTable(sheet),keys=table.headers.map(excelImportKey),has=k=>keys.some(x=>x===k||x.includes(k)),carrier=(has('tms id')?6:0)+(has('order ref')?3:0)+(has('origin name')?2:0)+(has('destination name')?2:0)+(has('rate')?1:0),insurance=(has('registration')?5:0)+(has('insured value')?3:0)+(has('premium')?2:0)+(has('chassis')?1:0);const flat=table.rawRows.flat().map(x=>String(x??'').trim()).filter(Boolean),regHits=flat.filter(x=>/\bN\s*\d{3,6}(?:-\d{1,3})?\s*W\b/i.test(x)).length,insuranceWords=flat.filter(x=>/santam|insurance|insured|premium|policy|goods in transit|public liability/i.test(x)).length,insuranceFallback=regHits>=3&&insuranceWords>=1,kind=carrier>=7?'nbl-carrier':(insurance>=7||insuranceFallback)?'insurance':'generic',score=Math.max(carrier,insurance,insuranceFallback?8:0),recency=kind==='insurance'?excelSheetRecency(table):0;if(!best||score>best.score||(score===best.score&&recency>num(best.recency)))best={...table,kind,score,recency}}
   if(!best)throw Object.assign(Error('No readable worksheet found'),{status:400});
   let sample=[],summary={rows:best.objects.length};
@@ -1769,7 +1893,7 @@ function excelImportPreviewData(parsed){
   else sample=best.objects.slice(0,8);
   return{filename:parsed.name,kind:best.kind,sheet:best.sheet,headers:best.headers,rowCount:best.objects.length,summary,sample,warnings:best.kind==='generic'?['Workbook layout is not recognised yet. Review the columns before importing; no data has been changed.']:[]}
 }
-function cloneImportArrays(state){const keys=['trips','routes','clients','trucks','archivedTrucks','trailers','drivers','diesel','expenses','permits'];const out={};for(const k of keys)out[k]=JSON.parse(JSON.stringify(state[k]||[]));return out}
+function cloneImportArrays(state){const keys=['trips','routes','clients','trucks','archivedTrucks','trailers','drivers','diesel','expenses','permits','insurancePolicies','companyAssets'];const out={};for(const k of keys)out[k]=JSON.parse(JSON.stringify(state[k]||[]));out.currentInsurancePolicyId=state.currentInsurancePolicyId||'';return out}
 function findImportTruck(state,pro){const n=carrierFleetNumber(pro);return n?(state.trucks||[]).find(x=>Number((String(x.fleetName||'').match(/\d+/)||['0'])[0])===n):null}
 function trailerTypeFromImport(equipment=''){const s=String(equipment).toLowerCase();return s.includes('taut')?'Tautliner':s.includes('flat')?'Flat deck':'Trailer'}
 function applyCarrierWorkbookRows(state,rows,source,importId){
@@ -1795,6 +1919,46 @@ function applyCarrierWorkbookRows(state,rows,source,importId){
   }
   return{created,updated,skipped,pendingRates,unassigned,newRoutes,newTrailers,total:rows.length}
 }
+
+function applyInsuranceWorkbookData(state,data,source,importId,sourceReceiptId=''){
+  const p=data.current;state.trucks??=[];state.archivedTrucks??=[];state.trailers??=[];state.permits??=[];state.insurancePolicies??=[];state.companyAssets??=[];
+  let created=0,updated=0,skipped=0,fleetUpdated=0,trailersUpdated=0,assetsUpdated=0;
+  const policyId='insurance_'+excelImportSlug((p.policyNumber||'policy')+'_'+(p.effectiveDate||p.sheet));
+  const snapshot={id:policyId,provider:p.provider,policyNumber:p.policyNumber,effectiveDate:p.effectiveDate,sheet:p.sheet,monthlyPremium:p.totalMonthlyPremium,subTotal:p.subTotal,stamps:p.stamps,namfisa:p.namfisa,goodsInTransitLimit:p.goodsInTransitLimit,publicLiabilityLimit:p.publicLiabilityLimit,insuredDriverCount:p.insuredDriverCount,truckCount:p.truckCount,insuredDrivers:p.insuredDrivers,sections:p.sections,motorAssets:p.motorAssets,companyAssets:p.companyAssets,notes:p.notes,sourceWorkbook:source,sourceReceiptId,lastImportBatchId:importId,importedAt:new Date().toISOString(),current:true};
+  for(const h of state.insurancePolicies)h.current=false;
+  const existingPolicy=state.insurancePolicies.find(x=>x.id===policyId||((x.policyNumber||'')===p.policyNumber&&(x.effectiveDate||'')===p.effectiveDate&&(x.sheet||'')===p.sheet));
+  if(existingPolicy){Object.assign(existingPolicy,snapshot);updated++}else{state.insurancePolicies.unshift(snapshot);created++}
+  state.currentInsurancePolicyId=policyId;
+  for(const h of data.history){
+    const id='insurance_history_'+excelImportSlug((h.policyNumber||'policy')+'_'+(h.effectiveDate||h.sheet)+'_'+h.sheet);
+    if(id===policyId)continue;
+    let x=state.insurancePolicies.find(v=>v.id===id);
+    const vals={id,provider:h.provider,policyNumber:h.policyNumber,effectiveDate:h.effectiveDate,sheet:h.sheet,monthlyPremium:h.totalMonthlyPremium,goodsInTransitLimit:h.goodsInTransitLimit,publicLiabilityLimit:h.publicLiabilityLimit,insuredDriverCount:h.insuredDriverCount,motorAssetCount:h.motorAssets,companyAssetCount:h.companyAssets,sourceWorkbook:source,current:false,historyOnly:true,lastImportBatchId:importId};
+    if(x)Object.assign(x,vals);else state.insurancePolicies.push(vals)
+  }
+  for(const a of p.companyAssets){
+    const key=excelImportKey(a.category+' '+a.description);let x=state.companyAssets.find(v=>excelImportKey((v.category||'')+' '+(v.description||''))===key);
+    const vals={category:a.category,description:a.description,insuredValue:excelImportNumber(a.insuredValue),insuranceMonthlyPremium:excelImportNumber(a.monthlyPremium),insurancePolicy:p.policyNumber,insuranceEffectiveDate:p.effectiveDate,status:'Insured',sourceWorkbook:source,lastImportBatchId:importId};
+    if(x){Object.assign(x,vals);updated++}else{state.companyAssets.push({id:'asset_'+excelImportSlug(key),...vals});created++}assetsUpdated++
+  }
+  for(const a of p.motorAssets){
+    const regKey=fleetKey(a.registration);
+    if(a.assetType==='trailer'){
+      let t=state.trailers.find(x=>fleetKey(x.registration)===regKey);
+      if(!t){t={id:'trl_ins_'+excelImportSlug(a.registration),registration:a.registration,type:trailerTypeFromDescription(a.description||''),status:'Available'};state.trailers.push(t);created++}else updated++;
+      Object.assign(t,{description:a.description,chassisNumber:a.chassis,insuranceCover:a.cover,insuredValue:excelImportNumber(a.insuredValue),insuranceMonthlyPremium:excelImportNumber(a.monthlyPremium),insurancePolicy:p.policyNumber,insuranceProvider:p.provider,insuranceEffectiveDate:p.effectiveDate,insuranceSource:source,lastImportBatchId:importId});trailersUpdated++;continue
+    }
+    if(a.assetType==='truck'){
+      const t=state.trucks.find(x=>fleetKey(x.registration)===regKey)||state.archivedTrucks.find(x=>fleetKey(x.registration)===regKey);
+      if(t){Object.assign(t,{make:a.description||t.make||'',chassisNumber:a.chassis,insuranceCover:a.cover,insuredValue:excelImportNumber(a.insuredValue),insuranceMonthlyPremium:excelImportNumber(a.monthlyPremium),insurancePolicy:p.policyNumber,insuranceProvider:p.provider,insuranceEffectiveDate:p.effectiveDate,insuranceSource:source,lastImportBatchId:importId});updated++;fleetUpdated++}else skipped++;
+    }
+  }
+  let permit=state.permits.find(x=>x.ownerType==='company'&&(/insurance/i.test(String(x.type||''))||(p.policyNumber&&String(x.reference||'')===p.policyNumber)));
+  const permitVals={type:'Commercial insurance',ownerType:'company',ownerId:'company',reference:p.policyNumber||permit?.reference||'',issued:p.effectiveDate||permit?.issued||'',expiry:permit?.expiry||'',provider:p.provider,monthlyPremium:p.totalMonthlyPremium,goodsInTransitLimit:p.goodsInTransitLimit,publicLiabilityLimit:p.publicLiabilityLimit,insuredDriverCount:p.insuredDriverCount,notes:'Current policy imported from '+source,sourceWorkbook:source,sourceReceiptId,lastImportBatchId:importId};
+  if(permit){Object.assign(permit,permitVals);updated++}else{state.permits.unshift({id:'permit_ins_'+crypto.randomUUID(),...permitVals,importBatchId:importId});created++}
+  return{created,updated,skipped,total:p.motorAssets.length+p.companyAssets.length,policy:p.policyNumber,effectiveDate:p.effectiveDate,monthlyPremium:p.totalMonthlyPremium,motorAssets:p.motorAssets.length,companyAssets:p.companyAssets.length,insuredDrivers:p.insuredDriverCount,fleetUpdated,trailersUpdated,assetsUpdated,policySheets:data.history.length}
+}
+
 function applyInsuranceWorkbookRows(state,rows,source,importId,rawRows=[]){
   state.trucks??=[];state.trailers??=[];state.permits??=[];let created=0,updated=0,skipped=0,totalInsured=0,totalPremium=0;
   for(const src of rows){const reg=String(src.registration||'').trim();if(!reg){skipped++;continue}totalInsured+=excelImportNumber(src.insuredValue);totalPremium+=excelImportNumber(src.monthlyPremium);let asset=state.trucks.find(x=>fleetKey(x.registration)===fleetKey(reg)),kind='truck';if(!asset){asset=state.trailers.find(x=>fleetKey(x.registration)===fleetKey(reg));kind='trailer'}if(!asset){kind=src.assetType==='truck'?'truck':'trailer';if(kind==='truck'){asset={id:'trk_ins_'+excelImportSlug(reg),fleetName:reg,registration:reg,make:src.description||'',type:'Truck',status:'Available',odometer:0,serviceDue:0,licenseExpiry:'',roadworthyExpiry:'',gps:'Not linked',trackerId:'',trackerModel:'',importBatchId:importId};state.trucks.push(asset)}else{asset={id:'trl_ins_'+excelImportSlug(reg),registration:reg,type:trailerTypeFromDescription(src.description||''),status:'Available',importBatchId:importId};state.trailers.push(asset)}created++}else updated++;Object.assign(asset,{make:src.description||asset.make||'',chassisNumber:src.chassis||asset.chassisNumber||'',insuranceCover:src.cover||asset.insuranceCover||'',insuredValue:excelImportNumber(src.insuredValue)||num(asset.insuredValue),insuranceMonthlyPremium:excelImportNumber(src.monthlyPremium)||num(asset.insuranceMonthlyPremium),insuranceSource:source,lastImportBatchId:importId})}
@@ -1809,7 +1973,7 @@ app.post('/api/imports/excel/apply',auth,roles('admin','manager','dispatcher','f
     const importId='import_'+crypto.randomUUID(),source=parsed.name+' / '+preview.sheet,receipt=await storeCompanyReceipt(req.file,req.user,'excel-import',importId,'excel-import');
     const table=excelSheetTable(parsed.sheets.find(x=>x.name===preview.sheet)||parsed.sheets[0]),changed=await mutateOpsState(state=>{
       state.importHistory??=[];for(const h of state.importHistory)h.canUndo=false;state.lastImportBackup={importId,createdAt:new Date().toISOString(),snapshot:cloneImportArrays(state)};
-      let result;if(preview.kind==='nbl-carrier')result=applyCarrierWorkbookRows(state,table.objects.map(carrierRowFromExcel).filter(x=>x.tmsId),source,importId);else if(preview.kind==='trip-reports')result=applyTripReportWorkbook(state,tripReportWorkbookData(parsed),parsed.name+' / Driver Trip Reports',importId);else result=applyInsuranceWorkbookRows(state,insuranceRowsFromExcel(table),source,importId,table.rawRows);
+      let result;if(preview.kind==='nbl-carrier')result=applyCarrierWorkbookRows(state,table.objects.map(carrierRowFromExcel).filter(x=>x.tmsId),source,importId);else if(preview.kind==='trip-reports')result=applyTripReportWorkbook(state,tripReportWorkbookData(parsed),parsed.name+' / Driver Trip Reports',importId);else if(preview.kind==='insurance')result=applyInsuranceWorkbookData(state,insuranceWorkbookData(parsed),parsed.name+' / '+preview.sheet,importId,receipt?.id||'');else result=applyInsuranceWorkbookRows(state,insuranceRowsFromExcel(table),source,importId,table.rawRows);
       const history={id:importId,date:new Date().toISOString(),filename:parsed.name,sheet:preview.sheet,type:preview.kind,created:num(result.created),updated:num(result.updated),skipped:num(result.skipped),errors:0,status:'Imported',sourceReceiptId:receipt?.id||'',canUndo:true,summary:result,importedBy:req.user.name||req.user.email||req.user.role};state.importHistory.unshift(history);state.importHistory=state.importHistory.slice(0,60);state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:req.user.name||req.user.email||req.user.role,action:'Excel import '+parsed.name+' · '+preview.kind+' · '+result.created+' created · '+result.updated+' updated',linkedType:'excel-import',linkedId:importId});state.audit=state.audit.slice(0,100);return history
     });res.status(201).json(changed.result)
   }catch(e){res.status(e.status||500).json({error:e.message,code:e.code||''})}
