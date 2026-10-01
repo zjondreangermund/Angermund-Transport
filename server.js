@@ -1930,8 +1930,8 @@ function applyInsuranceWorkbookData(state,data,source,importId,sourceReceiptId='
   if(existingPolicy){Object.assign(existingPolicy,snapshot);updated++}else{state.insurancePolicies.unshift(snapshot);created++}
   state.currentInsurancePolicyId=policyId;
   for(const h of data.history){
+    if(h.sheet===p.sheet&&h.effectiveDate===p.effectiveDate&&h.policyNumber===p.policyNumber)continue;
     const id='insurance_history_'+excelImportSlug((h.policyNumber||'policy')+'_'+(h.effectiveDate||h.sheet)+'_'+h.sheet);
-    if(id===policyId)continue;
     let x=state.insurancePolicies.find(v=>v.id===id);
     const vals={id,provider:h.provider,policyNumber:h.policyNumber,effectiveDate:h.effectiveDate,sheet:h.sheet,monthlyPremium:h.totalMonthlyPremium,goodsInTransitLimit:h.goodsInTransitLimit,publicLiabilityLimit:h.publicLiabilityLimit,insuredDriverCount:h.insuredDriverCount,motorAssetCount:h.motorAssets,companyAssetCount:h.companyAssets,sourceWorkbook:source,current:false,historyOnly:true,lastImportBatchId:importId};
     if(x)Object.assign(x,vals);else state.insurancePolicies.push(vals)
