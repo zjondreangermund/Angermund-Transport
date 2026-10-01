@@ -2409,16 +2409,22 @@ async function reconcileWorkforceUserLinks(){
   return {linkedDrivers,linkedStaff}
 }
 
+
+function serverRouteMdcRule(r){return String(r?.mdcRule||'Auto')}
+function serverJourneyNamibiaKm(state,t){
+  const legs=ensureTripLegs(state,t),routes=state.routes||[];
+  return Number(legs.reduce((total,l)=>{const r=routes.find(x=>x.id===l.routeId)||{};if(serverRouteMdcRule(r)==='Not applicable')return total;const distance=num(l.distance)||num(r.distance),km=r.crossBorder?(num(l.namibiaKm)||num(r.namibiaKm)):(num(l.namibiaKm)||distance);return total+Math.max(0,km)},0).toFixed(2))
+}
 app.post('/api/mdc/record',auth,roles('admin','manager','dispatcher','finance'),async(req,res)=>{
   try{
-    const body=req.body&&typeof req.body==='object'?req.body:{},tripId=String(body.tripId||''),namibiaKm=num(body.namibiaKm),reference=String(body.reference||'');
-    if(!tripId||namibiaKm<=0)return res.status(400).json({error:'Trip and Namibian road distance are required'});
+    const body=req.body&&typeof req.body==='object'?req.body:{},tripId=String(body.tripId||''),reference=String(body.reference||'');
+    if(!tripId)return res.status(400).json({error:'Trip is required'});
     const changed=await mutateOpsState(async state=>{
       state.expenses??=[];state.settings??={};
       const t=(state.trips||[]).find(x=>x.id===tripId);if(!t){const e=Error('Trip not found');e.status=404;throw e}
-      const rate=num(body.ratePer100km)||num(state.settings.mdcRatePer100km)||73.30,amount=Number((namibiaKm/100*rate).toFixed(2)),now=new Date().toISOString(),date=String(body.date||now.slice(0,10));
+      const expectedKm=serverJourneyNamibiaKm(state,t),namibiaKm=num(body.namibiaKm)||expectedKm;if(namibiaKm<=0){const e=Error('Set the Namibian road kilometres on the route or journey leg first');e.status=400;throw e}const rate=num(body.ratePer100km)||num(state.settings.mdcRatePer100km)||73.30,amount=Number((namibiaKm/100*rate).toFixed(2)),now=new Date().toISOString(),date=String(body.date||now.slice(0,10));
       let rec=state.expenses.find(x=>x.tripId===t.id&&x.mdc===true);
-      const values={date,tripId:t.id,truckId:t.truckId,driverId:t.driverId,category:'Mass distance charge (MDC)',supplier:'Road Fund Administration',amount,receiptNo:reference,notes:namibiaKm.toFixed(1)+' Namibian km × N$'+rate.toFixed(2)+' / 100 km',status:'Approved',reimbursable:false,mdc:true,mdcKm:namibiaKm,mdcRatePer100km:rate,systemGenerated:true,updatedAt:now};
+      const values={date,tripId:t.id,truckId:t.truckId,driverId:t.driverId,category:'Mass distance charge (MDC)',supplier:'Road Fund Administration',amount,receiptNo:reference,notes:namibiaKm.toFixed(1)+' Namibian km × N$'+rate.toFixed(2)+' / 100 km',mdcExpectedKm:expectedKm,status:'Approved',reimbursable:false,mdc:true,mdcKm:namibiaKm,mdcRatePer100km:rate,systemGenerated:true,updatedAt:now};
       if(rec)Object.assign(rec,values);else{rec={id:'expense_'+crypto.randomUUID(),...values,createdAt:now};state.expenses.unshift(rec)}
       state.settings.mdcRatePer100km=rate;recalcTripCosts(state,t);
       state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:now,actor:req.user.name||req.user.email||req.user.role,action:'MDC '+(rec.createdAt?'recorded':'updated')+' for '+t.number+' · N$'+amount.toFixed(2),linkedType:'trip',linkedId:t.id});state.audit=state.audit.slice(0,100);
@@ -2751,6 +2757,26 @@ app.delete('/api/trip-documents/:id',auth,roles('admin','manager','dispatcher','
   else{const i=memory.tripDocuments.findIndex(x=>x.id===req.params.id);if(i<0)return res.status(404).json({error:'Document not found'});memory.tripDocuments.splice(i,1)}
   res.json({success:true})
 });
+
+app.post('/api/admin/trips/:tripId/pod',auth,roles('admin','manager','dispatcher','finance'),upload.single('document'),async(req,res)=>{
+  try{
+    if(!req.file)return res.status(400).json({error:'POD photo or PDF is required'});
+    const snapshot=await readOpsState(),trip=(snapshot.trips||[]).find(x=>x.id===req.params.tripId);if(!trip)return res.status(404).json({error:'Trip not found'});
+    const requestedLeg=String(req.body.legId||''),legs=ensureTripLegs(snapshot,trip),leg=legs.find(x=>x.id===requestedLeg)||legs.find(x=>!x.pod)||activeTripLegServer(trip)||legs[legs.length-1];
+    const archived=archiveStoredFile(req.file),id=crypto.randomUUID(),createdAt=new Date().toISOString();
+    if(pool)await q('INSERT INTO trip_documents(id,user_id,trip_id,leg_id,kind,reference,filename,mime_type,content,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[id,req.user.sub,trip.id,leg?.legacy?null:(leg?.id||null),'POD','Admin scanned POD',archived.filename,archived.mimeType,archived.buffer,createdAt]);
+    else memory.tripDocuments.push({id,userId:req.user.sub,tripId:trip.id,legId:leg?.legacy?'':(leg?.id||''),kind:'POD',reference:'Admin scanned POD',filename:archived.filename,mimeType:archived.mimeType,content:archived.buffer,createdAt});
+    const changed=await mutateOpsState(state=>{
+      const t=(state.trips||[]).find(x=>x.id===req.params.tripId);if(!t)return null;const ls=ensureTripLegs(state,t),target=ls.find(x=>x.id===requestedLeg)||ls.find(x=>!x.pod)||activeTripLegServer(t)||ls[ls.length-1];
+      if(target&&!target.legacy){target.pod=true;target.podDocumentId=id;target.podAt=createdAt;target.status='Delivered'}else{t.pod=true;t.podDocumentId=id;t.podAt=createdAt}
+      t.pod=ls.every(x=>x.legacy?Boolean(t.pod):Boolean(x.pod));if(t.pod&&num(t.stage)<4){t.stage=4;t.status='Delivered'}
+      (state.tasks||[]).filter(x=>x.linkedId===t.id&&/POD/i.test(String(x.title||''))&&(!target||!x.legId||x.legId===target.id)).forEach(x=>{x.status='Completed';x.completedAt=createdAt;x.completedBy=req.user.sub});
+      state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:createdAt,actor:req.user.name||req.user.email||req.user.role,action:'POD scanned and attached to '+t.number,linkedType:'trip',linkedId:t.id});state.audit=state.audit.slice(0,100);return{id:t.id,number:t.number,pod:t.pod,stage:t.stage,status:t.status,legId:target?.id||''}
+    });
+    res.status(201).json({trip:changed.result,document:{id,filename:archived.filename,mimeType:archived.mimeType,size:archived.size,convertedToPdf:Boolean(archived.convertedToPdf),createdAt}})
+  }catch(e){res.status(e.status||500).json({error:e.message})}
+});
+
 app.post('/api/driver/trips/:tripId/upload',auth,roles('driver'),upload.single('document'),async(req,res)=>{
   try{
     if(!req.file)return res.status(400).json({error:'Photo or document required'});
@@ -3002,8 +3028,12 @@ app.post('/api/admin/slips/post',auth,roles('admin','manager','dispatcher','work
     const amount=num(body.amount);if(amount<=0)return res.status(400).json({error:'Enter the expense amount'});
     const id='expense_'+crypto.randomUUID();receipt=await storeCompanyReceiptFiles(slipFiles,req.user,'expense',id,'ai-slip');
     const changed=await mutateOpsState(state=>{
-      const status=directApproval?'Approved':'Review';
-      const rec=buildCompanyExpense(state,{sourceType:'ai-slip',sourceId:id,title:'AI scanned slip',body:{...body,date,tripId:trip?.id||'',truckId,driverId,amount,category},receiptId:receipt.id,status,linkedType:trip?'trip':(truckId?'truck':''),linkedId:trip?.id||truckId||''});
+      const status=directApproval?'Approved':'Review';let rec;
+      if(category==='Mass distance charge (MDC)'&&trip){
+        const t=(state.trips||[]).find(x=>x.id===trip.id),km=serverJourneyNamibiaKm(state,t),rate=km>0?Number((amount/km*100).toFixed(4)):(num(state.settings?.mdcRatePer100km)||73.30),existing=(state.expenses||[]).find(x=>x.tripId===t.id&&(x.mdc===true||/mass distance charge/i.test(String(x.category||''))));
+        const vals={date,tripId:t.id,truckId:t.truckId,driverId:t.driverId,category:'Mass distance charge (MDC)',supplier:String(body.supplier||'Road Fund Administration').slice(0,160),amount,paymentMethod:String(body.paymentMethod||'Company card').slice(0,80),receiptNo:String(body.receiptNo||'').slice(0,120),notes:(km>0?km.toFixed(1)+' Namibian km · ':'')+'scanned MDC proof',receiptUploadId:receipt.id,receiptUploadIds:[receipt.id],receiptCount:slipFiles.length,receiptPageCount:slipFiles.length,receiptSource:'company-ai',companyPaid:true,reimbursable:false,status,sourceType:'ai-slip',sourceId:id,mdc:true,mdcKm:km,mdcExpectedKm:km,mdcRatePer100km:rate,systemGenerated:false,updatedAt:new Date().toISOString()};
+        if(existing){Object.assign(existing,vals);rec=existing}else{rec={id,...vals,createdAt:new Date().toISOString()};state.expenses.unshift(rec)}recalcTripCosts(state,t)
+      }else rec=buildCompanyExpense(state,{sourceType:'ai-slip',sourceId:id,title:'AI scanned slip',body:{...body,date,tripId:trip?.id||'',truckId,driverId,amount,category},receiptId:receipt.id,status,linkedType:trip?'trip':(truckId?'truck':''),linkedId:trip?.id||truckId||''});
       rec.aiSlip=true;rec.receiptPageCount=slipFiles.length;rec.detectedCategory=String(body.detectedCategory||category);rec.categoryConfidence=num(body.categoryConfidence);rec.registration=String(body.registration||'').slice(0,40);
       if(category==='Mass distance charge (MDC)')rec.mdc=true;
       if(category==='Police / traffic fine')rec.reimbursable=false;
