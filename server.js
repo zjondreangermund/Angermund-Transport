@@ -1957,7 +1957,60 @@ function excelSheetRecency(table){
   }
   return best
 }
+
+function shunterReconWorkbookData(parsed){
+  for(const sheet of parsed.sheets||[]){
+    const rows=sheet.rows||[],flat=rows.flat().map(v=>String(v??'').trim()),has4=flat.some(v=>/^\d+\.\s*ANG\s*0?4\b/i.test(v)),has5=flat.some(v=>/^\d+\.\s*ANG\s*0?5\b/i.test(v)),hasGrand=flat.some(v=>/^Grand Total:?$/i.test(v));
+    if(!has4||!has5||!hasGrand)continue;
+    const dailyRow=rows.find(r=>String(r?.[0]??'').trim().match(/^Daily Rate:?$/i)),specialMovementRate=excelImportNumber(dailyRow?.[1])||1895;
+    const parseFleet=(fleet,truckId)=>{
+      let start=-1;for(let r=0;r<rows.length;r++)if((rows[r]||[]).some(v=>new RegExp('^1\\.\\s*ANG\\s*0?'+fleet+'\\b','i').test(String(v??'').trim()))){start=r;break}
+      if(start<1)return[];
+      const dateRow=rows[start-1]||[];
+      let amountRow=-1;
+      for(let r=start+1;r<Math.min(rows.length,start+12);r++){
+        const vals=(rows[r]||[]).slice(1).map(excelImportNumber),positive=vals.filter(n=>n>0&&n<20000).length,dates=dateRow.slice(1).filter(v=>Boolean(excelImportDate(v))).length;
+        if(positive>=Math.max(3,Math.floor(dates*.25))){amountRow=r;break}
+      }
+      if(amountRow<0)return[];
+      const refRows=rows.slice(start,amountRow).filter(r=>/^\d+\.\s*ANG\s*0?\d+/i.test(String(r?.[0]??'').trim())),out=[];
+      for(let c=1;c<Math.max(dateRow.length,rows[amountRow]?.length||0);c++){
+        const date=excelImportDate(dateRow[c]);if(!date)continue;
+        const refs=[];for(const rr of refRows){const raw=rr[c],n=excelImportNumber(raw);if(n>=1000000)refs.push(String(Math.round(n)));else{const s=String(raw??'').trim();if(/^\d{6,12}$/.test(s))refs.push(s)}}
+        const charge=excelImportNumber(rows[amountRow]?.[c]);if(charge<=0&&!refs.length)continue;
+        out.push({date,period:date.slice(0,7),truckId,clientId:'cli_nbl',tmsIds:refs,charge:Number(charge.toFixed(2)),rateBasis:'',sourceSheet:sheet.name})
+      }
+      return out
+    };
+    const records=[...parseFleet(4,'trk_ang4'),...parseFleet(5,'trk_ang5')];
+    if(!records.length)continue;
+    const positive=records.map(x=>x.charge).filter(x=>x>0),counts={};for(const n of positive)counts[n]=(counts[n]||0)+1;
+    const weekdayRate=Number(Object.entries(counts).sort((a,b)=>b[1]-a[1]||Number(b[0])-Number(a[0]))[0]?.[0]||4700);
+    for(const r of records){const movementBased=specialMovementRate>0&&r.tmsIds.length>0&&Math.abs(r.charge-r.tmsIds.length*specialMovementRate)<.01;r.rateBasis=movementBased&&Math.abs(r.charge-weekdayRate)>.01?'special':'weekday';r.specialDay=r.rateBasis==='special'&&![0,6].includes(new Date(r.date+'T12:00:00').getDay())}
+    const periods=[...new Set(records.map(x=>x.period))],period=periods.sort()[0]||'',ang4=records.filter(x=>x.truckId==='trk_ang4').reduce((a,x)=>a+x.charge,0),ang5=records.filter(x=>x.truckId==='trk_ang5').reduce((a,x)=>a+x.charge,0),grand=ang4+ang5,refs=records.flatMap(x=>x.tmsIds),dupes=refs.filter((x,i)=>refs.indexOf(x)!==i);
+    return{sheet:sheet.name,period,records,weekdayRate,specialMovementRate,ang4:Number(ang4.toFixed(2)),ang5:Number(ang5.toFixed(2)),grand:Number(grand.toFixed(2)),movements:refs.length,duplicateRefs:[...new Set(dupes)],sourceOddValues:rows.slice(-5).flat().map(excelImportNumber).filter(n=>n>0&&n!==specialMovementRate&&n!==grand)}
+  }
+  return null
+}
+function applyShunterReconWorkbookData(state,data,source,importId){
+  state.shunterRecons??=[];state.shunterSettings??={weekdayRate:data.weekdayRate||4700,specialMovementRate:data.specialMovementRate||1895};
+  if(num(data.weekdayRate)>0)state.shunterSettings.weekdayRate=num(data.weekdayRate);if(num(data.specialMovementRate)>0)state.shunterSettings.specialMovementRate=num(data.specialMovementRate);
+  let created=0,updated=0,skipped=0,locked=0;
+  for(const src of data.records||[]){
+    const id='shrec_'+src.date.replace(/-/g,'')+'_'+src.truckId,existing=state.shunterRecons.find(x=>x.id===id||(x.date===src.date&&x.truckId===src.truckId));
+    const vals={period:src.period||src.date.slice(0,7),date:src.date,truckId:src.truckId,clientId:'cli_nbl',tmsIds:(src.tmsIds||[]).slice(),charge:Number(num(src.charge).toFixed(2)),rateBasis:src.rateBasis||'weekday',specialDay:Boolean(src.specialDay),sourceWorkbook:source,sourceSheet:data.sheet,lastImportBatchId:importId,imported:true};
+    if(existing){if(existing.invoiceId){locked++;skipped++;continue}Object.assign(existing,vals);updated++}else{state.shunterRecons.push({id,...vals,importBatchId:importId});created++}
+  }
+  return{created,updated,skipped,locked,total:(data.records||[]).length,period:data.period,ang4:data.ang4,ang5:data.ang5,grand:data.grand,movements:data.movements,duplicateRefs:data.duplicateRefs||[]}
+}
+
 function excelImportPreviewData(parsed){
+  const shunterData=shunterReconWorkbookData(parsed);
+  if(shunterData){
+    const sample=(shunterData.records||[]).slice(0,16).map(x=>({date:x.date,vehicle:x.truckId==='trk_ang4'?'Ang 4':'Ang 5',tmsIds:x.tmsIds,charge:x.charge,rateBasis:x.rateBasis}));
+    const warnings=[];if(shunterData.duplicateRefs?.length)warnings.push('Duplicate TMS reference(s) found and preserved for review: '+shunterData.duplicateRefs.join(', ')+'.');if((shunterData.sourceOddValues||[]).length)warnings.push('Unlabelled value(s) were detected outside the recon table and will not be imported: '+shunterData.sourceOddValues.join(', ')+'.');
+    return{filename:parsed.name,kind:'shunter-recon',sheet:shunterData.sheet,headers:['Date','Vehicle','TMS / load references','Charge','Rate basis'],rowCount:shunterData.records.length,summary:{rows:shunterData.records.length,period:shunterData.period,ang4:shunterData.ang4,ang5:shunterData.ang5,grand:shunterData.grand,movements:shunterData.movements,weekdayRate:shunterData.weekdayRate,specialMovementRate:shunterData.specialMovementRate,duplicates:shunterData.duplicateRefs.length},sample,warnings}
+  }
   const tripData=tripReportWorkbookData(parsed);
   if(tripData.records.length){
     const sample=tripData.records.slice(0,12).map(x=>({driver:x.driver,registration:x.registration,date:x.date,origin:x.origin,destination:x.destination,returnDestination:x.returnDestination,distance:x.distance,income:x.income,totalExpenses:x.totalExpenses,profit:x.profit,fuelSlips:(x.fuel||[]).length,sheet:x.sheet,sourceRow:x.sourceRow}));
@@ -1977,7 +2030,7 @@ function excelImportPreviewData(parsed){
   else sample=best.objects.slice(0,8);
   return{filename:parsed.name,kind:best.kind,sheet:best.sheet,headers:best.headers,rowCount:best.objects.length,summary,sample,warnings:best.kind==='generic'?['Workbook layout is not recognised yet. Review the columns before importing; no data has been changed.']:[]}
 }
-function cloneImportArrays(state){const keys=['trips','routes','clients','trucks','archivedTrucks','trailers','drivers','diesel','expenses','permits','insurancePolicies','companyAssets','monthlyPnlSnapshots'];const out={};for(const k of keys)out[k]=JSON.parse(JSON.stringify(state[k]||[]));out.currentInsurancePolicyId=state.currentInsurancePolicyId||'';return out}
+function cloneImportArrays(state){const keys=['trips','routes','clients','trucks','archivedTrucks','trailers','drivers','diesel','expenses','permits','insurancePolicies','companyAssets','monthlyPnlSnapshots','shunterRecons'];const out={};for(const k of keys)out[k]=JSON.parse(JSON.stringify(state[k]||[]));out.currentInsurancePolicyId=state.currentInsurancePolicyId||'';out.shunterSettings=JSON.parse(JSON.stringify(state.shunterSettings||{}));return out}
 function findImportTruck(state,pro){const n=carrierFleetNumber(pro);return n?(state.trucks||[]).find(x=>Number((String(x.fleetName||'').match(/\d+/)||['0'])[0])===n):null}
 function trailerTypeFromImport(equipment=''){const s=String(equipment).toLowerCase();return s.includes('taut')?'Tautliner':s.includes('flat')?'Flat deck':'Trailer'}
 function applyCarrierWorkbookRows(state,rows,source,importId){
@@ -2053,14 +2106,14 @@ function applyInsuranceWorkbookRows(state,rows,source,importId,rawRows=[]){
   let permit=state.permits.find(x=>x.ownerType==='company'&&(/insurance/i.test(String(x.type||''))||(policy&&String(x.reference||'')===policy)));const vals={type:'Commercial insurance',ownerType:'company',ownerId:'company',reference:policy||permit?.reference||'',issued:permit?.issued||'',expiry:permit?.expiry||'',provider,monthlyPremium:Number(totalPremium.toFixed(2)),goodsInTransitLimit:goods||num(permit?.goodsInTransitLimit),publicLiabilityLimit:liability||num(permit?.publicLiabilityLimit),notes:'Imported from '+source,sourceWorkbook:source,lastImportBatchId:importId};if(permit){Object.assign(permit,vals);updated++}else{permit={id:'permit_ins_'+crypto.randomUUID(),...vals,importBatchId:importId};state.permits.unshift(permit);created++}
   return{created,updated,skipped,total:rows.length,totalInsured:Number(totalInsured.toFixed(2)),monthlyPremium:Number(totalPremium.toFixed(2))}
 }
-app.post('/api/imports/excel/preview',auth,roles('admin','manager','dispatcher','finance'),upload.single('workbook'),async(req,res)=>{try{const parsed=await readExcelImportFile(req.file),preview=excelImportPreviewData(parsed);res.json(preview)}catch(e){res.status(e.status||500).json({error:e.message,code:e.code||''})}});
+app.post('/api/imports/excel/preview',auth,roles('admin','manager','dispatcher','finance'),upload.single('workbook'),async(req,res)=>{try{const parsed=await readExcelImportFile(req.file),preview=excelImportPreviewData(parsed);preview.workbookSheets=(parsed.sheets||[]).map(s=>({name:s.name,rows:(s.rows||[]).length,columns:(s.rows||[]).reduce((m,r)=>Math.max(m,(r||[]).length),0)}));res.json(preview)}catch(e){res.status(e.status||500).json({error:e.message,code:e.code||''})}});
 app.post('/api/imports/excel/apply',auth,roles('admin','manager','dispatcher','finance'),upload.single('workbook'),async(req,res)=>{
   try{
     const parsed=await readExcelImportFile(req.file),preview=excelImportPreviewData(parsed);if(preview.kind==='generic')return res.status(400).json({error:'This workbook layout is not mapped yet. No records were changed.'});
     const importId='import_'+crypto.randomUUID(),source=parsed.name+' / '+preview.sheet,receipt=await storeCompanyReceipt(req.file,req.user,'excel-import',importId,'excel-import');
     const table=excelSheetTable(parsed.sheets.find(x=>x.name===preview.sheet)||parsed.sheets[0]),changed=await mutateOpsState(state=>{
       state.importHistory??=[];for(const h of state.importHistory)h.canUndo=false;state.lastImportBackup={importId,createdAt:new Date().toISOString(),snapshot:cloneImportArrays(state)};
-      let result;if(preview.kind==='nbl-carrier')result=applyCarrierWorkbookRows(state,table.objects.map(carrierRowFromExcel).filter(x=>x.tmsId),source,importId);else if(preview.kind==='trip-reports')result=applyTripReportWorkbook(state,tripReportWorkbookData(parsed),parsed.name+' / Driver Trip Reports',importId);else if(preview.kind==='insurance')result=applyInsuranceWorkbookData(state,insuranceWorkbookData(parsed),parsed.name+' / '+preview.sheet,importId,receipt?.id||'');else result=applyInsuranceWorkbookRows(state,insuranceRowsFromExcel(table),source,importId,table.rawRows);
+      let result;if(preview.kind==='nbl-carrier')result=applyCarrierWorkbookRows(state,table.objects.map(carrierRowFromExcel).filter(x=>x.tmsId),source,importId);else if(preview.kind==='trip-reports')result=applyTripReportWorkbook(state,tripReportWorkbookData(parsed),parsed.name+' / Driver Trip Reports',importId);else if(preview.kind==='shunter-recon')result=applyShunterReconWorkbookData(state,shunterReconWorkbookData(parsed),parsed.name+' / '+preview.sheet,importId);else if(preview.kind==='insurance')result=applyInsuranceWorkbookData(state,insuranceWorkbookData(parsed),parsed.name+' / '+preview.sheet,importId,receipt?.id||'');else result=applyInsuranceWorkbookRows(state,insuranceRowsFromExcel(table),source,importId,table.rawRows);
       const history={id:importId,date:new Date().toISOString(),filename:parsed.name,sheet:preview.sheet,type:preview.kind,created:num(result.created),updated:num(result.updated),skipped:num(result.skipped),errors:0,status:'Imported',sourceReceiptId:receipt?.id||'',canUndo:true,summary:result,importedBy:req.user.name||req.user.email||req.user.role};state.importHistory.unshift(history);state.importHistory=state.importHistory.slice(0,60);state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:req.user.name||req.user.email||req.user.role,action:'Excel import '+parsed.name+' · '+preview.kind+' · '+result.created+' created · '+result.updated+' updated',linkedType:'excel-import',linkedId:importId});state.audit=state.audit.slice(0,100);return history
     });res.status(201).json(changed.result)
   }catch(e){res.status(e.status||500).json({error:e.message,code:e.code||''})}
@@ -3087,7 +3140,43 @@ app.post('/api/push/test-device',auth,async(req,res)=>{
   res.json({success:true,sent,failed,stale})
 });
 app.get('/api/config',auth,(req,res)=>res.json({vapidPublicKey:process.env.VAPID_PUBLIC_KEY||null,mapStyle:process.env.MAP_STYLE_URL||'https://tiles.openfreemap.org/styles/liberty',providers:{whatsapp:Boolean(process.env.META_WHATSAPP_TOKEN),email:Boolean(process.env.RESEND_API_KEY),push:Boolean(process.env.VAPID_PUBLIC_KEY),telematics:Boolean(process.env.TELEMATICS_WEBHOOK_TOKEN||process.env.TRACCAR_FORWARD_TOKEN),maps:'OpenFreeMap'},receiptAI:{enabled:Boolean(OPENAI_API_KEY),primaryModel:RECEIPT_AI_PRIMARY_MODEL,escalationModel:RECEIPT_AI_ESCALATION_MODEL,solThreshold:RECEIPT_AI_SOL_THRESHOLD}}));
-app.post('/api/export/:kind',auth,async(req,res)=>{const title=String(req.body.title||req.params.kind).slice(0,80),columns=Array.isArray(req.body.columns)?req.body.columns:[],rows=Array.isArray(req.body.rows)?req.body.rows:[];if(!columns.length)return res.status(400).json({error:'Export columns required'});const book=new ExcelJS.Workbook();book.creator='Angermund Transport';book.created=new Date();const cover=book.addWorksheet('Angermund Transport');cover.getColumn(1).width=44;cover.getColumn(2).width=25;cover.getRow(1).height=100;const brandImage=book.addImage({buffer:fs.readFileSync(path.join(root,'angermund-logo.png')),extension:'png'});cover.addImage(brandImage,{tl:{col:0,row:0},ext:{width:340,height:120}});cover.getCell('A6').value='ANGERMUND TRANSPORT CC';cover.getCell('A6').font={name:'Aptos Display',size:18,bold:true,color:{argb:'FF101E80'}};cover.getCell('A8').value=title;cover.getCell('A8').font={name:'Aptos',size:14,bold:true};cover.getCell('A9').value=`Exported ${new Date().toLocaleString('en-NA',{timeZone:'Africa/Windhoek'})}`;cover.getCell('A10').value=`${rows.length} record(s)`;const sheet=book.addWorksheet(title.slice(0,31)||'Export',{views:[{state:'frozen',ySplit:4}]});sheet.properties.defaultRowHeight=20;sheet.mergeCells(1,1,1,columns.length);const heading=sheet.getCell(1,1);heading.value=`Angermund Transport CC — ${title}`;heading.font={name:'Aptos Display',size:16,bold:true,color:{argb:'FFFFFFFF'}};heading.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF0B2035'}};heading.alignment={vertical:'middle'};sheet.getRow(1).height=30;sheet.mergeCells(2,1,2,columns.length);sheet.getCell(2,1).value=`Exported ${new Date().toLocaleString('en-NA',{timeZone:'Africa/Windhoek'})}`;sheet.getCell(2,1).font={name:'Aptos',size:10,italic:true,color:{argb:'FF5E7184'}};sheet.getRow(4).values=columns.map(c=>c.label);sheet.getRow(4).eachCell(c=>{c.font={name:'Aptos',bold:true,color:{argb:'FFFFFFFF'}};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF1769AA'}};c.alignment={vertical:'middle',horizontal:'center'}});for(const source of rows){const values=columns.map(c=>source[c.key]??'');const row=sheet.addRow(values);row.eachCell((cell,index)=>{cell.font={name:'Aptos',size:10};cell.alignment={vertical:'middle',wrapText:false};const col=columns[index-1];if(col.type==='currency')cell.numFmt='N$ #,##0.00';else if(col.type==='number')cell.numFmt='#,##0.00';else if(col.type==='date'&&cell.value)cell.numFmt='yyyy-mm-dd'})}columns.forEach((c,i)=>{let width=Math.max(12,c.label.length+2);for(const row of rows.slice(0,200))width=Math.max(width,String(row[c.key]??'').length+2);sheet.getColumn(i+1).width=Math.min(42,width)});sheet.autoFilter={from:{row:4,column:1},to:{row:Math.max(4,rows.length+4),column:columns.length}};sheet.getRow(rows.length+5).getCell(1).value=`${rows.length} record(s)`;sheet.getRow(rows.length+5).getCell(1).font={italic:true,color:{argb:'FF5E7184'}};const buffer=await book.xlsx.writeBuffer();res.set({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':`attachment; filename="${req.params.kind}-${new Date().toISOString().slice(0,10)}.xlsx"`});res.send(Buffer.from(buffer))});
+
+function exportSafeSheetName(name,used){
+  let base=String(name||'Export').replace(/[\\\/?*\[\]:]/g,' ').replace(/\s+/g,' ').trim().slice(0,31)||'Export',candidate=base,n=2;
+  while(used.has(candidate.toLowerCase())){const suffix=' '+n++;candidate=(base.slice(0,31-suffix.length)+suffix).trim()}
+  used.add(candidate.toLowerCase());return candidate
+}
+async function createExportWorkbook(title,sections){
+  const book=new ExcelJS.Workbook();book.creator='Angermund Transport';book.created=new Date();book.modified=new Date();
+  const cover=book.addWorksheet('Angermund Transport');cover.getColumn(1).width=44;cover.getColumn(2).width=28;cover.getRow(1).height=100;
+  try{const brandImage=book.addImage({buffer:fs.readFileSync(path.join(root,'angermund-logo.png')),extension:'png'});cover.addImage(brandImage,{tl:{col:0,row:0},ext:{width:340,height:120}})}catch{}
+  cover.getCell('A6').value='ANGERMUND TRANSPORT CC';cover.getCell('A6').font={name:'Aptos Display',size:18,bold:true,color:{argb:'FF101E80'}};
+  cover.getCell('A8').value=title;cover.getCell('A8').font={name:'Aptos',size:14,bold:true};cover.getCell('A9').value='Exported '+new Date().toLocaleString('en-NA',{timeZone:'Africa/Windhoek'});cover.getCell('A10').value=(sections||[]).length+' section(s)';
+  const used=new Set(['angermund transport']);
+  for(const section of sections||[]){
+    const columns=Array.isArray(section.columns)?section.columns:[],rows=Array.isArray(section.rows)?section.rows:[];if(!columns.length)continue;
+    const sheet=book.addWorksheet(exportSafeSheetName(section.title||title,used),{views:[{state:'frozen',ySplit:4}]});sheet.properties.defaultRowHeight=21;
+    sheet.mergeCells(1,1,1,columns.length);const h=sheet.getCell(1,1);h.value='Angermund Transport CC — '+String(section.title||title);h.font={name:'Aptos Display',size:16,bold:true,color:{argb:'FFFFFFFF'}};h.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF0B2035'}};h.alignment={vertical:'middle'};sheet.getRow(1).height=31;
+    sheet.mergeCells(2,1,2,columns.length);sheet.getCell(2,1).value='Exported '+new Date().toLocaleString('en-NA',{timeZone:'Africa/Windhoek'});sheet.getCell(2,1).font={name:'Aptos',size:10,italic:true,color:{argb:'FF5E7184'}};
+    sheet.getRow(4).values=columns.map(c=>c.label||c.key||'Column');sheet.getRow(4).height=25;sheet.getRow(4).eachCell(c=>{c.font={name:'Aptos',bold:true,color:{argb:'FFFFFFFF'}};c.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FF1769AA'}};c.alignment={vertical:'middle',horizontal:'center',wrapText:true}});
+    for(let ri=0;ri<rows.length;ri++){
+      const source=rows[ri]||{},values=columns.map(c=>source[c.key]??''),row=sheet.addRow(values);let long=false;
+      row.eachCell((cell,index)=>{cell.font={name:'Aptos',size:10};cell.alignment={vertical:'top',wrapText:true};const col=columns[index-1];if(col?.type==='currency')cell.numFmt='N$ #,##0.00';else if(col?.type==='number')cell.numFmt='#,##0.00';else if(col?.type==='date'&&cell.value)cell.numFmt='yyyy-mm-dd';if(String(cell.value??'').length>55)long=true;if(ri%2===1)cell.fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFF5F8FB'}}});row.height=long?34:22
+    }
+    columns.forEach((c,i)=>{let width=Math.max(11,String(c.label||c.key||'').length+2);for(const row of rows.slice(0,250))width=Math.max(width,Math.min(38,String(row?.[c.key]??'').length+2));sheet.getColumn(i+1).width=Math.min(38,width)});
+    if(rows.length)sheet.autoFilter={from:{row:4,column:1},to:{row:rows.length+4,column:columns.length}};
+    sheet.pageSetup={orientation:columns.length>6?'landscape':'portrait',fitToPage:true,fitToWidth:1,fitToHeight:0,paperSize:9,margins:{left:.3,right:.3,top:.45,bottom:.45,header:.2,footer:.2}};
+    sheet.getRow(rows.length+5).getCell(1).value=rows.length+' record(s)';sheet.getRow(rows.length+5).getCell(1).font={italic:true,color:{argb:'FF5E7184'}}
+  }
+  return Buffer.from(await book.xlsx.writeBuffer())
+}
+app.post('/api/export/page',auth,async(req,res)=>{
+  try{const title=String(req.body?.title||'Page Export').slice(0,100),sections=Array.isArray(req.body?.sections)?req.body.sections:[];if(!sections.some(s=>Array.isArray(s.columns)&&s.columns.length))return res.status(400).json({error:'No exportable page data found'});const buffer=await createExportWorkbook(title,sections);res.set({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':'attachment; filename="'+String(req.body?.filename||'angermund-page').replace(/[^a-z0-9_-]+/gi,'-')+'.xlsx"'});res.send(buffer)}catch(e){res.status(500).json({error:e.message})}
+});
+app.post('/api/export/:kind',auth,async(req,res)=>{
+  try{const title=String(req.body.title||req.params.kind).slice(0,80),columns=Array.isArray(req.body.columns)?req.body.columns:[],rows=Array.isArray(req.body.rows)?req.body.rows:[];if(!columns.length)return res.status(400).json({error:'Export columns required'});const buffer=await createExportWorkbook(title,[{title,columns,rows}]);res.set({'Content-Type':'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet','Content-Disposition':'attachment; filename="'+req.params.kind+'-'+new Date().toISOString().slice(0,10)+'.xlsx"'});res.send(buffer)}catch(e){res.status(500).json({error:e.message})}
+});
+
 app.post('/api/documents/scan',auth,upload.single('document'),async(req,res)=>{if(!req.file)return res.status(400).json({error:'Document image required'});const id=crypto.randomUUID(),row={id,user_id:req.user.sub,filename:req.file.originalname,status:'processing'};if(pool)await q('INSERT INTO scan_jobs(id,user_id,filename,status) VALUES($1,$2,$3,$4)',[id,row.user_id,row.filename,row.status]);else memory.scanJobs.push({...row,rawText:null,extracted:null,confidence:null,error:null,createdAt:new Date().toISOString(),completedAt:null});res.status(202).json({id,status:'processing'});(async()=>{try{const state=await readOpsState().catch(()=>({})),result=await analyzeReceiptHybrid(req.file.buffer,req.file.mimetype,state),{extracted,raw,confidence}=result;if(pool)await q('UPDATE scan_jobs SET status=$2,raw_text=$3,extracted=$4,confidence=$5,completed_at=now() WHERE id=$1',[id,'review',raw,extracted,confidence]);else{const m=memory.scanJobs.find(x=>x.id===id);if(m)Object.assign(m,{status:'review',rawText:raw,extracted,confidence,completedAt:new Date().toISOString()})}emit('scan',{id,status:'review',extracted,confidence,ocrMode:result.ai.used?'ocr+ai':'ocr',ai:result.ai})}catch(e){if(pool)await q('UPDATE scan_jobs SET status=$2,error=$3,completed_at=now() WHERE id=$1',[id,'failed',e.message]);else{const m=memory.scanJobs.find(x=>x.id===id);if(m)Object.assign(m,{status:'failed',error:e.message,completedAt:new Date().toISOString()})}emit('scan',{id,status:'failed',error:e.message})}})()});
 app.get('/api/documents/scans/:id',auth,async(req,res)=>{const row=pool?(await q('SELECT id,filename,status,raw_text AS "rawText",extracted,confidence,error,created_at AS "createdAt",completed_at AS "completedAt" FROM scan_jobs WHERE id=$1',[req.params.id]))[0]:memory.scanJobs.find(x=>x.id===req.params.id);if(!row)return res.status(404).json({error:'Scan not found'});res.json(row)});
 app.post('/api/notifications/test',auth,roles('admin','manager'),async(req,res)=>res.status(201).json(await createNotification({type:'test',severity:'info',title:'Angermund Transport test alert',message:'Notification providers are connected and working.'})));
