@@ -433,7 +433,7 @@ function dispatch(){
 }
 function tripCard(t){
   const legs=tripLegs(t),active=activeJourneyLeg(t),closed=tripClosed(t),next={1:'Start loading',2:'Depart',3:'Confirm delivery',4:legs.length>1?'Invoice legs':'Create invoice',5:'Close'}[t.stage]||'Open';
-  return `<article class="entity-card"><div class="panel-head"><div><h3>${esc(t.number)}</h3><small class="trip-card-date">${esc(t.date||'—')} · ${esc(monthName(Number(String(t.date||'').slice(5,7))||1,true))} ${esc(String(t.date||'').slice(0,4))}</small>${t.externalTmsId?'<small class="trip-card-source">TMS '+esc(t.externalTmsId)+' · '+esc(t.carrierStatus||'')+'</small>':''}</div>${badge(t.status)}</div><p><b>${esc(active?route(active.routeId):journeyRouteLabel(t))}</b></p><p>${legs.length>1?`Leg ${num(active?.sequence)}/${legs.length} · `:''}${esc(active?client(active.clientId):client(t.clientId))} · ${esc(active?.load||t.load||'—')}</p><p>${esc(truck(t.truckId))} / ${esc(driver(t.driverId))}</p><div class="metric-line"><span>Journey income</span><b>${money(journeyIncome(t))}</b></div><div class="metric-line"><span>Contribution</span><b class="${tripProfit(t)>=0?'positive':'negative'}">${money(tripProfit(t))}</b></div>${closed?'':'<button class="primary small advance-trip" data-id="'+esc(t.id)+'">'+esc(next)+'</button> '}<button class="ghost small open-trip" data-id="${esc(t.id)}">Details</button></article>`;
+  return `<article class="entity-card"><div class="panel-head"><div><h3>${esc(t.number)}</h3><small class="trip-card-date">${esc(t.date||'—')} · ${esc(monthName(Number(String(t.date||'').slice(5,7))||1,true))} ${esc(String(t.date||'').slice(0,4))}</small>${t.externalTmsId?'<small class="trip-card-source">TMS '+esc(t.externalTmsId)+' · '+esc(t.carrierStatus||'')+'</small>':''}</div>${badge(t.status)}</div><p><b>${esc(active?route(active.routeId):journeyRouteLabel(t))}</b></p><p>${legs.length>1?`Leg ${num(active?.sequence)}/${legs.length} · `:''}${esc(active?client(active.clientId):client(t.clientId))} · ${esc(active?.load||t.load||'—')}</p><p>${esc(truck(t.truckId))} / ${t.driverId?esc(driver(t.driverId)):'⚠ Driver unassigned'}</p><div class="metric-line"><span>Journey income</span><b>${money(journeyIncome(t))}</b></div><div class="metric-line"><span>Contribution</span><b class="${tripProfit(t)>=0?'positive':'negative'}">${money(tripProfit(t))}</b></div>${closed?'':'<button class="primary small advance-trip" data-id="'+esc(t.id)+'">'+esc(next)+'</button> '}<button class="ghost small open-trip" data-id="${esc(t.id)}">Details</button></article>`;
 }
 function trips(){
   const periodRows=selectedTripRows(),rows=periodRows.filter(t=>tripSearchMatches(t,tripSearchTerm));
@@ -454,11 +454,11 @@ function carrierOrderFilterRows(){
 }
 function carrierOrders(){
   const all=(db.trips||[]).filter(t=>t.externalTmsId||t.carrierDetails?.tmsId),rows=carrierOrderFilterRows(),open=all.filter(t=>!tripClosed(t)),delivered=all.filter(t=>num(t.stage)>=4||/delivered|closed/i.test(String(t.status||''))),pending=all.filter(t=>t.ratePending||num(t.sourceRate)<=1);
-  const tableRows=rows.length?rows.map(t=>{const c=t.carrierDetails||{},origin=c.origin||{},dest=c.destination||{};return '<tr><td><b>'+esc(c.tmsId||t.externalTmsId||'—')+'</b><br><small>'+esc(c.status||t.carrierStatus||'')+'</small></td><td>'+esc(c.orderRef||t.sourceOrderRef||'—')+'<br><small>'+esc(c.pro||t.carrierPro||'—')+'</small></td><td>'+esc(carrierDateLabel(c.pickPlanStart||t.date))+'<br><small>'+(c.pickActualDeparture?'Departed '+esc(carrierDateLabel(c.pickActualDeparture)):'No actual departure')+'</small></td><td>'+esc([origin.name,origin.city].filter(Boolean).join(' · ')||'—')+'<br><small>→ '+esc([dest.name,dest.city].filter(Boolean).join(' · ')||'—')+'</small></td><td>'+esc(truck(t.truckId))+'<br><small>'+esc((c.trailers||t.sourceTrailerRegistrations||[]).join(' / ')||'—')+'</small></td><td>'+esc(c.equipment||t.equipment||'—')+'</td><td>'+(t.ratePending?'<span class="badge warn">Rate pending</span>':'<b>'+money(journeyIncome(t))+'</b>')+'</td><td>'+badge(t.status||'Planned')+'</td><td><button class="link-button open-carrier-trip" data-id="'+esc(t.id)+'">Open</button></td></tr>'}).join(''):'<tr><td colspan="9" class="empty">No carrier orders for this view.</td></tr>';
+  const tableRows=rows.length?rows.map(t=>{const c=t.carrierDetails||{},origin=c.origin||{},dest=c.destination||{};return '<tr><td><b>'+esc(c.tmsId||t.externalTmsId||'—')+'</b><br><small>'+esc(c.status||t.carrierStatus||'')+'</small></td><td>'+esc(c.orderRef||t.sourceOrderRef||'—')+'<br><small>'+esc(c.pro||t.carrierPro||'—')+'</small></td><td>'+esc(carrierDateLabel(c.pickPlanStart||t.date))+'<br><small>'+(c.pickActualDeparture?'Departed '+esc(carrierDateLabel(c.pickActualDeparture)):'No actual departure')+'</small></td><td>'+esc([origin.name,origin.city].filter(Boolean).join(' · ')||'—')+'<br><small>→ '+esc([dest.name,dest.city].filter(Boolean).join(' · ')||'—')+'</small></td><td>'+esc(truck(t.truckId))+'<br><small>'+(t.driverId?esc(driver(t.driverId)):'⚠ Driver unassigned')+'</small><br><small>'+esc((c.trailers||t.sourceTrailerRegistrations||[]).join(' / ')||'—')+'</small></td><td>'+esc(c.equipment||t.equipment||'—')+'</td><td>'+(t.ratePending?'<span class="badge warn">Rate pending</span>':'<b>'+money(journeyIncome(t))+'</b>')+'</td><td>'+badge(t.status||'Planned')+'</td><td><button class="link-button open-carrier-trip" data-id="'+esc(t.id)+'">Open</button></td></tr>'}).join(''):'<tr><td colspan="9" class="empty">No carrier orders for this view.</td></tr>';
   return '<section class="kpis">'+kpi('Carrier orders',all.length,'Imported TMS loads')+kpi('Open',open.length,'Not closed')+kpi('Delivered / closed',delivered.length,'Reached delivery stage')+kpi('Rate pending',pending.length,'Source rate 0.01 / missing')+'</section>'
     +'<section class="panel"><div class="toolbar"><div><h2>Carrier Orders / TMS</h2><p class="muted-copy">Operational view of the carrier load-status workbook without opening Excel.</p></div><button class="primary nav-to" data-page="imports">Import latest carrier sheet</button></div>'
     +'<div class="carrier-order-controls"><div class="period-switch"><button type="button" id="carrierOpenMode" class="'+(carrierOrderMode==='open'?'active':'')+'">Open orders</button><button type="button" id="carrierMonthMode" class="'+(carrierOrderMode==='month'?'active':'')+'">Month history</button></div>'+(carrierOrderMode==='month'?'<input id="carrierOrderPeriod" type="month" value="'+esc(carrierOrderPeriod)+'">':'')+'<input id="carrierOrderSearch" value="'+esc(carrierOrderSearch)+'" autocomplete="off" placeholder="Search TMS, order, PRO, destination, truck…"></div>'
-    +'<div class="table-wrap"><table><thead><tr><th>TMS / status</th><th>Order / PRO</th><th>Pickup</th><th>Route</th><th>Truck / trailers</th><th>Equipment</th><th>Rate</th><th>App status</th><th></th></tr></thead><tbody>'+tableRows+'</tbody></table></div></section>'
+    +'<div class="table-wrap"><table><thead><tr><th>TMS / status</th><th>Order / PRO</th><th>Pickup</th><th>Route</th><th>Truck / driver / trailers</th><th>Equipment</th><th>Rate</th><th>App status</th><th></th></tr></thead><tbody>'+tableRows+'</tbody></table></div></section>'
 }
 function wireCarrierOrders(){
   if($('carrierOpenMode'))$('carrierOpenMode').onclick=()=>{carrierOrderMode='open';render()};
@@ -2641,6 +2641,30 @@ function importedTollDetail(t){
   return '<details class="source-toll-details"><summary>Imported toll-gate list ('+rows.length+')</summary><div class="toll-chip-list">'+rows.map(x=>'<span>'+esc(x.name||'Toll')+(num(x.amount)?' · '+money(x.amount):'')+'</span>').join('')+'</div></details>'
 }
 
+
+function assignableTripDrivers(t){
+  return (db.drivers||[])
+    .filter(d=>!d.historical&&d.active!==false&&!/inactive|archived|terminated/i.test(String(d.status||'')))
+    .slice()
+    .sort((a,b)=>String(a.name||'').localeCompare(String(b.name||'')))
+    .map(d=>{
+      const otherOpen=(db.trips||[]).filter(x=>x.id!==t.id&&x.driverId===d.id&&!tripClosed(x)).length;
+      return{...d,otherOpen}
+    })
+}
+function tripDriverAssignment(t){
+  const canAssign=['admin','manager','dispatcher'].includes(role),assigned=driver(t.driverId),drivers=assignableTripDrivers(t);
+  if(!canAssign)return '<section class="trip-driver-assignment readonly"><div><span>Assigned driver</span><b>'+esc(assigned)+'</b></div></section>';
+  return '<section class="trip-driver-assignment '+(!t.driverId?'needs-driver':'')+'"><div class="trip-driver-copy"><span>Assigned driver</span><b>'+(t.driverId?esc(assigned):'⚠ Driver not assigned')+'</b><small>The carrier Excel does not include the driver. Assign the actual driver here so this trip appears in that driver\\'s workspace.</small></div><div class="trip-driver-controls"><select id="tripDriverAssign"><option value="">Unassigned</option>'+drivers.map(d=>'<option value="'+esc(d.id)+'" '+(d.id===t.driverId?'selected':'')+'>'+esc(d.name)+(d.otherOpen?' · '+d.otherOpen+' other open trip'+(d.otherOpen===1?'':'s'):'')+'</option>').join('')+'</select><button type="button" class="primary" id="saveTripDriver">'+(t.driverId?'Change driver':'Assign driver')+'</button></div></section>'
+}
+function saveTripDriverAssignment(tripId){
+  const t=get('trips',tripId),select=$('tripDriverAssign');if(!t.id||!select)return;
+  const old=t.driverId||'',next=select.value||'';if(old===next)return notify(next?'Driver already assigned':'Trip is already unassigned');
+  const newName=driver(next);t.driverId=next;t.assignedDriverAt=new Date().toISOString();t.assignedDriverBy=roleLabel();
+  commit(next?'Driver assigned to '+t.number+': '+newName:'Driver removed from '+t.number,'trip',t.id);
+  setTimeout(()=>openTrip(tripId),30)
+}
+
 function openTrip(id){
   const t=get('trips',id),legs=tripLegs(t),fuel=linked('diesel','tripId',id),expenses=linked('expenses','tripId',id),issues=linked('tripIssues','tripId',id),settlement=tripSettlement(t),m=settlement.fuel;
   const dieselSpend=tripDieselSpend(t),expenseSpend=tripRouteExpenseSpend(t),totalCost=tripCost(t),contribution=tripProfit(t);
@@ -2654,7 +2678,8 @@ function openTrip(id){
       <div><span>Total trip cost</span><b>${money(totalCost)}</b></div>
       <div><span>Journey contribution</span><b class="${contribution>=0?'positive':'negative'}">${money(contribution)}</b></div>
     </div>
-    <div class="journey-summary-bar"><div><b>${esc(truck(t.truckId))}</b><span>${esc(trailer(t.trailerId))}</span></div><div><b>${esc(driver(t.driverId))}</b><span>${esc(t.date)}</span></div><div><b>${legs.length} priced leg${legs.length===1?'':'s'}</b><span>${legs.filter(x=>x.invoiceId).length} invoiced</span></div></div>
+    <div class="journey-summary-bar"><div><b>${esc(truck(t.truckId))}</b><span>${esc(trailer(t.trailerId))}</span></div><div><b>${t.driverId?esc(driver(t.driverId)):'Driver unassigned'}</b><span>${esc(t.date)}</span></div><div><b>${legs.length} priced leg${legs.length===1?'':'s'}</b><span>${legs.filter(x=>x.invoiceId).length} invoiced</span></div></div>
+    ${tripDriverAssignment(t)}
     ${carrierOrderPanel(t)}
     ${historicalTripSourcePanel(t)}
     <div class="journey-leg-toolbar"><h3>Journey legs / loads</h3><div><button type="button" class="ghost" id="addJourneyLeg">+ Add leg</button><button type="button" class="primary" id="addReturnLeg">↩ Add return / backload</button></div></div>
@@ -2682,6 +2707,7 @@ function openTrip(id){
     </div>`;
   $('modal').classList.remove('hidden');
   $('cancelForm').onclick=()=>$('modal').classList.add('hidden');
+  if($('saveTripDriver'))$('saveTripDriver').onclick=()=>saveTripDriverAssignment(id);
   $('refreshTripValues').onclick=async()=>{await refreshCentralState(false);openTrip(id);notify('Journey values refreshed')};
   $('addJourneyLeg').onclick=()=>openJourneyLegForm(id);
   $('addReturnLeg').onclick=()=>openJourneyLegForm(id,'',true);
