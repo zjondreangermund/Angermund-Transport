@@ -18,6 +18,7 @@ function logout(){stopDriverGpsWatch();authToken='';sessionUser=null;localStorag
 async function syncState(){if(!authToken||role==='driver')return;try{await api('/api/state',{method:'PUT',body:db})}catch(e){notify(`Sync pending: ${e.message}`)}}
 const num=v=>Number(v||0),money=v=>`N$ ${num(v).toLocaleString('en-NA',{minimumFractionDigits:2,maximumFractionDigits:2})}`,esc=v=>String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const daysUntil=d=>d?Math.ceil((new Date(d+'T23:59:59')-new Date())/86400000):9999;
+const fleetKey=v=>String(v||'').toLowerCase().replace(/[^a-z0-9]+/g,'');
 const base={version:2,supplierCategoryRules:{},settings:{dieselPrice:26.77,vat:15,targetKml:1.5,defaultMargin:20,standingFee:6000,weekendStandingFee:7500,freeStandingHours:4,mdcRatePer100km:73.30,currentDriver:'drv_johannes'},company:{name:'Angermund Transport CC',registration:'CC/2006/0146',vat:'4118289-015',email:'angermundtransport@iway.na',phone:'+264 81 129 9942',address:'Erf 10494 Bernabe De La Bat Street, Katutura, Windhoek',postal:'P.O. Box 2253, Windhoek'},
 trucks:[
 {id:'trk_ang2',fleetName:'Ang 2',registration:'N 228751 W',make:'',type:'Truck',status:'Available',odometer:0,serviceDue:0,licenseExpiry:'',roadworthyExpiry:'',gps:'Not linked',trackerId:'',trackerModel:''},
