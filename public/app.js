@@ -574,7 +574,7 @@ function adminScanDraft(x={}){
     category,
     detectedCategory:category,
     categoryConfidence:Math.max(0,Math.min(100,num(x.categoryConfidence)||num(x.extractionConfidence))),
-    date:(String(x.date||'').match(/^\d{4}-\d{2}-\d{2}/)||[])[0]||today(),
+    date:(String(x.date||'').match(/^\d{4}-\d{2}-\d{2}/)||[])[0]||'',
     amount:num(x.printedTotal||x.suggestedAmount)||'',
     supplier:String(x.supplier||''),
     receiptNo:String(x.documentNumber||''),
@@ -598,7 +598,7 @@ async function adminSlipFormData(files,x,draft){
   fd.append('category',draft.category||'Other');
   fd.append('detectedCategory',draft.detectedCategory||adminScanDetectedCategory(x));
   fd.append('categoryConfidence',String(num(draft.categoryConfidence)));
-  fd.append('date',draft.date||today());
+  fd.append('date',draft.date||'');
   fd.append('amount',String(num(draft.amount)));
   fd.append('supplier',String(draft.supplier||''));
   fd.append('receiptNo',String(draft.receiptNo||''));
@@ -702,14 +702,14 @@ function editAdminBatchItem(i){
   $('entryForm').innerHTML='<div class="driver-smart-slip"><div class="form-grid">'
     +'<div class="field"><label>Supplier<input id="batchEditSupplier" value="'+esc(String(d.supplier||''))+'"></label></div>'
     +'<div class="field"><label>Receipt no.<input id="batchEditNumber" value="'+esc(String(d.receiptNo||''))+'"></label></div>'
-    +'<div class="field"><label>Date<input id="batchEditDate" type="date" value="'+esc(d.date||today())+'"></label></div>'
+    +'<div class="field"><label>Date<input id="batchEditDate" type="date" value="'+esc(d.date||'')+'" required></label></div>'
     +'<div class="field"><label>Amount<input id="batchEditAmount" type="number" step="0.01" value="'+esc(String(d.amount||''))+'"></label></div>'
     +'<div class="field"><label>Litres<input id="batchEditLitres" type="number" step="0.001" value="'+esc(String(d.litres||''))+'"></label></div>'
     +'<div class="field"><label>Price / litre<input id="batchEditPrice" type="number" step="0.0001" value="'+esc(String(d.price||''))+'"></label></div>'
     +'<div class="field full"><label>Odometer<input id="batchEditOdo" type="number" value="'+esc(String(d.odometer||''))+'"></label></div></div>'
     +'<div class="driver-modal-actions"><button type="button" class="ghost" id="batchEditBack">Back</button><button type="button" class="primary" id="batchEditSave">Save changes</button></div></div>';
   $('batchEditBack').onclick=renderAdminBatchReview;
-  $('batchEditSave').onclick=()=>{Object.assign(d,{supplier:$('batchEditSupplier').value.trim(),receiptNo:$('batchEditNumber').value.trim(),date:$('batchEditDate').value||today(),amount:$('batchEditAmount').value,litres:$('batchEditLitres').value,price:$('batchEditPrice').value,odometer:$('batchEditOdo').value});renderAdminBatchReview()}
+  $('batchEditSave').onclick=()=>{Object.assign(d,{supplier:$('batchEditSupplier').value.trim(),receiptNo:$('batchEditNumber').value.trim(),date:$('batchEditDate').value,amount:$('batchEditAmount').value,litres:$('batchEditLitres').value,price:$('batchEditPrice').value,odometer:$('batchEditOdo').value});renderAdminBatchReview()}
 }
 async function retryAdminBatchItem(i){
   const item=adminSlipBatch?.items[i];if(!item)return;
@@ -756,7 +756,7 @@ function renderAdminSmartSlip(file,x,opts={}){
   const truckOptions='<option value="">— Select truck if applicable —</option>'+(db.trucks||[]).map(t=>'<option value="'+esc(t.id)+'" '+(matchedTruck&&matchedTruck.id===t.id?'selected':'')+'>'+esc(truck(t.id))+'</option>').join('');
   const categoryOptions=SMART_SLIP_CATEGORIES.map(c=>'<option value="'+esc(c)+'" '+(c===detected?'selected':'')+'>'+esc(c)+'</option>').join('');
   const aiName=x.aiModel?String(x.aiModel):'AI/OCR';
-  const dateValue=(String(x.date||'').match(/^\d{4}-\d{2}-\d{2}/)||[])[0]||today();
+  const dateValue=(String(x.date||'').match(/^\d{4}-\d{2}-\d{2}/)||[])[0]||'';
   let matchNote='';
   if(matchedTrip)matchNote='<div class="support-merge-note">✓ Registration matched '+esc(truck(matchedTruck.id))+' and suggested trip <b>'+esc(matchedTrip.number)+'</b>.</div>';
   else if(matchedTruck)matchNote='<div class="support-merge-note">✓ Registration matched '+esc(truck(matchedTruck.id))+'. Choose a trip if this expense belongs to one.</div>';
@@ -767,7 +767,7 @@ function renderAdminSmartSlip(file,x,opts={}){
     +(sourceFiles.length>1?'<div class="support-merge-note">📄 '+sourceFiles.length+' pages will be archived together as one PDF.</div>':'')
     +'<div class="form-grid">'
       +'<div class="field full"><label>Expense type</label><select id="adminSlipCategory">'+categoryOptions+'</select></div>'
-      +'<div class="field"><label>Date</label><input id="adminSlipDate" type="date" value="'+esc(dateValue)+'"></div>'
+      +'<div class="field"><label>Slip date</label><input id="adminSlipDate" type="date" value="'+esc(dateValue)+'" required><small>'+(dateValue?'Read from slip':'Date not read — confirm before posting')+'</small></div>'
       +'<div class="field"><label>Amount / receipt total</label><input id="adminSlipAmount" type="number" step="0.01" inputmode="decimal" value="'+esc(String(x.printedTotal||x.suggestedAmount||''))+'"></div>'
       +'<div class="field"><label>Supplier / place</label><input id="adminSlipSupplier" value="'+esc(String(x.supplier||''))+'"></div>'
       +'<div class="field"><label>Slip / receipt no.</label><input id="adminSlipNumber" value="'+esc(String(x.documentNumber||''))+'"></div>'
@@ -804,7 +804,8 @@ function renderAdminSmartSlip(file,x,opts={}){
     if(scopeValue==='trip'&&!tripId)return notify('Select the trip this slip belongs to');
     if(category==='Diesel'&&litres<=0)return notify('Enter diesel litres');
     if(category!=='Diesel'&&amount<=0)return notify('Enter the amount');
-    const draft={category,detectedCategory:detected,categoryConfidence:confidence,date:$('adminSlipDate').value||today(),amount,supplier:$('adminSlipSupplier').value.trim(),receiptNo:$('adminSlipNumber').value.trim(),scope:scopeValue,tripId,truckId:$('adminSlipTruck').value||'',registration:String(x.registration||''),litres,price,odometer:num($('adminSlipOdo')&&$('adminSlipOdo').value),fuelTransactionCount:num(x.fuelTransactionCount)||0,fuelTransactions:Array.isArray(x.fuelTransactions)?x.fuelTransactions:[]};
+    const slipDate=$('adminSlipDate').value;if(!slipDate)return notify('Confirm the date printed on the slip');
+    const draft={category,detectedCategory:detected,categoryConfidence:confidence,date:slipDate,amount,supplier:$('adminSlipSupplier').value.trim(),receiptNo:$('adminSlipNumber').value.trim(),scope:scopeValue,tripId,truckId:$('adminSlipTruck').value||'',registration:String(x.registration||''),litres,price,odometer:num($('adminSlipOdo')&&$('adminSlipOdo').value),fuelTransactionCount:num(x.fuelTransactionCount)||0,fuelTransactions:Array.isArray(x.fuelTransactions)?x.fuelTransactions:[]};
     const fd=await adminSlipFormData(sourceFiles,x,draft);
     try{
       const result=await api('/api/admin/slips/post',{method:'POST',body:fd});
@@ -830,6 +831,7 @@ function smartSlipDraft(){
     amount:$('smartSlipAmount')?.value||'',
     supplier:$('smartSlipSupplier')?.value||'',
     receiptNo:$('smartSlipNumber')?.value||'',
+    date:$('smartSlipDate')?.value||'',
     litres:$('smartSlipLitres')?.value||'',
     price:$('smartSlipPrice')?.value||'',
     odometer:$('smartSlipOdo')?.value||''
@@ -876,6 +878,7 @@ function renderDriverSmartSlip(t,mainFile,supportFile,primary,supporting,draft={
       +'<label>'+(detected==='Diesel'?'Receipt total':'Amount')+'<input id="smartSlipAmount" type="number" inputmode="decimal" step="0.01" placeholder="N$ total" value="'+esc(String(val('amount',x.suggestedAmount)))+'"></label>'
       +'<label>Supplier / place<input id="smartSlipSupplier" value="'+esc(String(val('supplier',x.supplier)))+'" placeholder="Where did you pay?"></label>'
       +'<label>Slip / receipt no.<input id="smartSlipNumber" value="'+esc(String(val('receiptNo',x.documentNumber)))+'" placeholder="Optional"></label>'
+      +'<label>Slip date<input id="smartSlipDate" type="date" value="'+esc(String(val('date',x.date)))+'" required><small>'+(val('date',x.date)?'Read from slip':'Confirm date from slip')+'</small></label>'
     +'</div>'
     +'<div id="smartDieselFields" class="smart-diesel-fields">'
       +'<label>Total litres<input id="smartSlipLitres" type="number" inputmode="decimal" step="0.001" value="'+esc(String(val('litres',x.litres)))+'" placeholder="Litres"></label>'
@@ -910,7 +913,8 @@ function renderDriverSmartSlip(t,mainFile,supportFile,primary,supporting,draft={
 
   $('entryForm').onsubmit=async e=>{
     e.preventDefault();
-    const category=$('smartSlipCategory').value,supplier=$('smartSlipSupplier').value.trim(),amount=num($('smartSlipAmount').value),receiptNo=$('smartSlipNumber').value.trim();
+    const category=$('smartSlipCategory').value,supplier=$('smartSlipSupplier').value.trim(),amount=num($('smartSlipAmount').value),receiptNo=$('smartSlipNumber').value.trim(),slipDate=$('smartSlipDate').value;
+    if(!slipDate)return notify('Confirm the date printed on the slip');
     const files=supportFile?[mainFile,supportFile]:[mainFile];
     if(category==='Diesel'){
       const litres=num($('smartSlipLitres').value),price=num($('smartSlipPrice').value)||(litres>0&&amount>0?amount/litres:0);
@@ -918,7 +922,7 @@ function renderDriverSmartSlip(t,mainFile,supportFile,primary,supporting,draft={
       if(amount<=0&&price<=0)return notify('Please enter the receipt total or price per litre');
       $('modal').classList.add('hidden');
       await sendDriverMultiPhotoAction(t.id,'diesel',files,'diesel',{
-        litres,total:amount,price,odometer:num($('smartSlipOdo').value),supplier,slip:receiptNo,
+        date:slipDate,litres,total:amount,price,odometer:num($('smartSlipOdo').value),supplier,slip:receiptNo,
         detectedCategory:detected,categoryConfidence:confidence,
         fuelTransactions:Array.isArray(x.fuelTransactions)?x.fuelTransactions:[],
         fuelTransactionCount:num(x.fuelTransactionCount)||1,
@@ -928,7 +932,7 @@ function renderDriverSmartSlip(t,mainFile,supportFile,primary,supporting,draft={
     }else{
       if(amount<=0)return notify('Please enter the amount');
       $('modal').classList.add('hidden');
-      await sendDriverMultiPhotoAction(t.id,'expense',files,'expense',{category,amount,supplier,receiptNo,detectedCategory:detected,categoryConfidence:confidence},'✓ '+category+' slip saved'+(supportFile?' · 2 photos attached':''));
+      await sendDriverMultiPhotoAction(t.id,'expense',files,'expense',{date:slipDate,category,amount,supplier,receiptNo,detectedCategory:detected,categoryConfidence:confidence},'✓ '+category+' slip saved'+(supportFile?' · 2 photos attached':''));
     }
   };
 }
