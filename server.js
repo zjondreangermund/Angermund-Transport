@@ -1409,7 +1409,7 @@ function payrollProfile(state,employeeId){
   let p=state.payProfiles.find(x=>(x.employeeId||x.driverId)===employeeId);
   if(!p){
     const prior=(state.payroll||[]).filter(x=>x.employeeId===employeeId).sort((a,b)=>String(b.period||'').localeCompare(String(a.period||'')))[0],emp=workforceEmployee(state,employeeId);
-    p={driverId:employeeId,employeeId,baseSalary:num(emp?.baseSalary)||num(prior?.base),tripRatePerKm:num(prior?.tripRatePerKm),minimumBonusKml:2.0,taxNumber:'',payeThreshold:8000,payeDefault:num(emp?.payeDefault)||num(prior?.paye),sscDefault:num(emp?.sscDefault)||num(prior?.ssc),overtimeRate:0,standardDays:num(prior?.days)||22,otherDeductionDefault:num(prior?.deductions),autoGenerate:true};
+    p={driverId:employeeId,employeeId,baseSalary:num(emp?.baseSalary)||num(prior?.base),tripRatePerKm:num(prior?.tripRatePerKm),taxNumber:'',payeThreshold:8000,payeDefault:num(emp?.payeDefault)||num(prior?.paye),sscDefault:num(emp?.sscDefault)||num(prior?.ssc),overtimeRate:0,standardDays:num(prior?.days)||22,otherDeductionDefault:num(prior?.deductions),autoGenerate:true};
     state.payProfiles.push(p)
   }
   if(p.payeThreshold===undefined)p.payeThreshold=8000;
