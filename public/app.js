@@ -3359,38 +3359,92 @@ document.addEventListener('click',e=>{const b=e.target.closest('[data-action="ex
 function showLoginPanel(){
   if($('siteEntry'))$('siteEntry').classList.add('is-exiting');
   if($('loginPanel')){$('loginPanel').classList.remove('hidden');requestAnimationFrame(()=>$('loginPanel').classList.add('is-visible'))}
-  setTimeout(()=>{if($('siteEntry'))$('siteEntry').classList.add('hidden');$('loginEmail')?.focus()},420)
+  setTimeout(()=>{if($('siteEntry'))$('siteEntry').classList.add('hidden');$('loginEmail')?.focus()},520)
 }
-function entrySceneFromProgress(p){return p<.18?0:p<.39?1:p<.61?2:p<.82?3:4}
-function updateEntryExperience(){
+const ENTRY_SCENE_CENTERS=[0,.245,.5,.755,1];
+let entryTargetProgress=0,entrySmoothProgress=0,entryRaf=0,entryLastScene=-1;
+const entryClamp=(v,min=0,max=1)=>Math.max(min,Math.min(max,v));
+function entrySmoothstep(a,b,v){const x=entryClamp((v-a)/(b-a));return x*x*(3-2*x)}
+function entrySceneFromProgress(p){let best=0,dist=99;ENTRY_SCENE_CENTERS.forEach((c,i)=>{const d=Math.abs(p-c);if(d<dist){dist=d;best=i}});return best}
+function entrySceneWeight(p,center,i){
+  const d=Math.abs(p-center),outer=(i===0||i===4)?.30:.31;
+  return entryClamp(1-entrySmoothstep(.075,outer,d))
+}
+function paintEntryExperience(p){
   const el=$('siteEntry'),stage=$('siteEntryStage');if(!el||!stage)return;
-  const max=Math.max(1,el.scrollHeight-el.clientHeight),p=Math.max(0,Math.min(1,el.scrollTop/max)),scene=entrySceneFromProgress(p);
+  p=entryClamp(p);const scene=entrySceneFromProgress(p),weights=ENTRY_SCENE_CENTERS.map((c,i)=>entrySceneWeight(p,c,i)),strongest=Math.max(...weights),fogPulse=entryClamp((1-strongest)*1.7);
   el.dataset.scene=String(scene);
-  el.dataset.weather=scene===0?'clear':scene===1?'dust':scene===2?'storm':scene===3?'clearing':'golden';
+  el.dataset.weather=scene===0?'clear':scene===1?'dust':scene===2?'clear':scene===3?'storm':'golden';
   el.style.setProperty('--entry-p',p.toFixed(4));
-  stage.style.setProperty('--road-scale',(1+p*.085).toFixed(4));
-  stage.style.setProperty('--road-x',(-p*2.6).toFixed(2)+'%');
-  stage.style.setProperty('--road-y',(p*2.2).toFixed(2)+'%');
-  stage.style.setProperty('--cloud-shift',(-p*12).toFixed(2)+'vw');
-  stage.style.setProperty('--dust-shift',(p*18).toFixed(2)+'vw');
-  const captions=['Clear road · morning light','Dry wind · moving dust','Summer storm · rain ahead','Clouds breaking · border road','Golden hour · road clear'];
+  stage.style.setProperty('--entry-fog-transition',fogPulse.toFixed(3));
+  stage.style.setProperty('--cloud-shift',(-p*15).toFixed(2)+'vw');
+  stage.style.setProperty('--dust-shift',(p*20).toFixed(2)+'vw');
+  weights.forEach((w,i)=>{
+    const center=ENTRY_SCENE_CENTERS[i],local=entryClamp((p-center)/.28,-1,1),visual=document.querySelector('.entry-visual-'+i),copy=document.querySelector('.entry-scene-'+i);
+    if(visual){
+      visual.style.opacity=w.toFixed(4);
+      visual.style.setProperty('--scene-scale',(1.055+Math.abs(local)*.018+p*.012).toFixed(4));
+      visual.style.setProperty('--scene-x',(local*(i%2===0?-2.3:2.3)).toFixed(2)+'%');
+      visual.style.setProperty('--scene-y',(local*(i===3?1.7:-1.2)).toFixed(2)+'%');
+      visual.style.setProperty('--scene-brightness',(0.83+w*.17).toFixed(3))
+    }
+    if(copy){
+      const textWeight=entryClamp(1-entrySmoothstep(.095,.235,Math.abs(p-center))),direction=p<center?1:-1;
+      copy.style.opacity=textWeight.toFixed(4);
+      copy.style.filter='blur('+(Math.max(0,(1-textWeight)*8)).toFixed(2)+'px)';
+      copy.style.transform='translate3d(0,calc(-50% + '+(direction*(1-textWeight)*44).toFixed(1)+'px),0)';
+      copy.style.pointerEvents=textWeight>.72?'auto':'none'
+    }
+  });
+  const captions=['Morning mist · freight in motion','Depot operations · fog lifting','Namibia · open road','Cross-border · storm passage','Operations hub · road ahead'];
   if($('entryWeatherCaption'))$('entryWeatherCaption').textContent=captions[scene];
   document.querySelectorAll('.entry-progress i').forEach((dot,i)=>dot.classList.toggle('active',i===scene));
+  if(scene!==entryLastScene){entryLastScene=scene;el.setAttribute('aria-label','Angermund Transport · scene '+(scene+1)+' of 5')}
+}
+function entryAnimationLoop(){
+  entrySmoothProgress+=(entryTargetProgress-entrySmoothProgress)*.085;
+  if(Math.abs(entryTargetProgress-entrySmoothProgress)<.00015)entrySmoothProgress=entryTargetProgress;
+  paintEntryExperience(entrySmoothProgress);
+  entryRaf=Math.abs(entryTargetProgress-entrySmoothProgress)>.0001?requestAnimationFrame(entryAnimationLoop):0
+}
+function updateEntryExperience(){
+  const el=$('siteEntry');if(!el)return;
+  const max=Math.max(1,el.scrollHeight-el.clientHeight);
+  entryTargetProgress=entryClamp(el.scrollTop/max);
+  if(!entryRaf)entryRaf=requestAnimationFrame(entryAnimationLoop)
+}
+function preloadEntryScenes(){
+  [
+    'https://d2ol7oe51mr4n9.cloudfront.net/user_3JJ4hXLqjufB6CVAow5nF99Cdsh/083c68b6-917d-4671-90a1-03a8fbc0f798.png','https://d2ol7oe51mr4n9.cloudfront.net/user_3JJ4hXLqjufB6CVAow5nF99Cdsh/2454ec71-7fc4-48d9-9889-9e8b90782c05.png','https://d2ol7oe51mr4n9.cloudfront.net/user_3JJ4hXLqjufB6CVAow5nF99Cdsh/769c4b93-1413-448e-869d-cd3469612b58.png','https://d2ol7oe51mr4n9.cloudfront.net/user_3JJ4hXLqjufB6CVAow5nF99Cdsh/36f6c805-1b39-44bb-814a-32afb48f8bc4.png','https://d2ol7oe51mr4n9.cloudfront.net/user_3JJ4hXLqjufB6CVAow5nF99Cdsh/57e11349-b806-4757-a112-36bb28612373.png'
+  ].forEach((src,i)=>{if(i<2)return;const img=new Image();img.decoding='async';img.src=src})
 }
 function scrollEntryToScene(scene){
   const el=$('siteEntry');if(!el)return;
-  const max=Math.max(1,el.scrollHeight-el.clientHeight),targets=[0,.22,.44,.67,.91],top=max*(targets[Math.max(0,Math.min(4,scene))]||0);
-  el.scrollTo({top,behavior:'smooth'})
+  const max=Math.max(1,el.scrollHeight-el.clientHeight),idx=Math.max(0,Math.min(4,scene));
+  el.scrollTo({top:max*ENTRY_SCENE_CENTERS[idx],behavior:'smooth'})
 }
 function showSiteEntry(){
-  if($('siteEntry')){$('siteEntry').classList.remove('hidden','is-exiting');$('siteEntry').scrollTop=0;requestAnimationFrame(updateEntryExperience)}
+  if($('siteEntry')){
+    $('siteEntry').classList.remove('hidden','is-exiting');$('siteEntry').scrollTop=0;
+    entryTargetProgress=entrySmoothProgress=0;entryLastScene=-1;requestAnimationFrame(()=>paintEntryExperience(0))
+  }
   if($('loginPanel')){$('loginPanel').classList.remove('is-visible');setTimeout(()=>$('loginPanel')?.classList.add('hidden'),260)}
 }
 if($('enterOperations'))$('enterOperations').onclick=showLoginPanel;
 if($('entrySignIn'))$('entrySignIn').onclick=showLoginPanel;
 if($('loginBackToEntry'))$('loginBackToEntry').onclick=showSiteEntry;
 if($('entryExplore'))$('entryExplore').onclick=()=>scrollEntryToScene(1);
-if($('siteEntry')){$('siteEntry').addEventListener('scroll',()=>requestAnimationFrame(updateEntryExperience),{passive:true});$('siteEntry').addEventListener('keydown',e=>{if(e.key==='Enter')showLoginPanel();else if(e.key==='ArrowDown'||e.key==='PageDown'){e.preventDefault();scrollEntryToScene(Math.min(4,Number($('siteEntry').dataset.scene||0)+1))}else if(e.key==='ArrowUp'||e.key==='PageUp'){e.preventDefault();scrollEntryToScene(Math.max(0,Number($('siteEntry').dataset.scene||0)-1))}});requestAnimationFrame(updateEntryExperience)}
+if($('siteEntry')){
+  preloadEntryScenes();
+  $('siteEntry').addEventListener('scroll',updateEntryExperience,{passive:true});
+  $('siteEntry').addEventListener('keydown',e=>{
+    if(e.key==='Enter')showLoginPanel();
+    else if(e.key==='ArrowDown'||e.key==='PageDown'){e.preventDefault();scrollEntryToScene(Math.min(4,entrySceneFromProgress(entryTargetProgress)+1))}
+    else if(e.key==='ArrowUp'||e.key==='PageUp'){e.preventDefault();scrollEntryToScene(Math.max(0,entrySceneFromProgress(entryTargetProgress)-1))}
+  });
+  requestAnimationFrame(()=>paintEntryExperience(0))
+}
+
 function wire(){wireGlobalFind();if(page==='command')wireCommandPeriod();if(page==='dispatch'||page==='trips')wireTripPeriodControls();if(page==='dispatch'){if($('dispatchScanSlip'))$('dispatchScanSlip').onclick=()=>openSlipScanSourceChooser({multiple:false});if($('dispatchScanPod'))$('dispatchScanPod').onclick=chooseTripForPod;document.querySelectorAll('.dispatch-trip-slip').forEach(b=>b.onclick=e=>{e.stopPropagation();openAdminTripSlip(b.dataset.trip)});document.querySelectorAll('.dispatch-trip-pod').forEach(b=>b.onclick=e=>{e.stopPropagation();captureAdminPod(b.dataset.trip)})}if(page==='carrierOrders')wireCarrierOrders();if(page==='shunterRecon')wireShunterRecon();if(page==='loans')wireWorkerLoans();if(page==='imports')wireExcelImports();if(page==='insurance')wireInsuranceAssets();if(page==='monthlyPnl')wireMonthlyPnl();
 $('globalLogoutBtn').onclick=logout;if($('globalRecordSlipsBtn'))$('globalRecordSlipsBtn').onclick=()=>openSlipScanSourceChooser({multiple:true});if($('adminQuickScanSlip'))$('adminQuickScanSlip').onclick=()=>openSlipScanSourceChooser({multiple:true});if($('adminScanSlip'))$('adminScanSlip').onclick=()=>openSlipScanSourceChooser({multiple:true});if(page==='documents')wireDocuments();if(page==='roadCharges')wireRoadCharges();if(page==='payroll')wirePayroll();if($('refreshLiveData'))$('refreshLiveData').onclick=()=>refreshCentralState(true);document.querySelectorAll('.command-target').forEach(b=>b.onclick=()=>commandTarget(b.dataset.target,b.dataset.id||''));document.querySelectorAll('.command-trip-item').forEach(b=>b.onclick=()=>openTrip(b.dataset.commandTrip));if($('driverLogoutTop'))$('driverLogoutTop').onclick=logout;if($('driverLogoutBottom'))$('driverLogoutBottom').onclick=logout;document.querySelectorAll('.route-zones').forEach(b=>b.onclick=()=>openRouteZones(b.dataset.id));if($('driverPreviewSelect'))$('driverPreviewSelect').onchange=e=>{driverPreviewId=e.target.value;render()};if(page==='driverAccounts'&&['admin','manager'].includes(role))wireDriverAccounts();if((page==='tasks'||page==='command')&&['admin','manager'].includes(role)&&!usersLoaded)setTimeout(()=>loadDriverAccounts(),0);if(page==='tasks'){if($('addTask'))$('addTask').onclick=()=>openTaskForm();document.querySelectorAll('.edit-task').forEach(b=>b.onclick=()=>openTaskForm(b.dataset.id));document.querySelectorAll('.delete-task').forEach(b=>b.onclick=()=>deleteTask(b.dataset.id));document.querySelectorAll('.complete-task').forEach(b=>b.onclick=()=>completeTask(b.dataset.id));document.querySelectorAll('.task-related').forEach(b=>b.onclick=()=>{if(b.dataset.type==='trip')commandTarget('trip',b.dataset.id);else if(b.dataset.type==='invoice')commandTarget('invoice',b.dataset.id);else if(b.dataset.type==='permit')commandTarget('documents',b.dataset.id);else commandTarget(b.dataset.type,b.dataset.id)});document.querySelectorAll('.view-company-receipt').forEach(b=>b.onclick=()=>openCompanyReceiptFile(b.dataset.id))}if(page==='diesel'){if($('recordCompanyFuel'))$('recordCompanyFuel').onclick=openCompanyFuelForm;document.querySelectorAll('.review-diesel-record').forEach(b=>b.onclick=()=>openDieselReview(b.dataset.id));document.querySelectorAll('.view-company-receipt').forEach(b=>b.onclick=()=>openCompanyReceiptFile(b.dataset.id))}if(page==='fleet'){if($('addFleetVehicle'))$('addFleetVehicle').onclick=()=>openFleetVehicleForm();document.querySelectorAll('.fleet-details').forEach(b=>b.onclick=()=>openFleetDetails(b.dataset.truck));document.querySelectorAll('[data-fleet-open]').forEach(c=>c.onclick=e=>{if(e.target.closest('button'))return;openFleetDetails(c.dataset.fleetOpen)});document.querySelectorAll('.tracker-config').forEach(b=>b.onclick=()=>openTruckTracker(b.dataset.truck));document.querySelectorAll('.edit-fleet-vehicle').forEach(b=>b.onclick=()=>openFleetVehicleForm(b.dataset.truck));document.querySelectorAll('.delete-fleet-vehicle').forEach(b=>b.onclick=()=>deleteFleetVehicle(b.dataset.truck))}if(page==='invoices'){if($('generateNblInvoice'))$('generateNblInvoice').onclick=generateNblConsolidatedInvoice;if($('nblCycleMonth'))$('nblCycleMonth').onchange=e=>{const b=nblCycleBoundsClient(e.target.value);if($('nblCycleLabel'))$('nblCycleLabel').textContent=b.start+' → '+b.end}}if(page==='driverUploads')wireDriverUploads();document.querySelectorAll('.driver-next').forEach(b=>b.onclick=()=>{const t=get('trips',b.dataset.trip);if(t.id)driverMainStep(t)});document.querySelectorAll('[data-driver-quick]').forEach(b=>b.onclick=()=>{const t=get('trips',b.dataset.trip);if(!t.id)return;if(b.dataset.driverQuick==='scan')driverCapture('receipt',file=>openDriverSmartSlip(t,file));else if(b.dataset.driverQuick==='diesel')driverCapture('diesel',file=>openDriverDiesel(t,file));else if(b.dataset.driverQuick==='expense')driverCapture('expense',file=>openDriverExpense(t,file));else if(b.dataset.driverQuick==='problem')openDriverProblem(t)});if($('driverHelpBtn'))$('driverHelpBtn').onclick=openDriverHelp;if(role==='driver'&&page==='driverPortal'){startDriverGpsWatch();setTimeout(flushDriverJobs,800)}document.querySelectorAll('.nav-to').forEach(b=>b.onclick=()=>go(b.dataset.page));document.querySelectorAll('.action').forEach(b=>b.onclick=()=>{const a=b.dataset.action,id=b.dataset.trip,t=get('trips',id);if(a==='newTrip')openForm('trip');else if(a==='inspection')openForm('inspection',{tripId:id,truckId:t.truckId,driverId:t.driverId});else if(a==='diesel')openForm('diesel',{tripId:id,truckId:t.truckId,driverId:t.driverId});else if(a==='incident')openForm('incident',{tripId:id});else if(a==='pod'){t.pod=true;db.tasks.filter(x=>x.linkedId===id&&/POD/.test(x.title)).forEach(x=>x.status='Completed');commit(`POD linked to ${t.number}`,'trip',id)}else if(a==='checkIn')gpsCheckIn();else if(a==='scan')openSlipScanSourceChooser({multiple:true})});document.querySelectorAll('.add-record').forEach(b=>b.onclick=()=>openForm(b.dataset.type));document.querySelectorAll('.advance-trip').forEach(b=>b.onclick=()=>advanceTrip(b.dataset.id));document.querySelectorAll('.open-trip').forEach(b=>b.onclick=()=>openTrip(b.dataset.id));document.querySelectorAll('[data-trip-open]').forEach(c=>c.onclick=e=>{if(e.target.closest('button'))return;openTrip(c.dataset.tripOpen)});document.querySelectorAll('.approval-action').forEach(b=>b.onclick=()=>openApprovalDecision(b.dataset.id,b.dataset.status));document.querySelectorAll('.export').forEach(b=>b.onclick=()=>exportCsv(b.dataset.kind));const s=$('tripSearch');if(s)s.oninput=()=>{tripSearchTerm=s.value;const baseRows=selectedTripRows(),rows=baseRows.filter(t=>tripSearchMatches(t,tripSearchTerm));if($('tripResults'))$('tripResults').innerHTML=tripTable(rows);const cap=document.querySelector('.trip-result-caption');if(cap)cap.textContent=rows.length+' of '+baseRows.length+' journey(s) · '+tripPeriodLabel(baseRows);document.querySelectorAll('#tripResults .open-trip').forEach(b=>b.onclick=e=>{e.stopPropagation();openTrip(b.dataset.id)});document.querySelectorAll('#tripResults [data-trip-open]').forEach(c=>c.onclick=e=>{if(e.target.closest('button'))return;openTrip(c.dataset.tripOpen)})};if(page==='tracking'){setTimeout(drawMap);if($('startPhoneGpsTest'))$('startPhoneGpsTest').onclick=()=>startPhoneGpsTest($('phoneGpsTestLabel')?.value||'Phone GPS Test');if($('stopPhoneGpsTest'))$('stopPhoneGpsTest').onclick=stopPhoneGpsTest;if($('downloadGpsTestApp'))$('downloadGpsTestApp').onclick=downloadAndroidApp;if($('refreshTracking'))$('refreshTracking').onclick=loadTracking;if($('addGeofence'))$('addGeofence').onclick=()=>addGeofence();document.querySelectorAll('.edit-geofence').forEach(b=>b.onclick=()=>{const f=geofences.find(x=>x.id===b.dataset.id);if(f)addGeofence(f)});document.querySelectorAll('.delete-geofence').forEach(b=>b.onclick=()=>deleteGeofence(b.dataset.id,b.dataset.name||'geofence'))}if(page==='notifications'){loadPushDeviceStatus(false);if($('refreshNotifications'))$('refreshNotifications').onclick=async()=>{await Promise.all([loadNotifications(),loadPushDeviceStatus(false)]);render()};if($('enablePush'))$('enablePush').onclick=enablePush;if($('testPhonePush'))$('testPhonePush').onclick=testThisPhonePush;if($('testAlerts'))$('testAlerts').onclick=async()=>{try{await api('/api/notifications/test',{method:'POST'});await loadNotifications()}catch(e){notify(e.message)}};document.querySelectorAll('.read-notification').forEach(b=>b.onclick=async()=>{await api(`/api/notifications/${b.dataset.id}/read`,{method:'PATCH'});await loadNotifications()})}if(page==='rates')wireRates();if($('changeQuickPin'))$('changeQuickPin').onclick=()=>openQuickPinSetup(true);const ss=$('saveSettings');if(ss)ss.onclick=()=>{db.settings.dieselPrice=num($('setDiesel').value);db.settings.vat=num($('setVat').value);db.settings.targetKml=num($('setKml').value);db.settings.standingFee=num($('setStanding').value);db.settings.mdcRatePer100km=num($('setMdcRate').value)||73.30;commit('Operating defaults updated')};const sd=$('saveDriver');if(sd)sd.onclick=()=>{db.settings.currentDriver=$('setDriver').value;commit('Driver identity updated')};if($('downloadBackup'))$('downloadBackup').onclick=backup;if($('restoreBackup'))$('restoreBackup').onclick=()=>{$('fileInput').dataset.kind='restore';$('fileInput').click()};if($('resetData'))$('resetData').onclick=()=>{if(confirm('Reset all demonstration data?')){db=structuredClone(base);commit('Demonstration data reset')}}}
 function connectEvents(){const events=new EventSource(`/api/events?token=${encodeURIComponent(authToken)}`);events.addEventListener('gps',e=>{const p=JSON.parse(e.data),i=liveGps.findIndex(x=>x.vehicleId===p.vehicleId);if(i<0)liveGps.push(p);else liveGps[i]=p;if(page==='tracking')render()});events.addEventListener('notification',e=>{serverNotifications.unshift(JSON.parse(e.data));$('notificationCount').textContent=serverNotifications.filter(x=>!x.read).length;if(page==='notifications')render()});events.addEventListener('driver-upload',e=>{const u=JSON.parse(e.data);driverUploads.unshift(u);driverUploadsLoaded=true;if(page==='driverUploads')render()});events.addEventListener('state',async()=>{try{const state=await api('/api/state');if(state.payload&&Object.keys(state.payload).length){db=merge(state.payload);localStorage.setItem(STORE,JSON.stringify(db));render()}}catch{}});events.onerror=()=>{} }
