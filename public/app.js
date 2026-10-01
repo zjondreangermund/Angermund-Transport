@@ -3357,6 +3357,12 @@ function openSlipScanSourceChooser({onFiles=null,multiple=true,label='slip'}={})
 }
 async function uploadScan(file){if(['admin','manager','dispatcher','finance','workshop'].includes(role))return openAdminSmartSlip(file);const fd=new FormData();fd.append('document',file);try{const job=await api('/api/documents/scan',{method:'POST',body:fd});notify(`Scan started: ${job.id}. Results will require review.`)}catch(e){notify(e.message)}}
 document.addEventListener('click',e=>{const b=e.target.closest('[data-action="expense"],[data-action="tripIssue"],.open-invoice,.pay-invoice');if(!b)return;if(b.classList.contains('open-invoice'))return openInvoice(b.dataset.id);if(b.classList.contains('pay-invoice')){const i=get('invoices',b.dataset.id);return openForm('payment',{invoiceId:i.id,amount:invoiceBalance(i)})}const t=get('trips',b.dataset.trip);openForm(b.dataset.action,{tripId:t.id,truckId:t.truckId,driverId:t.driverId})});
+const ENTRY_IS_NATIVE=/AngermundTransportNative/i.test(navigator.userAgent);
+const ENTRY_IS_PHONE=/Android|iPhone|iPod|Mobile/i.test(navigator.userAgent)||window.matchMedia('(max-width: 900px)').matches;
+const ENTRY_IS_DESKTOP=!ENTRY_IS_NATIVE&&!ENTRY_IS_PHONE;
+if(ENTRY_IS_PHONE)document.documentElement.classList.add('mobile-lite-entry');
+if(ENTRY_IS_NATIVE)document.documentElement.classList.add('native-app-entry');
+
 function showLoginPanel(){
   if($('siteEntry'))$('siteEntry').classList.add('is-exiting');
   if($('loginPanel')){$('loginPanel').classList.remove('hidden');requestAnimationFrame(()=>$('loginPanel').classList.add('is-visible'))}
@@ -3381,6 +3387,7 @@ function entryVisualMotion(i,p,center){
   return{scale:1.04+through*.055,x:local*(i%2===0?-1.4:1.4),y:local*(i===6?1.1:-.7),brightness:.92}
 }
 function paintEntryExperience(p){
+  if(!ENTRY_IS_DESKTOP)return;
   const el=$('siteEntry'),stage=$('siteEntryStage');if(!el||!stage)return;
   p=entryClamp(p);const scene=entrySceneFromProgress(p),weights=ENTRY_SCENE_CENTERS.map((c,i)=>entrySceneWeight(p,c,i)),ranked=[...weights].sort((a,b)=>b-a),blendFog=entryClamp(1-(ranked[0]-ranked[1])*2.65),fogOpacity=.10+blendFog*.64;
   el.dataset.scene=String(scene);
@@ -3411,26 +3418,41 @@ function updateEntryExperience(){
   const el=$('siteEntry');if(!el)return;const max=Math.max(1,el.scrollHeight-el.clientHeight);entryTargetProgress=entryClamp(el.scrollTop/max);if(!entryRaf)entryRaf=requestAnimationFrame(entryAnimationLoop)
 }
 function hydrateEntryScene(i){
+  if(!ENTRY_IS_DESKTOP)return;
   const img=document.querySelector('.entry-visual-'+i+' img');if(!img||img.getAttribute('src')||!img.dataset.src)return;
+  if(img.dataset.srcset){img.srcset=img.dataset.srcset;img.sizes='100vw';img.removeAttribute('data-srcset')}
   img.src=img.dataset.src;img.removeAttribute('data-src')
 }
 function preloadEntryScenes(){
+  if(!ENTRY_IS_DESKTOP)return;
+  hydrateEntryScene(0);
   const load=()=>{
     let i=1;const next=()=>{if(i>=ENTRY_SCENE_URLS.length)return;hydrateEntryScene(i++);setTimeout(next,260)};next()
   };
   if('requestIdleCallback'in window)requestIdleCallback(load,{timeout:900});else setTimeout(load,450)
 }
-function scrollEntryToScene(scene){const el=$('siteEntry');if(!el)return;const max=Math.max(1,el.scrollHeight-el.clientHeight),idx=Math.max(0,Math.min(ENTRY_SCENE_CENTERS.length-1,scene));el.scrollTo({top:max*ENTRY_SCENE_CENTERS[idx],behavior:'smooth'})}
+function scrollEntryToScene(scene){if(!ENTRY_IS_DESKTOP)return;const el=$('siteEntry');if(!el)return;const max=Math.max(1,el.scrollHeight-el.clientHeight),idx=Math.max(0,Math.min(ENTRY_SCENE_CENTERS.length-1,scene));el.scrollTo({top:max*ENTRY_SCENE_CENTERS[idx],behavior:'smooth'})}
 function showSiteEntry(){
-  if($('siteEntry')){$('siteEntry').classList.remove('hidden','is-exiting');$('siteEntry').scrollTop=0;entryTargetProgress=entrySmoothProgress=0;entryLastScene=-1;requestAnimationFrame(()=>paintEntryExperience(0))}
+  if(ENTRY_IS_NATIVE)return showLoginPanel();
+  if($('siteEntry')){
+    $('siteEntry').classList.remove('hidden','is-exiting');$('siteEntry').scrollTop=0;entryTargetProgress=entrySmoothProgress=0;entryLastScene=-1;
+    if(ENTRY_IS_DESKTOP){hydrateEntryScene(0);requestAnimationFrame(()=>paintEntryExperience(0))}
+    else {$('siteEntry').dataset.scene='0';$('siteEntry').dataset.weather='clear'}
+  }
   if($('loginPanel')){$('loginPanel').classList.remove('is-visible');setTimeout(()=>$('loginPanel')?.classList.add('hidden'),260)}
 }
 if($('enterOperations'))$('enterOperations').onclick=showLoginPanel;
 if($('entrySignIn'))$('entrySignIn').onclick=showLoginPanel;
 if($('loginBackToEntry'))$('loginBackToEntry').onclick=showSiteEntry;
-if($('entryExplore'))$('entryExplore').onclick=()=>scrollEntryToScene(1);
+if($('entryExplore'))$('entryExplore').onclick=()=>ENTRY_IS_DESKTOP?scrollEntryToScene(1):showLoginPanel();
 if($('siteEntry')){
-  preloadEntryScenes();$('siteEntry').addEventListener('scroll',updateEntryExperience,{passive:true});$('siteEntry').addEventListener('keydown',e=>{const current=entrySceneFromProgress(entryTargetProgress);if(e.key==='Enter')showLoginPanel();else if(e.key==='ArrowDown'||e.key==='PageDown'){e.preventDefault();scrollEntryToScene(Math.min(ENTRY_SCENE_CENTERS.length-1,current+1))}else if(e.key==='ArrowUp'||e.key==='PageUp'){e.preventDefault();scrollEntryToScene(Math.max(0,current-1))}});requestAnimationFrame(()=>paintEntryExperience(0))
+  if(ENTRY_IS_DESKTOP){
+    hydrateEntryScene(0);preloadEntryScenes();$('siteEntry').addEventListener('scroll',updateEntryExperience,{passive:true});$('siteEntry').addEventListener('keydown',e=>{const current=entrySceneFromProgress(entryTargetProgress);if(e.key==='Enter')showLoginPanel();else if(e.key==='ArrowDown'||e.key==='PageDown'){e.preventDefault();scrollEntryToScene(Math.min(ENTRY_SCENE_CENTERS.length-1,current+1))}else if(e.key==='ArrowUp'||e.key==='PageUp'){e.preventDefault();scrollEntryToScene(Math.max(0,current-1))}});requestAnimationFrame(()=>paintEntryExperience(0))
+  }else if(ENTRY_IS_NATIVE){
+    requestAnimationFrame(showLoginPanel)
+  }else{
+    $('siteEntry').dataset.scene='0';$('siteEntry').dataset.weather='clear'
+  }
 }
 
 function wire(){wireGlobalFind();if(page==='command')wireCommandPeriod();if(page==='dispatch'||page==='trips')wireTripPeriodControls();if(page==='dispatch'){if($('dispatchScanSlip'))$('dispatchScanSlip').onclick=()=>openSlipScanSourceChooser({multiple:false});if($('dispatchScanPod'))$('dispatchScanPod').onclick=chooseTripForPod;document.querySelectorAll('.dispatch-trip-slip').forEach(b=>b.onclick=e=>{e.stopPropagation();openAdminTripSlip(b.dataset.trip)});document.querySelectorAll('.dispatch-trip-pod').forEach(b=>b.onclick=e=>{e.stopPropagation();captureAdminPod(b.dataset.trip)})}if(page==='carrierOrders')wireCarrierOrders();if(page==='shunterRecon')wireShunterRecon();if(page==='loans')wireWorkerLoans();if(page==='imports')wireExcelImports();if(page==='insurance')wireInsuranceAssets();if(page==='monthlyPnl')wireMonthlyPnl();
