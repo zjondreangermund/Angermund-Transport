@@ -1121,3 +1121,9 @@ html.mobile-lite-entry .entry-scroll{color:#fff!important;animation:none!importa
 html.mobile-lite-entry .site-entry-footer #entryWeatherCaption{display:none!important}
 html.native-app-entry .site-entry{display:none!important}
 html.native-app-entry .login-panel{background:linear-gradient(160deg,#071524,#0b2237)!important}
+
+/* Mobile/browser login stays lightweight too */
+html.mobile-lite-entry .login-panel{
+  background:linear-gradient(160deg,rgba(5,19,33,.96),rgba(8,35,56,.94)),url('/angermund-truck.webp') 62% center/cover no-repeat!important
+}
+html.mobile-lite-entry .login-panel .login-card{backdrop-filter:none!important}
