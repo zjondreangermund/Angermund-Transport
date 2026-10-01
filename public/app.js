@@ -206,6 +206,46 @@ function renderNav(){
   };
 }
 function render(){document.body.classList.toggle('driver-mode',role==='driver');document.body.classList.toggle('staff-mode',!['admin','manager','driver'].includes(role));document.body.dataset.role=role;if($('mobileSidebarRole'))$('mobileSidebarRole').textContent=roleLabel();if(!canView(page))page=defaultPageForRole();renderNav();$('pageTitle').textContent={command:'Command Centre',driverPortal:'Driver Workspace',automation:'Smart Document Inbox',knowledge:'Roles & Requirements',driverAccounts:'Drivers & Staff'}[page]||navGroups.flatMap(x=>x[1]).find(x=>x[0]===page)?.[2]||'Operations';$('pageHint').textContent=hints[page]||'';$('roleSelect').value=role;$('quickTripBtn').style.display=['driver','workshop'].includes(role)?'none':'';const driverBar=role==='driver'&&page!=='driverPortal'?'<nav class="driver-bottom"><button class="nav-to" data-page="driverPortal">🚛<span>Trip</span></button><button class="nav-to '+(page==='tasks'?'active':'')+'" data-page="tasks">✓<span>Tasks</span></button><button class="nav-to '+(page==='notifications'?'active':'')+'" data-page="notifications">🔔<span>Alerts</span></button><button type="button" id="driverHelpBtn">👤<span>Help</span></button></nav>':'';const searchBar=!['driver','site_worker'].includes(role)&&!['knowledge','driverPortal'].includes(page)?globalFindBar():'';$('app').innerHTML=searchBar+(views[page]||views.command)()+driverBar;wire()}
+
+function globalFindBar(){
+  return '<div class="global-find"><div class="global-find-box"><span>⌕</span><input id="globalDataSearch" autocomplete="off" placeholder="Quick search trips, workers, trucks, clients, invoices…"><button type="button" id="clearGlobalSearch" class="global-find-clear hidden">×</button></div><div id="globalSearchResults" class="global-search-results hidden"></div></div>'
+}
+function globalSearchEntries(){
+  const rows=[];
+  for(const e of workforce())rows.push({kind:'employee',id:e.id,label:e.name||'Worker',detail:[e.jobTitle||e.category||'Worker','Employee'].filter(Boolean).join(' · ')});
+  for(const t of db.trucks||[])rows.push({kind:'truck',id:t.id,label:[t.fleetName,t.registration].filter(Boolean).join(' · '),detail:[t.make,t.status,'Truck'].filter(Boolean).join(' · ')});
+  for(const t of db.trips||[])rows.push({kind:'trip',id:t.id,label:t.number||t.id,detail:[journeyRouteLabel(t),truck(t.truckId),journeyLoadLabel(t)].filter(Boolean).join(' · ')});
+  for(const x of db.clients||[])rows.push({kind:'client',id:x.id,label:x.name,detail:['Client',x.contact].filter(Boolean).join(' · ')});
+  for(const x of db.routes||[])rows.push({kind:'route',id:x.id,label:x.name,detail:['Route',num(x.distance)?num(x.distance).toLocaleString()+' km':''].filter(Boolean).join(' · ')});
+  for(const x of db.invoices||[])rows.push({kind:'invoice',id:x.id,label:x.number||x.id,detail:[client(x.clientId),money(x.amount),x.status].filter(Boolean).join(' · ')});
+  for(const x of db.loans||[])rows.push({kind:'loan',id:x.id,label:employeeName(x.employeeId),detail:['Worker loan',x.reference||'',money(x.balance)+' balance'].filter(Boolean).join(' · ')});
+  for(const x of db.diesel||[])if(x.supplier)rows.push({kind:'diesel',id:x.id,label:x.supplier,detail:['Diesel',x.slip||'',money(fuelRecordCost(x))].filter(Boolean).join(' · ')});
+  for(const x of db.expenses||[])if(x.supplier||x.category)rows.push({kind:'expense',id:x.id,label:x.supplier||x.category,detail:[x.category,money(x.amount)].filter(Boolean).join(' · ')});
+  return rows
+}
+function openGlobalFindResult(kind,id){
+  if(kind==='trip')return openTrip(id);
+  if(kind==='invoice'){go('invoices');return setTimeout(()=>openInvoice(id),60)}
+  if(kind==='loan'){go('loans');return setTimeout(()=>openEmployeeLoan(id),60)}
+  if(kind==='employee'){if(canView('driverAccounts')){go('driverAccounts');return setTimeout(()=>openEmployeeForm(id),70)}return go('payroll')}
+  if(kind==='truck')return go(canView('fleet')?'fleet':'trips');
+  if(kind==='client'||kind==='route')return go('clients');
+  if(kind==='diesel')return go('diesel');
+  if(kind==='expense')return go(canView('reports')?'reports':'trips')
+}
+function wireGlobalFind(){
+  const input=$('globalDataSearch'),box=$('globalSearchResults'),clear=$('clearGlobalSearch');if(!input||!box)return;
+  const close=()=>{box.classList.add('hidden');box.innerHTML=''};
+  const run=()=>{
+    const q=String(input.value||'').trim().toLowerCase();if(clear)clear.classList.toggle('hidden',!q);if(!q)return close();
+    const hits=globalSearchEntries().map(x=>({...x,hay:(x.label+' '+x.detail).toLowerCase()})).filter(x=>x.hay.includes(q)).sort((a,b)=>(a.label.toLowerCase().startsWith(q)?-1:0)-(b.label.toLowerCase().startsWith(q)?-1:0)||a.label.localeCompare(b.label)).slice(0,10);
+    box.innerHTML=hits.length?hits.map(x=>'<button type="button" class="global-find-result" data-kind="'+esc(x.kind)+'" data-id="'+esc(x.id)+'"><b>'+esc(x.label)+'</b><small>'+esc(x.detail)+'</small></button>').join(''):'<div class="global-find-empty">No matching information</div>';
+    box.classList.remove('hidden');box.querySelectorAll('.global-find-result').forEach(b=>b.onclick=()=>{close();input.value='';if(clear)clear.classList.add('hidden');openGlobalFindResult(b.dataset.kind,b.dataset.id)})
+  };
+  input.oninput=run;input.onfocus=()=>{if(input.value)run()};if(clear)clear.onclick=()=>{input.value='';close();clear.classList.add('hidden');input.focus()};
+  document.addEventListener('pointerdown',e=>{if(!e.target.closest('.global-find'))close()},{once:true})
+}
+
 const kpi=(l,v,s='',tone='')=>`<div class="kpi"><span>${l}</span><strong class="${tone}">${v}</strong><small>${s}</small></div>`;
 const actionKpi=(l,v,s,target,tone='')=>`<button type="button" class="kpi kpi-action command-target" data-target="${esc(target)}"><span>${l}</span><strong class="${tone}">${v}</strong><small>${s}</small><em>Open →</em></button>`;
 function badge(v){const w=/pending|planned|due|expir|unpaid|part|medium|in transit|open/i.test(v),b=/overdue|failed|critical|out of service|rejected/i.test(v);return `<span class="badge ${b?'negative':w?'warn':''}">${esc(v)}</span>`}
