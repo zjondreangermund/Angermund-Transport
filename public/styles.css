@@ -1002,3 +1002,14 @@ body.driver-mode main{padding-bottom:94px!important}
     overflow:visible!important;
   }
 }
+
+
+/* NBL Shunter Recon */
+.shunter-hero{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:18px 20px;margin-bottom:14px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(135deg,rgba(16,52,80,.97),rgba(8,24,39,.98))}
+.shunter-hero .eyebrow{font-size:10px;letter-spacing:.13em;color:#7bc6ff;font-weight:800}.shunter-hero h2{margin:5px 0 6px}.shunter-hero p{margin:0;color:var(--muted);max-width:760px}
+.shunter-actions{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap}.shunter-actions label{display:grid;gap:4px;color:var(--muted);font-size:10px}.shunter-actions input{min-width:150px}
+.shunter-table{min-width:1020px}.shunter-table tfoot th{border-top:2px solid #31506d;background:#081827}.shunter-day-special{background:rgba(255,189,74,.045)}
+.shunter-cell{min-width:245px}.shunter-ref-list{display:flex;gap:5px;flex-wrap:wrap}.shunter-ref{display:inline-flex;align-items:center;border:1px solid var(--line);border-radius:999px;background:#081827;color:#bdd0e2;padding:4px 7px;font-size:10px;line-height:1.1}
+button.shunter-ref{cursor:pointer;font:inherit}.shunter-ref.linked{border-color:rgba(56,217,150,.45);color:#83e1bd}.shunter-ref.duplicate{border-color:rgba(255,100,124,.72);color:#ff9bab;background:rgba(255,100,124,.08)}
+.shunter-cell-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px}.shunter-cell-foot small{color:var(--muted);font-size:9px}
+@media(max-width:760px){.shunter-hero{display:block;padding:14px}.shunter-actions{margin-top:12px;display:grid;grid-template-columns:1fr 1fr}.shunter-actions label{grid-column:1/-1}.shunter-actions input,.shunter-actions button{width:100%}}
