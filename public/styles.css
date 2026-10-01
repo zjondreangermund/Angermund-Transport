@@ -981,3 +981,24 @@ body.driver-mode main{padding-bottom:94px!important}
   .trip-driver-controls{min-width:0;width:100%;display:grid;grid-template-columns:1fr}
   .trip-driver-controls button,.trip-driver-controls select{width:100%}
 }
+
+
+/* Scrollable left navigation */
+@media(min-width:761px){
+  #sidebar{
+    overflow-y:auto!important;
+    overflow-x:hidden!important;
+    overscroll-behavior-y:contain;
+    scrollbar-width:thin;
+    scrollbar-gutter:stable;
+  }
+  #sidebar nav{
+    flex:0 0 auto;
+    min-height:max-content;
+    overflow:visible!important;
+  }
+  #sidebar .nav-more-items.open{
+    max-height:none!important;
+    overflow:visible!important;
+  }
+}
