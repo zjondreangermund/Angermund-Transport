@@ -201,13 +201,22 @@ function renderNav(){
   nav.innerHTML=html;
   nav.querySelectorAll('button[data-page]').forEach(b=>b.onclick=()=>go(b.dataset.page));
   const more=nav.querySelector('.nav-more-toggle');
-  if(more)more.onclick=()=>{
-    const wrap=more.closest('.nav-more-wrap'),items=wrap?.querySelector('.nav-more-items'),open=!more.classList.contains('open');
-    more.classList.toggle('open',open);if(items)items.classList.toggle('open',open);if(wrap)wrap.classList.toggle('open',open);
-    more.setAttribute('aria-expanded',String(open));
-    localStorage.setItem('angermund_nav_more_open',open?'1':'0');
-    if(open&&items)setTimeout(()=>items.querySelector('button.active')?.scrollIntoView({block:'nearest'}),0);
+  const placeMore=()=>{
+    if(!more)return;const wrap=more.closest('.nav-more-wrap'),items=wrap?.querySelector('.nav-more-items');if(!items||!more.classList.contains('open'))return;
+    const r=more.getBoundingClientRect(),gap=7,spaceAbove=Math.max(180,r.top-gap-12);
+    items.style.position='fixed';items.style.left=Math.round(r.left)+'px';items.style.width=Math.round(r.width)+'px';items.style.bottom=Math.round(window.innerHeight-r.top+gap)+'px';items.style.maxHeight=Math.round(Math.min(spaceAbove,window.innerHeight*.72))+'px';
+    items.style.top='auto';items.style.right='auto';items.style.zIndex='1500';
+    setTimeout(()=>items.querySelector('button.active')?.scrollIntoView({block:'nearest'}),0)
   };
+  if(more){
+    more.onclick=()=>{
+      const wrap=more.closest('.nav-more-wrap'),items=wrap?.querySelector('.nav-more-items'),open=!more.classList.contains('open');
+      more.classList.toggle('open',open);if(items)items.classList.toggle('open',open);if(wrap)wrap.classList.toggle('open',open);
+      more.setAttribute('aria-expanded',String(open));localStorage.setItem('angermund_nav_more_open',open?'1':'0');
+      if(open)requestAnimationFrame(placeMore);else if(items){items.removeAttribute('style')}
+    };
+    if(more.classList.contains('open'))requestAnimationFrame(placeMore)
+  }
 }
 function render(){document.body.classList.toggle('driver-mode',role==='driver');document.body.classList.toggle('staff-mode',!['admin','manager','driver'].includes(role));document.body.dataset.role=role;if($('mobileSidebarRole'))$('mobileSidebarRole').textContent=roleLabel();if(!canView(page))page=defaultPageForRole();renderNav();$('pageTitle').textContent={command:'Command Centre',driverPortal:'Driver Workspace',automation:'Smart Document Inbox',knowledge:'Roles & Requirements',driverAccounts:'Drivers & Staff'}[page]||navGroups.flatMap(x=>x[1]).find(x=>x[0]===page)?.[2]||'Operations';$('pageHint').textContent=hints[page]||'';$('roleSelect').value=role;$('quickTripBtn').style.display=['driver','workshop'].includes(role)?'none':'';const driverBar=role==='driver'&&page!=='driverPortal'?'<nav class="driver-bottom"><button class="nav-to" data-page="driverPortal">🚛<span>Trip</span></button><button class="nav-to '+(page==='tasks'?'active':'')+'" data-page="tasks">✓<span>Tasks</span></button><button class="nav-to '+(page==='notifications'?'active':'')+'" data-page="notifications">🔔<span>Alerts</span></button><button type="button" id="driverHelpBtn">👤<span>Help</span></button></nav>':'';const searchBar=!['driver','site_worker'].includes(role)&&!['knowledge','driverPortal'].includes(page)?globalFindBar():'';$('app').innerHTML=searchBar+(views[page]||views.command)()+driverBar;wire()}
 
