@@ -1099,3 +1099,25 @@ button.shunter-ref{cursor:pointer;font:inherit}.shunter-ref.linked{border-color:
   .header-actions #globalInstallAppBtn:before{content:'⬇';font-size:16px}
   .header-actions #notificationBtn{width:40px!important;height:40px!important;min-width:40px!important}
 }
+
+/* Mobile performance: cinematic journey is desktop-only */
+html.mobile-lite-entry .site-entry{overflow:hidden!important;background:#061421!important}
+html.mobile-lite-entry .site-entry-track{height:100dvh!important;min-height:100dvh!important}
+html.mobile-lite-entry .site-entry-stage{position:absolute!important;inset:0!important;height:100dvh!important;min-height:100dvh!important;background:linear-gradient(90deg,rgba(3,13,23,.88),rgba(4,17,29,.48)),url('/angermund-truck.webp') 62% center/cover no-repeat!important}
+html.mobile-lite-entry .entry-visual-stack,
+html.mobile-lite-entry .entry-space-glow,
+html.mobile-lite-entry .entry-fog-world,
+html.mobile-lite-entry .entry-weather,
+html.mobile-lite-entry .entry-depth,
+html.mobile-lite-entry .entry-progress{display:none!important}
+html.mobile-lite-entry .entry-scene{display:none!important}
+html.mobile-lite-entry .entry-scene-0{display:block!important;opacity:1!important;filter:none!important;transform:translate3d(0,-50%,0)!important;pointer-events:auto!important}
+html.mobile-lite-entry .entry-scene-0{color:#fff!important}
+html.mobile-lite-entry .entry-scene-0 h1{font-size:clamp(42px,13vw,66px)!important;color:#fff!important;text-shadow:0 6px 28px rgba(0,0,0,.48)!important}
+html.mobile-lite-entry .entry-scene-0 p{color:rgba(238,247,255,.82)!important;text-shadow:0 2px 12px rgba(0,0,0,.45)!important}
+html.mobile-lite-entry .entry-scene-0 .site-entry-kicker{color:#9ed4ff!important;text-shadow:0 2px 10px rgba(0,0,0,.45)!important}
+html.mobile-lite-entry .site-entry-footer{color:rgba(255,255,255,.68)!important}
+html.mobile-lite-entry .entry-scroll{color:#fff!important;animation:none!important}
+html.mobile-lite-entry .site-entry-footer #entryWeatherCaption{display:none!important}
+html.native-app-entry .site-entry{display:none!important}
+html.native-app-entry .login-panel{background:linear-gradient(160deg,#071524,#0b2237)!important}
