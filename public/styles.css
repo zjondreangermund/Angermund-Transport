@@ -707,3 +707,40 @@ body.driver-mode main{padding-bottom:94px!important}
 .slip-camera-actions{display:flex;gap:8px;justify-content:center;flex-wrap:wrap}
 .slip-camera-actions button{min-width:110px}
 @media(max-width:650px){.slip-camera-view{max-height:58vh}.slip-camera-actions button{flex:1}}
+
+
+/* Quick data search */
+.global-find{position:relative;z-index:80;max-width:760px;margin:0 0 14px}
+.global-find-box{display:grid;grid-template-columns:auto minmax(0,1fr) auto;align-items:center;gap:8px;background:#0b1b2b;border:1px solid var(--line);border-radius:12px;padding:8px 10px;box-shadow:0 10px 28px rgba(0,0,0,.14)}
+.global-find-box>span{font-size:20px;color:var(--muted)}
+.global-find-box input{width:100%;min-width:0;border:0!important;background:transparent!important;padding:5px 2px!important;outline:none;color:var(--text);font-size:14px}
+.global-find-clear{border:0;background:transparent;color:var(--muted);font-size:22px;line-height:1;padding:2px 6px;cursor:pointer}
+.global-search-results{position:absolute;left:0;right:0;top:calc(100% + 6px);max-height:min(58vh,420px);overflow:auto;background:#081827;border:1px solid var(--line);border-radius:12px;box-shadow:0 18px 50px rgba(0,0,0,.4);padding:6px}
+.global-find-result{width:100%;display:flex;flex-direction:column;align-items:flex-start;gap:3px;text-align:left;border:0;border-radius:9px;background:transparent;color:var(--text);padding:10px 11px;cursor:pointer}
+.global-find-result:hover,.global-find-result:focus{background:rgba(52,130,246,.13)}
+.global-find-result b{font-size:13px}.global-find-result small{color:var(--muted);font-size:11px;line-height:1.35}
+.global-find-empty{padding:12px;color:var(--muted);font-size:12px}
+
+/* Excel Import Centre */
+.excel-import-hero{overflow:visible}
+.import-known-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;margin-top:14px}
+.import-known-grid>div{border:1px solid var(--line);background:#081827;border-radius:11px;padding:12px}
+.import-known-grid b,.import-known-grid span{display:block}.import-known-grid span{margin-top:5px;color:var(--muted);font-size:11px;line-height:1.45}
+.import-preview{margin-top:18px}
+.import-reading{display:flex;align-items:center;gap:14px;padding:8px 0}.import-reading>span{font-size:34px}.import-reading h2{margin:0 0 4px}.import-reading p{margin:0;color:var(--muted)}
+.import-kind{display:inline-flex;align-items:center;border:1px solid rgba(56,217,150,.28);background:rgba(56,217,150,.08);color:#a7e9ca;border-radius:999px;padding:6px 9px;font-size:11px;font-weight:700}
+.import-kind.warn{border-color:rgba(255,194,71,.3);background:rgba(255,194,71,.08);color:#ffd489}
+.import-summary-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:14px 0}
+.import-summary-grid>div{border:1px solid var(--line);border-radius:10px;background:#081827;padding:12px}.import-summary-grid span,.import-summary-grid b{display:block}.import-summary-grid span{color:var(--muted);font-size:11px}.import-summary-grid b{font-size:19px;margin-top:5px}
+.loan-search-row{margin:12px 0}.loan-search-row input{width:min(480px,100%)}
+
+/* Keep the dedicated loan and import pages comfortable on phones. */
+@media(max-width:760px){
+  .global-find{max-width:none;margin:0 0 11px}
+  .global-find-box{border-radius:10px;padding:7px 9px}
+  .global-search-results{position:fixed;left:12px;right:12px;top:76px;max-height:52vh}
+  .import-known-grid,.import-summary-grid{grid-template-columns:1fr}
+  .import-preview .toolbar,.excel-import-hero .toolbar{align-items:stretch}
+  .import-preview .form-actions{display:grid;grid-template-columns:1fr}
+  .import-preview .form-actions button{width:100%}
+}
