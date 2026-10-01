@@ -1576,7 +1576,7 @@ function insuranceRowsFromExcel(table){
     if(/motor\s*-?\s*trailers?|\btrailers?\s*:/i.test(joined))section='trailer';
     else if(/motor\s*-?\s*trucks?|\btrucks?\s*:/i.test(joined))section='truck';
     const i=vals.findIndex(v=>/\bN\s*\d{3,6}(?:-\d{1,3})?\s*W\b/i.test(String(v||'')));if(i<0)continue;
-    const registration=(String(vals[i]).match(/\bN\s*\d{3,6}(?:-\d{1,3})?\s*W\b/i)||[])[0]||String(vals[i]),description=vals.slice(Math.max(0,i-2),i).join(' '),nums=vals.slice(i+1).map(excelImportNumber).filter(x=>x>0),insuredValue=nums.find(x=>x>=10000)||0,monthlyPremium=nums.filter(x=>x>0&&(!insuredValue||x<insuredValue)).slice(-1)[0]||0;
+    const registration=(String(vals[i]).match(/\bN\s*\d{3,6}(?:-\d{1,3})?\s*W\b/i)||[])[0]||String(vals[i]),description=vals.slice(Math.max(0,i-2),i).join(' '),moneyCells=vals.slice(i+1).filter(v=>typeof v==='number'||/^\s*(?:N\$|NAD|R)?\s*[\d ,.()-]+\s*$/i.test(String(v||''))),nums=moneyCells.map(excelImportNumber).filter(x=>x>0),insuredValue=nums.find(x=>x>=10000)||0,monthlyPremium=nums.filter(x=>x>0&&(!insuredValue||x<insuredValue)).slice(-1)[0]||0;
     out.push({registration,description,assetType:insuranceAssetType(description,section),cover:vals.find(v=>/comp|comprehensive|third party|tp only/i.test(String(v||'')))||'',chassis:vals.find(v=>/[A-HJ-NPR-Z0-9]{7,20}/i.test(String(v||''))&&!/\bN\s*\d/i.test(String(v||'')))||'',insuredValue,monthlyPremium})
   }
   return out
