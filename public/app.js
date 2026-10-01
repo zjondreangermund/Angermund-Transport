@@ -384,7 +384,7 @@ function dispatch(){
 }
 function tripCard(t){
   const legs=tripLegs(t),active=activeJourneyLeg(t),closed=tripClosed(t),next={1:'Start loading',2:'Depart',3:'Confirm delivery',4:legs.length>1?'Invoice legs':'Create invoice',5:'Close'}[t.stage]||'Open';
-  return `<article class="entity-card"><div class="panel-head"><div><h3>${esc(t.number)}</h3><small class="trip-card-date">${esc(t.date||'—')} · ${esc(monthName(Number(String(t.date||'').slice(5,7))||1,true))} ${esc(String(t.date||'').slice(0,4))}</small></div>${badge(t.status)}</div><p><b>${esc(active?route(active.routeId):journeyRouteLabel(t))}</b></p><p>${legs.length>1?`Leg ${num(active?.sequence)}/${legs.length} · `:''}${esc(active?client(active.clientId):client(t.clientId))} · ${esc(active?.load||t.load||'—')}</p><p>${esc(truck(t.truckId))} / ${esc(driver(t.driverId))}</p><div class="metric-line"><span>Journey income</span><b>${money(journeyIncome(t))}</b></div><div class="metric-line"><span>Contribution</span><b class="${tripProfit(t)>=0?'positive':'negative'}">${money(tripProfit(t))}</b></div>${closed?'':'<button class="primary small advance-trip" data-id="'+esc(t.id)+'">'+esc(next)+'</button> '}<button class="ghost small open-trip" data-id="${esc(t.id)}">Details</button></article>`;
+  return `<article class="entity-card"><div class="panel-head"><div><h3>${esc(t.number)}</h3><small class="trip-card-date">${esc(t.date||'—')} · ${esc(monthName(Number(String(t.date||'').slice(5,7))||1,true))} ${esc(String(t.date||'').slice(0,4))}</small>${t.externalTmsId?'<small class="trip-card-source">TMS '+esc(t.externalTmsId)+' · '+esc(t.carrierStatus||'')+'</small>':''}</div>${badge(t.status)}</div><p><b>${esc(active?route(active.routeId):journeyRouteLabel(t))}</b></p><p>${legs.length>1?`Leg ${num(active?.sequence)}/${legs.length} · `:''}${esc(active?client(active.clientId):client(t.clientId))} · ${esc(active?.load||t.load||'—')}</p><p>${esc(truck(t.truckId))} / ${esc(driver(t.driverId))}</p><div class="metric-line"><span>Journey income</span><b>${money(journeyIncome(t))}</b></div><div class="metric-line"><span>Contribution</span><b class="${tripProfit(t)>=0?'positive':'negative'}">${money(tripProfit(t))}</b></div>${closed?'':'<button class="primary small advance-trip" data-id="'+esc(t.id)+'">'+esc(next)+'</button> '}<button class="ghost small open-trip" data-id="${esc(t.id)}">Details</button></article>`;
 }
 function trips(){
   const periodRows=selectedTripRows(),rows=periodRows.filter(t=>tripSearchMatches(t,tripSearchTerm));
@@ -2528,6 +2528,31 @@ function openDieselReview(recordId){
   $('approveDiesel').onclick=()=>save(true);
   if($('deleteDiesel'))$('deleteDiesel').onclick=async()=>{if(!confirm('Delete this diesel record from '+(t.number||truck(x.truckId)||'company fuel')+'? The archived receipt file will be retained.'))return;try{await api('/api/admin/diesel/'+encodeURIComponent(recordId),{method:'DELETE'});$('modal').classList.add('hidden');await refreshCentralState(false);if(x.tripId)openTrip(x.tripId);else{page='diesel';render()}notify('Diesel record deleted and totals recalculated')}catch(e){notify(e.message)}};
 }
+
+function carrierDateLabel(v){
+  if(!v)return'—';const d=new Date(v);if(Number.isNaN(d.getTime()))return String(v);return d.toLocaleString('en-NA',{year:'numeric',month:'short',day:'2-digit',hour:'2-digit',minute:'2-digit'})
+}
+function carrierOrderPanel(t){
+  const c=t?.carrierDetails;if(!c)return'';
+  const origin=c.origin||{},dest=c.destination||{},refs=[c.shipmentReferences,c.serviceRequests].filter(Boolean).join(' · ');
+  return '<section class="carrier-order-panel"><div class="panel-head"><div><h3>NBL / Carrier order details</h3><p class="muted-copy">Imported directly from the carrier load-status workbook.</p></div><div><span class="badge">'+esc(c.status||t.carrierStatus||'')+'</span> <b>TMS '+esc(c.tmsId||t.externalTmsId||'—')+'</b></div></div>'
+    +'<div class="carrier-detail-grid"><div><span>Order reference</span><b>'+esc(c.orderRef||t.sourceOrderRef||'—')+'</b></div><div><span>PRO / fleet</span><b>'+esc(c.pro||t.carrierPro||'—')+'</b></div><div><span>Shipper</span><b>'+esc(c.shipper||'—')+'</b></div><div><span>Main contact</span><b>'+esc(c.mainContact||'—')+'</b></div>'
+    +'<div><span>Pickup planned</span><b>'+esc(carrierDateLabel(c.pickPlanStart))+'</b></div><div><span>Pickup actual arrival</span><b>'+esc(carrierDateLabel(c.pickActualArrival))+'</b></div><div><span>Pickup actual departure</span><b>'+esc(carrierDateLabel(c.pickActualDeparture))+'</b></div><div><span>Drop planned</span><b>'+esc(carrierDateLabel(c.dropPlanStart))+'</b></div><div><span>Drop actual arrival</span><b>'+esc(carrierDateLabel(c.dropActualArrival))+'</b></div><div><span>Drop actual departure</span><b>'+esc(carrierDateLabel(c.dropActualDeparture))+'</b></div>'
+    +'<div><span>Origin</span><b>'+esc([origin.name,origin.city,origin.country].filter(Boolean).join(' · ')||'—')+'</b></div><div><span>Destination</span><b>'+esc([dest.name,dest.city,dest.country].filter(Boolean).join(' · ')||'—')+'</b></div><div><span>Equipment</span><b>'+esc(c.equipment||'—')+'</b></div><div><span>Trailer(s)</span><b>'+esc((c.trailers||[]).join(' / ')||'—')+'</b></div><div><span>Weight</span><b>'+(num(c.weightKg)>0?(num(c.weightKg)/1000).toFixed(2)+' t':'—')+'</b></div><div><span>Picks / drops</span><b>'+num(c.pickCount)+' / '+num(c.dropCount)+'</b></div><div><span>Tendered</span><b>'+esc(carrierDateLabel(c.tenderDate))+'</b></div><div><span>Accepted</span><b>'+esc(carrierDateLabel(c.acceptDate))+'</b></div></div>'
+    +(c.productDescription&&c.productDescription!=='DEFAULT'?'<details><summary>Products / cargo detail</summary><p>'+esc(c.productDescription)+'</p>'+(c.productCodes?'<small>'+esc(c.productCodes)+'</small>':'')+'</details>':'')
+    +(refs||c.intermediateStops||c.divertedTo||c.divertedFrom?'<div class="carrier-extra"><b>Carrier notes / references</b><p>'+esc([refs,c.intermediateStops?'Intermediate: '+c.intermediateStops:'',c.divertedFrom?'Diverted from '+c.divertedFrom:'',c.divertedTo?'Diverted to '+c.divertedTo:''].filter(Boolean).join(' · '))+'</p></div>':'')
+    +'</section>'
+}
+function tripFuelBenchmark(t,m,contribution){
+  if(!m.ready)return'';
+  const target=num(t.sourceTargetKml)||num(clientPayProfile(t.driverId).minimumBonusKml)||2.0,expected=target>0?m.distance/target:0,variance=expected-m.litres,cash=variance*(m.pricePerL||0),atTarget=contribution-cash,good=variance>=0;
+  return '<section class="trip-fuel-benchmark"><div><span>Fuel benchmark</span><b>'+target.toFixed(2)+' km/L</b><small>'+expected.toFixed(1)+' L expected for '+num(m.distance).toLocaleString()+' km</small></div><div><span>Actual fuel</span><b>'+num(m.litres).toFixed(1)+' L</b><small>'+m.kmPerL.toFixed(2)+' km/L</small></div><div><span>'+(good?'Fuel saved vs target':'Fuel over target')+'</span><b class="'+(good?'positive':'negative')+'">'+Math.abs(variance).toFixed(1)+' L</b><small class="'+(good?'positive':'negative')+'">'+(cash>=0?'+ ':'- ')+money(Math.abs(cash))+' contribution impact</small></div><div><span>Contribution at target usage</span><b>'+money(atTarget)+'</b><small>For comparison only · does not change payroll incentive rules</small></div></section>'
+}
+function importedTollDetail(t){
+  const rows=Array.isArray(t.sourceTollEntries)?t.sourceTollEntries:[];if(!rows.length)return'';
+  return '<details class="source-toll-details"><summary>Imported toll-gate list ('+rows.length+')</summary><div class="toll-chip-list">'+rows.map(x=>'<span>'+esc(x.name||'Toll')+(num(x.amount)?' · '+money(x.amount):'')+'</span>').join('')+'</div></details>'
+}
+
 function openTrip(id){
   const t=get('trips',id),legs=tripLegs(t),fuel=linked('diesel','tripId',id),expenses=linked('expenses','tripId',id),issues=linked('tripIssues','tripId',id),settlement=tripSettlement(t),m=settlement.fuel;
   const dieselSpend=tripDieselSpend(t),expenseSpend=tripRouteExpenseSpend(t),totalCost=tripCost(t),contribution=tripProfit(t);
@@ -2542,6 +2567,7 @@ function openTrip(id){
       <div><span>Journey contribution</span><b class="${contribution>=0?'positive':'negative'}">${money(contribution)}</b></div>
     </div>
     <div class="journey-summary-bar"><div><b>${esc(truck(t.truckId))}</b><span>${esc(trailer(t.trailerId))}</span></div><div><b>${esc(driver(t.driverId))}</b><span>${esc(t.date)}</span></div><div><b>${legs.length} priced leg${legs.length===1?'':'s'}</b><span>${legs.filter(x=>x.invoiceId).length} invoiced</span></div></div>
+    ${carrierOrderPanel(t)}
     <div class="journey-leg-toolbar"><h3>Journey legs / loads</h3><div><button type="button" class="ghost" id="addJourneyLeg">+ Add leg</button><button type="button" class="primary" id="addReturnLeg">↩ Add return / backload</button></div></div>
     <div class="journey-leg-list">${legs.map(x=>journeyLegCard(t,x)).join('')}</div>
     <div class="split-3">
@@ -2549,6 +2575,8 @@ function openTrip(id){
       <div><h3>Driver settlement</h3><p>Trip pay ${money(settlement.tripPay)}<br><small>${journeyDistance(t).toLocaleString()} km × ${money(settlement.tripRate)}/km</small><br>Fuel-saving bonus ${money(settlement.incentive)}<br>Approved expenses ${money(settlement.reimbursable)}<br>Advances ${money(settlement.advances)}<br><b>Amount due ${money(settlement.due)}</b></p></div>
       <div><h3>Invoice control</h3><p>${legs.filter(x=>x.invoiceId).length}/${legs.length} leg invoices created.<br>${legs.length>1?'Each client/load invoices separately.':'Single-load journeys can use the normal invoice flow.'}</p></div>
     </div>
+    ${tripFuelBenchmark(t,m,contribution)}
+    ${importedTollDetail(t)}
     <h3>Diesel slips</h3>
     ${fuel.length?fuel.map(x=>`<div class="approval diesel-review-row"><div class="diesel-review-copy"><b>${num(x.litres).toFixed(2)} L · ${money(fuelRecordCost(x))}</b><small>${esc(x.supplier||'Unknown supplier')} · ${money(x.price)}/L${x.legId?' · Leg '+num(legs.find(l=>l.id===x.legId)?.sequence):''} · Slip: ${esc(x.slip||'—')}</small></div><div class="diesel-review-actions">${x.verified?badge('Verified'):badge('Review')}${['admin','manager','finance'].includes(role)?`<button type="button" class="link-button review-diesel" data-id="${x.id}">${x.verified?'Edit':'Review'}</button>`:''}</div></div>`).join(''):'<div class="empty">No diesel captured</div>'}
     <h3>Route expenses & receipts</h3>
