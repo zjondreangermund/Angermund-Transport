@@ -1013,3 +1013,20 @@ body.driver-mode main{padding-bottom:94px!important}
 button.shunter-ref{cursor:pointer;font:inherit}.shunter-ref.linked{border-color:rgba(56,217,150,.45);color:#83e1bd}.shunter-ref.duplicate{border-color:rgba(255,100,124,.72);color:#ff9bab;background:rgba(255,100,124,.08)}
 .shunter-cell-foot{display:flex;align-items:center;justify-content:space-between;gap:8px;margin-top:6px}.shunter-cell-foot small{color:var(--muted);font-size:9px}
 @media(max-width:760px){.shunter-hero{display:block;padding:14px}.shunter-actions{margin-top:12px;display:grid;grid-template-columns:1fr 1fr}.shunter-actions label{grid-column:1/-1}.shunter-actions input,.shunter-actions button{width:100%}}
+
+
+/* Compact summary-first operational cards */
+.clickable-record{cursor:pointer;transition:transform .14s ease,border-color .14s ease}
+.clickable-record:hover{border-color:#2d78bc;transform:translateY(-1px)}
+.trip-card-compact{min-height:240px}.trip-card-compact .trip-summary-route{margin:16px 0 10px;font-size:13px;line-height:1.45}.trip-summary-line{display:flex;flex-direction:column;gap:4px;color:#a9bfd2;font-size:11px;margin-bottom:10px}.trip-card-compact .fleet-card-actions{margin-top:auto}
+.fleet-card-compact{min-height:330px}.fleet-card-compact .metric-line{padding:9px 0}.fleet-card-compact .fleet-card-actions{margin-top:auto}
+.detail-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px;margin:4px 0 16px}.detail-grid>div{border:1px solid var(--line);background:#081827;border-radius:10px;padding:10px 12px}.detail-grid span,.detail-grid b{display:block}.detail-grid span{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.05em}.detail-grid b{margin-top:4px;overflow-wrap:anywhere}
+@media(max-width:620px){.detail-grid{grid-template-columns:1fr}.trip-card-compact,.fleet-card-compact{min-height:0}}
+
+/* Readable workbook preview */
+.import-sheet-strip{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin:12px 0}.import-sheet-strip>b{font-size:11px;color:#dcecff}.import-sheet-strip span{border:1px solid var(--line);background:#081827;border-radius:999px;padding:5px 8px;font-size:10px;color:#9eb6cb}
+.import-workbook-table{max-height:52vh;overflow:auto;border:1px solid var(--line);border-radius:11px}.import-workbook-table table{min-width:max-content}.import-workbook-table thead th{position:sticky;top:0;z-index:2;background:#102941}.import-workbook-table td{max-width:300px;white-space:normal;overflow-wrap:anywhere;vertical-align:top}
+
+/* Universal export */
+.export-choice-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.export-choice{display:flex;flex-direction:column;gap:7px;min-height:130px;text-align:left;border:1px solid var(--line);border-radius:14px;background:#0a1c2d;color:var(--text);padding:17px;cursor:pointer}.export-choice:hover{border-color:#318cff;background:#0d2740}.export-choice b{font-size:15px}.export-choice span{font-size:11px;line-height:1.5;color:var(--muted)}
+@media(max-width:720px){.export-choice-grid{grid-template-columns:1fr}.header-actions #globalExportBtn{display:none}}
