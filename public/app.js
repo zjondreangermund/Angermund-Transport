@@ -3357,8 +3357,12 @@ function openSlipScanSourceChooser({onFiles=null,multiple=true,label='slip'}={})
 }
 async function uploadScan(file){if(['admin','manager','dispatcher','finance','workshop'].includes(role))return openAdminSmartSlip(file);const fd=new FormData();fd.append('document',file);try{const job=await api('/api/documents/scan',{method:'POST',body:fd});notify(`Scan started: ${job.id}. Results will require review.`)}catch(e){notify(e.message)}}
 document.addEventListener('click',e=>{const b=e.target.closest('[data-action="expense"],[data-action="tripIssue"],.open-invoice,.pay-invoice');if(!b)return;if(b.classList.contains('open-invoice'))return openInvoice(b.dataset.id);if(b.classList.contains('pay-invoice')){const i=get('invoices',b.dataset.id);return openForm('payment',{invoiceId:i.id,amount:invoiceBalance(i)})}const t=get('trips',b.dataset.trip);openForm(b.dataset.action,{tripId:t.id,truckId:t.truckId,driverId:t.driverId})});
-const ENTRY_IS_NATIVE=/AngermundTransportNative/i.test(navigator.userAgent);
-const ENTRY_IS_PHONE=/Android|iPhone|iPod|Mobile/i.test(navigator.userAgent)||window.matchMedia('(max-width: 900px)').matches;
+const ENTRY_UA=navigator.userAgent||'';
+const ENTRY_IS_NATIVE=runningInsideAndroidApp();
+const ENTRY_IS_PHONE=/Android|iPhone|iPad|iPod|Mobile|IEMobile|Opera Mini/i.test(ENTRY_UA)
+  ||(navigator.maxTouchPoints>1&&/Macintosh/i.test(ENTRY_UA))
+  ||window.matchMedia('(pointer: coarse)').matches
+  ||window.matchMedia('(max-width: 900px)').matches;
 const ENTRY_IS_DESKTOP=!ENTRY_IS_NATIVE&&!ENTRY_IS_PHONE;
 if(ENTRY_IS_PHONE)document.documentElement.classList.add('mobile-lite-entry');
 if(ENTRY_IS_NATIVE)document.documentElement.classList.add('native-app-entry');
