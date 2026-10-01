@@ -1029,4 +1029,4 @@ button.shunter-ref{cursor:pointer;font:inherit}.shunter-ref.linked{border-color:
 
 /* Universal export */
 .export-choice-grid{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.export-choice{display:flex;flex-direction:column;gap:7px;min-height:130px;text-align:left;border:1px solid var(--line);border-radius:14px;background:#0a1c2d;color:var(--text);padding:17px;cursor:pointer}.export-choice:hover{border-color:#318cff;background:#0d2740}.export-choice b{font-size:15px}.export-choice span{font-size:11px;line-height:1.5;color:var(--muted)}
-@media(max-width:720px){.export-choice-grid{grid-template-columns:1fr}.header-actions #globalExportBtn{display:none}}
+@media(max-width:720px){.export-choice-grid{grid-template-columns:1fr}.header-actions #globalExportBtn{font-size:0!important;min-width:38px!important;width:38px!important;padding:0!important}.header-actions #globalExportBtn:before{content:'⇩';font-size:15px}}
