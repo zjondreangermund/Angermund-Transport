@@ -833,3 +833,22 @@ body.driver-mode main{padding-bottom:94px!important}
 .carrier-order-controls>input[type="month"]{width:170px}
 .carrier-order-controls>input[type="text"],.carrier-order-controls>input:not([type]){min-width:280px;flex:1}
 @media(max-width:650px){.carrier-order-controls{display:grid;grid-template-columns:1fr}.carrier-order-controls>input[type="month"],.carrier-order-controls>input{width:100%;min-width:0}}
+
+
+/* Command Centre month/year filter */
+.command-period-panel{margin:0 0 12px;border:1px solid var(--line);border-radius:13px;background:linear-gradient(180deg,rgba(10,31,49,.97),rgba(7,23,37,.97));padding:11px 13px}
+.command-period-main{display:flex;align-items:center;justify-content:space-between;gap:16px;flex-wrap:wrap}
+.command-period-main>div:first-child{display:flex;flex-direction:column;gap:3px;min-width:260px;flex:1}
+.command-period-main .eyebrow{font-size:9px;letter-spacing:.12em;color:#73b9f8;font-weight:800}
+.command-period-main b{font-size:15px}.command-period-main small{font-size:10px;color:var(--muted);line-height:1.4;max-width:760px}
+.command-period-selectors{display:flex;align-items:flex-end;gap:7px;flex-wrap:wrap}
+.command-period-selectors label{display:flex;flex-direction:column;gap:4px;margin:0}
+.command-period-selectors label span{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}
+.command-period-selectors select{min-width:120px;padding:7px 28px 7px 8px}
+.command-period-selectors button{height:34px}
+@media(max-width:700px){
+  .command-period-main{display:block}
+  .command-period-selectors{display:grid;grid-template-columns:1fr 1fr;margin-top:10px}
+  .command-period-selectors select{width:100%;min-width:0}
+  .command-period-selectors button{grid-column:1/-1;width:100%}
+}
