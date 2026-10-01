@@ -1543,6 +1543,52 @@ function payroll(){
     +'<section class="grid-2" style="margin-top:18px">'+dataTable('Driver advances','advance',['Date','Driver','Trip','Type','Amount','Status'],db.advances,x=>[x.date,driver(x.driverId),get('trips',x.tripId).number||'—',x.type,money(x.amount),x.status])+dataTable('Approved/review expenses','expense',['Date','Trip','Category','Driver','Amount','Status'],db.expenses,x=>[x.date,get('trips',x.tripId).number||'—',x.category,driver(x.driverId),money(x.amount),x.status])+'</section>';
 }
 
+
+function excelImportTypeLabel(kind){return {'nbl-carrier':'NBL carrier loads','insurance':'Insurance / fleet summary',generic:'Unmapped workbook'}[kind]||String(kind||'Workbook')}
+function excelImportPreviewTable(p){
+  const rows=Array.isArray(p?.sample)?p.sample:[];
+  if(p?.kind==='nbl-carrier')return '<div class="table-wrap"><table><thead><tr><th>TMS ID</th><th>Order</th><th>Truck</th><th>Pick date</th><th>Origin</th><th>Destination</th><th>Rate</th></tr></thead><tbody>'+rows.map(x=>'<tr><td><b>'+esc(x.tmsId||'')+'</b></td><td>'+esc(x.orderRef||'')+'</td><td>'+esc(x.pro||'Unassigned')+'</td><td>'+esc(x.pickDate||'—')+'</td><td>'+esc(x.origin||'')+'</td><td>'+esc(x.destination||'')+'</td><td>'+(num(x.rate)>1?money(x.rate):'<span class="badge warn">Rate pending</span>')+'</td></tr>').join('')+'</tbody></table></div>';
+  if(p?.kind==='insurance')return '<div class="table-wrap"><table><thead><tr><th>Registration</th><th>Description</th><th>Cover</th><th>Insured value</th><th>Monthly premium</th></tr></thead><tbody>'+rows.map(x=>'<tr><td><b>'+esc(x.registration||'')+'</b></td><td>'+esc(x.description||'')+'</td><td>'+esc(x.cover||'')+'</td><td>'+money(x.insuredValue)+'</td><td>'+money(x.monthlyPremium)+'</td></tr>').join('')+'</tbody></table></div>';
+  const headers=(p?.headers||[]).slice(0,7);return '<div class="table-wrap"><table><thead><tr>'+headers.map(h=>'<th>'+esc(h)+'</th>').join('')+'</tr></thead><tbody>'+rows.slice(0,8).map(r=>'<tr>'+headers.map(h=>'<td>'+esc(r?.[h]??'')+'</td>').join('')+'</tr>').join('')+'</tbody></table></div>'
+}
+function excelImports(){
+  const p=excelImportPreview,history=(db.importHistory||[]).slice().sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+  const preview=p?.loading?'<section class="panel import-preview"><div class="import-reading"><span>⇩</span><div><h2>Reading '+esc(p.filename||'workbook')+'…</h2><p>Checking sheets, columns and existing records. Nothing is being changed yet.</p></div></div></section>':p?'<section class="panel import-preview"><div class="toolbar"><div><h2>Preview · '+esc(p.filename||'Workbook')+'</h2><p class="muted-copy">'+esc(excelImportTypeLabel(p.kind))+' · '+esc(p.sheet||'')+' · '+num(p.summary?.rows||p.rowCount)+' row(s)</p></div><span class="import-kind '+(p.kind==='generic'?'warn':'good')+'">'+esc(excelImportTypeLabel(p.kind))+'</span></div>'
+    +(p.kind==='nbl-carrier'?'<div class="import-summary-grid"><div><span>Loads found</span><b>'+num(p.summary?.rows)+'</b></div><div><span>Rates pending</span><b>'+num(p.summary?.pendingRates)+'</b></div><div><span>No PRO/truck value</span><b>'+num(p.summary?.unassigned)+'</b></div></div>':p.kind==='insurance'?'<div class="import-summary-grid"><div><span>Assets found</span><b>'+num(p.summary?.rows)+'</b></div><div><span>Total insured in sheet</span><b>'+money(p.summary?.totalInsured)+'</b></div><div><span>Monthly premiums in rows</span><b>'+money(p.summary?.monthlyPremium)+'</b></div></div>':'')
+    +(p.warnings||[]).map(x=>'<div class="notice"><b>Review:</b> '+esc(x)+'</div>').join('')
+    +excelImportPreviewTable(p)
+    +'<div class="form-actions"><button type="button" class="ghost" id="chooseAnotherExcel">Choose another file</button>'+(p.kind!=='generic'?'<button type="button" class="primary" id="confirmExcelImport">✓ Import & place automatically</button>':'<button type="button" class="primary" disabled>Mapping required before import</button>')+'</div></section>':'';
+  const hist=history.length?history.map(h=>'<tr><td>'+esc(String(h.date||'').replace('T',' ').slice(0,16))+'</td><td><b>'+esc(h.filename||'')+'</b><br><small>'+esc(excelImportTypeLabel(h.type))+(h.sheet?' · '+esc(h.sheet):'')+'</small></td><td>'+num(h.created)+'</td><td>'+num(h.updated)+'</td><td>'+num(h.skipped)+'</td><td>'+esc(h.status||'Imported')+'</td><td>'+(h.sourceReceiptId?'<button type="button" class="link-button import-source" data-id="'+esc(h.sourceReceiptId)+'">Source file</button> ':'')+(h.canUndo&&h.status==='Imported'?'<button type="button" class="link-button undo-import" data-id="'+esc(h.id)+'">Undo</button>':'')+'</td></tr>').join(''):'<tr><td colspan="7" class="empty">No Excel imports yet.</td></tr>';
+  return '<section class="panel excel-import-hero"><div class="toolbar"><div><h2>Excel Import Centre</h2><p class="muted-copy">Upload the new Excel file you receive. The app reads it, shows you what it found, then puts recognised records into the correct sections.</p></div><button type="button" class="primary" id="chooseExcelImport">⇩ Import Excel</button><input id="excelImportInput" type="file" accept=".xlsx,.xls,.xlsm,.csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden></div>'
+    +'<div class="import-known-grid"><div><b>NBL carrier load status</b><span>Trips / loads · routes · truck match · trailers · rates</span></div><div><b>Insurance / Santam-style summary</b><span>Fleet insurance · trailers · insured values · premiums · company policy</span></div><div><b>Duplicate protection</b><span>TMS IDs and registrations update existing records instead of creating duplicates.</span></div><div><b>Preview first</b><span>No workbook changes the database until you confirm the preview.</span></div></div></section>'
+    +preview
+    +'<section class="panel" style="margin-top:18px"><div class="panel-head"><div><h2>Import history</h2><p class="muted-copy">The original workbook is archived with the import. Only the most recent safe import can be undone.</p></div></div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Workbook</th><th>Created</th><th>Updated</th><th>Skipped</th><th>Status</th><th></th></tr></thead><tbody>'+hist+'</tbody></table></div></section>'
+}
+async function previewExcelWorkbook(file){
+  if(!file)return;excelImportFile=file;excelImportPreview={loading:true,filename:file.name};render();
+  try{const fd=new FormData();fd.append('workbook',file,file.name);excelImportPreview=await api('/api/imports/excel/preview',{method:'POST',body:fd});render()}
+  catch(e){excelImportPreview=null;render();notify(e.message)}
+}
+async function applyExcelWorkbook(){
+  if(!excelImportFile||!excelImportPreview||excelImportPreview.kind==='generic')return notify('Choose a recognised workbook first');
+  if(!confirm('Import '+excelImportPreview.filename+' and place the recognised records into Angermund Transport?'))return;
+  try{const fd=new FormData();fd.append('workbook',excelImportFile,excelImportFile.name);const r=await api('/api/imports/excel/apply',{method:'POST',body:fd});excelImportFile=null;excelImportPreview=null;await refreshCentralState(false);page='imports';render();notify('Excel imported · '+num(r.created)+' created · '+num(r.updated)+' updated · '+num(r.skipped)+' skipped')}
+  catch(e){notify(e.message)}
+}
+async function undoExcelWorkbook(id){
+  if(!confirm('Undo the most recent Excel import and restore the records to how they were before it?'))return;
+  try{await api('/api/imports/excel/'+encodeURIComponent(id)+'/undo',{method:'POST'});await refreshCentralState(false);page='imports';render();notify('Excel import undone')}
+  catch(e){notify(e.message)}
+}
+function wireExcelImports(){
+  if($('chooseExcelImport'))$('chooseExcelImport').onclick=()=>$('excelImportInput').click();
+  if($('excelImportInput'))$('excelImportInput').onchange=e=>{const file=e.target.files?.[0];e.target.value='';if(file)previewExcelWorkbook(file)};
+  if($('chooseAnotherExcel'))$('chooseAnotherExcel').onclick=()=>{$('excelImportInput')?.click()};
+  if($('confirmExcelImport'))$('confirmExcelImport').onclick=applyExcelWorkbook;
+  document.querySelectorAll('.import-source').forEach(b=>b.onclick=()=>openCompanyReceiptFile(b.dataset.id));
+  document.querySelectorAll('.undo-import').forEach(b=>b.onclick=()=>undoExcelWorkbook(b.dataset.id))
+}
+
 function workerLoanTable(rows){
   return '<div class="table-wrap"><table><thead><tr><th>Worker</th><th>Loan date</th><th>Reference</th><th>Original</th><th>Outstanding</th><th>Monthly deduction</th><th>Starts</th><th>Status</th><th></th></tr></thead><tbody>'
     +(rows.length?rows.map(l=>'<tr><td><b>'+esc(employeeName(l.employeeId))+'</b></td><td>'+esc(l.date||'—')+'</td><td>'+esc(l.reference||'—')+'</td><td>'+money(l.amount)+'</td><td><b>'+money(l.balance)+'</b></td><td>'+money(l.monthlyDeduction)+'</td><td>'+esc(l.startPeriod||'—')+'</td><td>'+badge(l.status||'Active')+'</td><td><button type="button" class="link-button edit-loan" data-id="'+esc(l.id)+'">Open</button></td></tr>').join(''):'<tr><td colspan="9" class="empty">No worker loans recorded.</td></tr>')
