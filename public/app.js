@@ -1542,6 +1542,25 @@ function payroll(){
     +'<section class="panel" style="margin-top:18px"><div class="panel-head"><div><h2>Driver payroll setup</h2><p class="muted-copy">Set basic salary and optionally override the trip rate. Fuel savings are paid separately.</p></div></div><div class="table-wrap"><table><thead><tr><th>Driver</th><th>Tax number</th><th>Basic</th><th>Trip rate/km</th><th>Fuel target</th><th>PAYE threshold</th><th>PAYE</th><th>SSC</th><th>OT rate</th><th>Month-end</th><th></th></tr></thead><tbody>'+profileRows+'</tbody></table></div></section>'    +'<section class="panel" style="margin-top:18px"><div class="toolbar"><div><h2>Employee loans</h2><p class="muted-copy">Track loans given to workers and deduct the agreed instalment automatically from payroll until the balance reaches zero.</p></div><button class="primary" id="addEmployeeLoan">+ Add loan</button></div><div class="table-wrap"><table><thead><tr><th>Employee</th><th>Date</th><th>Reference</th><th>Original</th><th>Balance</th><th>Monthly</th><th>Status</th><th></th></tr></thead><tbody>'+loanRows+'</tbody></table></div></section>'
     +'<section class="grid-2" style="margin-top:18px">'+dataTable('Driver advances','advance',['Date','Driver','Trip','Type','Amount','Status'],db.advances,x=>[x.date,driver(x.driverId),get('trips',x.tripId).number||'—',x.type,money(x.amount),x.status])+dataTable('Approved/review expenses','expense',['Date','Trip','Category','Driver','Amount','Status'],db.expenses,x=>[x.date,get('trips',x.tripId).number||'—',x.category,driver(x.driverId),money(x.amount),x.status])+'</section>';
 }
+
+function workerLoanTable(rows){
+  return '<div class="table-wrap"><table><thead><tr><th>Worker</th><th>Loan date</th><th>Reference</th><th>Original</th><th>Outstanding</th><th>Monthly deduction</th><th>Starts</th><th>Status</th><th></th></tr></thead><tbody>'
+    +(rows.length?rows.map(l=>'<tr><td><b>'+esc(employeeName(l.employeeId))+'</b></td><td>'+esc(l.date||'—')+'</td><td>'+esc(l.reference||'—')+'</td><td>'+money(l.amount)+'</td><td><b>'+money(l.balance)+'</b></td><td>'+money(l.monthlyDeduction)+'</td><td>'+esc(l.startPeriod||'—')+'</td><td>'+badge(l.status||'Active')+'</td><td><button type="button" class="link-button edit-loan" data-id="'+esc(l.id)+'">Open</button></td></tr>').join(''):'<tr><td colspan="9" class="empty">No worker loans recorded.</td></tr>')
+    +'</tbody></table></div>'
+}
+function workerLoans(){
+  const rows=(db.loans||[]).slice().sort((a,b)=>(a.status==='Active'?0:1)-(b.status==='Active'?0:1)||String(b.date||'').localeCompare(String(a.date||''))),active=rows.filter(x=>x.status==='Active'&&num(x.balance)>0),outstanding=sum(active,x=>x.balance),monthly=sum(active,x=>Math.min(num(x.balance),num(x.monthlyDeduction)));
+  return '<section class="kpis">'+kpi('Active worker loans',active.length,'Currently deducting through payroll')+kpi('Outstanding',money(outstanding),'Balance still owed')+kpi('Scheduled next payroll',money(monthly),'Maximum based on active instalments')+kpi('Paid / closed',rows.filter(x=>['Paid','Cancelled'].includes(x.status)).length,'Historical loans retained')+'</section>'
+    +'<section class="panel"><div class="toolbar"><div><h2>Worker loans</h2><p class="muted-copy">Record the loan here when a worker takes money. The agreed instalment then appears automatically on the worker\'s payslip until the balance reaches zero.</p></div><button type="button" class="primary" id="addWorkerLoan">+ Record new loan</button></div>'
+    +'<div class="notice"><b>Where to enter it:</b> Worker Loans → <b>Record new loan</b>. Select the worker, loan date, amount and monthly deduction. Repayments only reduce the balance when the payslip is marked <b>Paid</b>.</div>'
+    +'<div class="loan-search-row"><input id="workerLoanSearch" autocomplete="off" placeholder="Search worker, reference or status…"></div><div id="workerLoanResults">'+workerLoanTable(rows)+'</div></section>'
+}
+function wireWorkerLoans(){
+  if($('addWorkerLoan'))$('addWorkerLoan').onclick=()=>openEmployeeLoan();
+  document.querySelectorAll('.edit-loan').forEach(b=>b.onclick=()=>openEmployeeLoan(b.dataset.id));
+  const s=$('workerLoanSearch');if(s)s.oninput=()=>{const q=s.value.trim().toLowerCase(),rows=(db.loans||[]).filter(l=>[employeeName(l.employeeId),l.reference,l.status,l.notes].join(' ').toLowerCase().includes(q)).sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));$('workerLoanResults').innerHTML=workerLoanTable(rows);document.querySelectorAll('#workerLoanResults .edit-loan').forEach(b=>b.onclick=()=>openEmployeeLoan(b.dataset.id))}
+}
+
 function openPayrollProfile(driverId){
   const d=employeeRecord(driverId),p=clientPayProfile(driverId);
   $('modalTitle').textContent='Payroll setup · '+d.name;
