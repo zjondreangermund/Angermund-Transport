@@ -27,6 +27,7 @@ import android.webkit.GeolocationPermissions;
 import android.webkit.JavascriptInterface;
 import android.webkit.PermissionRequest;
 import android.webkit.ValueCallback;
+import android.webkit.WebBackForwardList;
 import android.webkit.WebChromeClient;
 import android.webkit.WebSettings;
 import android.webkit.WebView;
@@ -108,14 +109,28 @@ public class MainActivity extends Activity {
         settings.setGeolocationEnabled(true);
         settings.setAllowFileAccess(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " AngermundTransportNative/1.3.4");
+        settings.setUserAgentString(settings.getUserAgentString() + " AngermundTransportNative/1.3.5");
 
         webView.addJavascriptInterface(new NativeBridge(), "AngermundNative");
         webView.setWebViewClient(new WebViewClient() {
             @Override
+            public void onPageCommitVisible(WebView view, String url) {
+                super.onPageCommitVisible(view, url);
+                view.postDelayed(MainActivity.this::hideNativeSplash, 120);
+            }
+
+            @Override
             public void onPageFinished(WebView view, String url) {
                 super.onPageFinished(view, url);
-                view.postDelayed(MainActivity.this::hideNativeSplash, 350);
+                view.postDelayed(MainActivity.this::hideNativeSplash, 120);
+            }
+
+            @Override
+            public void onReceivedError(WebView view, android.webkit.WebResourceRequest request, android.webkit.WebResourceError error) {
+                super.onReceivedError(view, request, error);
+                if (request == null || request.isForMainFrame()) {
+                    view.post(MainActivity.this::hideNativeSplash);
+                }
             }
         });
         webView.setWebChromeClient(new WebChromeClient() {
@@ -156,7 +171,14 @@ public class MainActivity extends Activity {
         });
 
         if (savedInstanceState == null) webView.loadUrl(START_URL);
-        else webView.restoreState(savedInstanceState);
+        else {
+            WebBackForwardList restored = webView.restoreState(savedInstanceState);
+            if (restored == null) webView.loadUrl(START_URL);
+        }
+
+        // Never let a slow remote image, stale WebView state or interrupted navigation trap
+        // the native app behind the splash screen.
+        webView.postDelayed(this::hideNativeSplash, 3200);
 
         requestNotificationPermission();
         startStoredServiceIfEnabled();
