@@ -774,3 +774,34 @@ body.driver-mode main{padding-bottom:94px!important}
   .period-switch{width:100%}.period-switch button{flex:1;padding:8px 6px}
   .trip-year-select{width:100%;justify-content:space-between}.trip-year-select select{min-width:120px}
 }
+
+
+/* Insurance & company assets */
+.insurance-hero{display:flex;align-items:flex-start;justify-content:space-between;gap:18px;padding:18px 20px;margin-bottom:14px;border:1px solid var(--line);border-radius:14px;background:linear-gradient(135deg,rgba(13,37,58,.97),rgba(8,24,39,.98));box-shadow:0 12px 30px rgba(0,0,0,.14)}
+.insurance-hero .eyebrow{font-size:10px;letter-spacing:.13em;color:#7bbdfb;font-weight:800}
+.insurance-hero h2{margin:5px 0 6px;font-size:22px}
+.insurance-hero p{margin:0;color:var(--muted);max-width:760px;line-height:1.5}
+.insurance-hero-actions{display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end}
+.insurance-summary-grid{display:grid;grid-template-columns:minmax(0,1.2fr) minmax(300px,.8fr);gap:14px;margin-top:14px}
+.insurance-facts{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:9px}
+.insurance-facts>div{border:1px solid var(--line);background:#081827;border-radius:9px;padding:10px}
+.insurance-facts span,.insurance-facts b{display:block}.insurance-facts span{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}.insurance-facts b{margin-top:4px;font-size:13px}
+.insurance-cover-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:11px;margin-top:12px}
+.insurance-cover-card{border:1px solid var(--line);border-radius:11px;background:#081827;padding:12px}
+.insurance-cover-card .panel-head{margin-bottom:8px}.insurance-cover-card .panel-head span{font-size:10px;color:var(--muted)}
+.insurance-cover-items{display:grid;gap:5px}
+.insurance-cover-items>div{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:4px 10px;padding:7px 0;border-bottom:1px solid rgba(255,255,255,.06)}
+.insurance-cover-items>div:last-child{border-bottom:0}.insurance-cover-items span{font-size:11px}.insurance-cover-items b{font-size:11px}.insurance-cover-items small{grid-column:1/-1;color:var(--muted);font-size:9px}
+.insurance-cover-card details{margin-top:8px;color:var(--muted);font-size:10px}.insurance-cover-card summary{cursor:pointer;color:#9fc9ed}.insurance-cover-card ul{margin:7px 0 0;padding-left:17px}.insurance-cover-card li{margin:3px 0;line-height:1.4}
+.insured-driver-list{display:grid;gap:6px;margin-top:8px}
+.insured-driver{display:flex;justify-content:space-between;gap:10px;border:1px solid var(--line);border-radius:8px;padding:8px 10px;background:#081827;font-size:11px}.insured-driver b{font-size:10px}.insured-driver.matched b{color:#60d5a8}.insured-driver.unmatched b{color:#f0b767}
+.current-policy-row{background:rgba(32,147,103,.06)}
+.empty.compact{padding:10px}
+@media(max-width:900px){
+  .insurance-hero{display:block}.insurance-hero-actions{justify-content:flex-start;margin-top:12px}
+  .insurance-summary-grid,.insurance-cover-grid{grid-template-columns:1fr}
+}
+@media(max-width:560px){
+  .insurance-hero{padding:14px}.insurance-facts{grid-template-columns:1fr}
+  .insurance-hero-actions button{flex:1 1 auto}
+}
