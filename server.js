@@ -2415,6 +2415,11 @@ function serverJourneyNamibiaKm(state,t){
   const legs=ensureTripLegs(state,t),routes=state.routes||[];
   return Number(legs.reduce((total,l)=>{const r=routes.find(x=>x.id===l.routeId)||{};if(serverRouteMdcRule(r)==='Not applicable')return total;const distance=num(l.distance)||num(r.distance),km=r.crossBorder?(num(l.namibiaKm)||num(r.namibiaKm)):(num(l.namibiaKm)||distance);return total+Math.max(0,km)},0).toFixed(2))
 }
+function serverMdcRequirement(state,t){
+  const legs=ensureTripLegs(state,t),routes=state.routes||[],requiredByRule=legs.some(l=>serverRouteMdcRule(routes.find(r=>r.id===l.routeId))==='Required'),km=serverJourneyNamibiaKm(state,t),required=requiredByRule||km>0,record=(state.expenses||[]).find(x=>x.tripId===t.id&&(x.mdc===true||/mass distance charge/i.test(String(x.category||''))))||null,proof=Boolean(record&&((record.receiptUploadIds||[]).filter(Boolean).length||record.receiptUploadId||record.mdcDocumentId)),mismatch=Boolean(record&&km>0&&Math.abs(num(record.mdcKm)-km)>.5);
+  return{required,km,record,proof,mismatch,ready:!required||(km>0&&Boolean(record)&&proof&&!mismatch)}
+}
+function serverMdcMissingMessage(m){if(!m.required||m.ready)return'';if(m.km<=0)return'Set the Namibian route kilometres for MDC';if(!m.record)return'Record the MDC for this trip';if(!m.proof)return'Attach the MDC proof/slip';if(m.mismatch)return'Update the MDC because the Namibia kilometres changed';return'MDC requirement incomplete'}
 app.post('/api/mdc/record',auth,roles('admin','manager','dispatcher','finance'),async(req,res)=>{
   try{
     const body=req.body&&typeof req.body==='object'?req.body:{},tripId=String(body.tripId||''),reference=String(body.reference||'');
@@ -2598,6 +2603,7 @@ function collectNblInvoiceLines(state,nbl,start,end){
   const lines=[],excluded=[];
   for(const t of state.trips||[]){
     const billDate=tripInvoiceDate(t);if(!billDate||billDate<start||billDate>end)continue;
+    const mdc=serverMdcRequirement(state,t);if(mdc.required&&!mdc.ready){excluded.push({tripId:t.id,tripNumber:t.number||t.id,reason:serverMdcMissingMessage(mdc)});continue}
     const legs=ensureTripLegs(state,t);
     for(const leg of legs){
       if(leg.clientId!==nbl.id)continue;
@@ -2657,6 +2663,8 @@ app.post('/api/admin/trips/:tripId/legs/:legId/invoice',auth,roles('admin','mana
       state.invoices??=[];
       const t=(state.trips||[]).find(x=>x.id===req.params.tripId);if(!t){const e=Error('Trip not found');e.status=404;throw e}
       const invoiceLegs=ensureTripLegs(state,t),leg=String(req.params.legId).startsWith('legacy_')?invoiceLegs[0]:invoiceLegs.find(x=>x.id===req.params.legId);if(!leg){const e=Error('Journey leg not found');e.status=404;throw e}
+      if(!tripReadyForBilling(t,leg)){const e=Error('POD is required before invoicing this journey leg');e.status=409;throw e}
+      const mdc=serverMdcRequirement(state,t);if(mdc.required&&!mdc.ready){const e=Error(serverMdcMissingMessage(mdc)+' before invoicing');e.status=409;throw e}
       const legClient=(state.clients||[]).find(x=>x.id===leg.clientId);
       if(isNblClient(legClient)){const e=Error('NBL uses one consolidated invoice per 20th billing cycle. Generate it from Invoices & Payments.');e.status=409;throw e}
       if(leg.invoiceId){const existing=state.invoices.find(x=>x.id===leg.invoiceId);if(existing)return{invoice:existing,trip:t,leg,existing:true}}
