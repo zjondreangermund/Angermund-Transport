@@ -196,6 +196,17 @@ function scoreReceiptText(raw){
   return score;
 }
 
+function receiptDateISO(value){
+  const s=String(value||'').trim();if(!s)return'';
+  const iso=s.match(/\b(20\d{2})[-\/.](\d{1,2})[-\/.](\d{1,2})\b/);
+  if(iso){const y=Number(iso[1]),m=Number(iso[2]),d=Number(iso[3]);if(m>=1&&m<=12&&d>=1&&d<=31)return y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0')}
+  const dmy=s.match(/\b(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})\b/);
+  if(dmy){let d=Number(dmy[1]),m=Number(dmy[2]),y=Number(dmy[3]);if(y<100)y+=2000;if(m>=1&&m<=12&&d>=1&&d<=31)return y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0')}
+  const named=s.match(/\b(\d{1,2})\s+(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(20\d{2}|\d{2})\b/i);
+  if(named){const months={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,sept:9,oct:10,nov:11,dec:12},d=Number(named[1]),m=months[named[2].slice(0,4).toLowerCase()]||months[named[2].slice(0,3).toLowerCase()],y=Number(named[3])+(Number(named[3])<100?2000:0);if(m&&d>=1&&d<=31)return y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0')}
+  return''
+}
+
 function extractReceiptFields(raw,state={}){
   const text=String(raw||''),toN=v=>Number(String(v??'').replace(/\s/g,'').replace(/,/g,'')),lines=text.split(/\r?\n/).map(x=>x.replace(/\s+/g,' ').trim()).filter(Boolean);
   const amountCandidates=[...text.matchAll(/(?:N\$|NAD|R)?\s*(-?\d[\d ,.]*[.,]\d{2})/gi)].map(x=>x[1]);
@@ -272,7 +283,7 @@ function extractReceiptFields(raw,state={}){
 
   return{
     documentNumber:(text.match(/(?:invoice|slip|pod|ref|receipt|ticket)\s*(?:no|number|#)?\s*[:.-]?\s*([A-Z0-9/-]+)/i)||[])[1]||null,
-    date:(text.match(/\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b/)||[])[0]||null,
+    date:receiptDateISO((text.match(/\b(?:20\d{2}[-\/.]\d{1,2}[-\/.]\d{1,2}|\d{1,2}[-\/.]\d{1,2}[-\/.]\d{2,4})\b/)||[])[0])||null,
     registration:(text.match(/\bN\s?\d{1,6}\s?[A-Z]{1,3}\b/i)||[])[0]||null,
     odometer:odometerMatch?toN(odometerMatch[1]):null,
     amountCandidates:amountCandidates.slice(0,20),
@@ -402,7 +413,7 @@ function normalizeAiReceipt(raw,model){
   return{
     supplier:text(raw?.supplier)||null,
     documentNumber:text(raw?.documentNumber)||null,
-    date:text(raw?.date)||null,
+    date:receiptDateISO(raw?.date)||null,
     registration:text(raw?.registration)||null,
     odometer:n(raw?.odometer),
     suggestedAmount:n(raw?.suggestedAmount),
@@ -474,6 +485,7 @@ async function openAiReceiptExtract(buffer,mimeType,ocrText,model,detail='high')
       'Use 0 for unknown numeric values and an empty string for unknown text.',
       'Recognise diesel/fuel, toll, meals, accommodation, parking, border permits, customs/clearing, RFA/road permits, mass distance charges, weighbridge, loading/offloading, ferry/crossing, wash bay, tyre repair, emergency repair, breakdown parts, workshop/spares, police/traffic fines, general supplies and other transport expenses.',
       'For fuel: carefully read litres, price per litre, printed total and each visible fuel transaction. Check litres × price against amount.',
+      'Read the actual transaction/receipt date printed on the slip. Return date exactly as YYYY-MM-DD. If the date is not visible or cannot be read confidently, return an empty string. Never substitute today or the current date.',
       'If the image is unclear, numbers conflict, or a required fuel value is missing, set needsReview=true and lower extractionConfidence.',
       'OCR text is provided only as a clue; trust the visible image over bad OCR.',
       'OCR TEXT:',
@@ -1993,7 +2005,7 @@ app.post('/api/driver/trips/:tripId/receipt',auth,roles('driver'),upload.array('
     try{
       await c.query('BEGIN');
       const row=(await c.query('SELECT payload,revision FROM app_state WHERE id=1 FOR UPDATE')).rows[0]||{payload:{},revision:0};
-      const state=row.payload||{}, {trip:t,did}=driverTrip(state,req),leg=activeTripLegServer(t),now=new Date().toISOString(),date=now.slice(0,10),mk=p=>p+'_'+crypto.randomUUID();
+      const state=row.payload||{}, {trip:t,did}=driverTrip(state,req),leg=activeTripLegServer(t),now=new Date().toISOString(),date=receiptDateISO(data.date),mk=p=>p+'_'+crypto.randomUUID();if(!date){const e=Error('Receipt date could not be read. Confirm the slip date before saving.');e.status=400;throw e}
       state.driverActions??=[];state.diesel??=[];state.expenses??=[];
       if(clientActionId&&state.driverActions.some(x=>x.clientActionId===clientActionId)){await c.query('ROLLBACK');return res.json({duplicate:true,action,tripId:t.id})}
       const uploads=[];
@@ -2025,7 +2037,7 @@ app.post('/api/driver/trips/:tripId/receipt',auth,roles('driver'),upload.array('
     }catch(e){await c.query('ROLLBACK');return res.status(e.status||500).json({error:e.message})}finally{c.release()}
   }
   try{
-    const state=await readOpsState(),{trip:t,did}=driverTrip(state,req),leg=activeTripLegServer(t),now=new Date().toISOString(),date=now.slice(0,10),mk=p=>p+'_'+crypto.randomUUID(),ids=[];
+    const state=await readOpsState(),{trip:t,did}=driverTrip(state,req),leg=activeTripLegServer(t),now=new Date().toISOString(),date=receiptDateISO(data.date),mk=p=>p+'_'+crypto.randomUUID(),ids=[];if(!date)return res.status(400).json({error:'Receipt date could not be read. Confirm the slip date before saving.'});
     state.driverActions??=[];state.diesel??=[];state.expenses??=[];
     if(clientActionId&&state.driverActions.some(x=>x.clientActionId===clientActionId))return res.json({duplicate:true,action,tripId:t.id});
     for(let i=0;i<files.length;i++){const file=files[i],archived=archiveStoredFile(file),id=crypto.randomUUID(),kind=i===0?action:action+'-supporting';memory.uploads.push({id,userId:req.user.sub,driverId:did,userName:req.user.name||'',tripId:t.id,kind,filename:archived.filename,mimeType:archived.mimeType,content:archived.buffer,createdAt:now});ids.push(id)}
@@ -2299,7 +2311,7 @@ app.post('/api/admin/slips/post',auth,roles('admin','manager','dispatcher','work
     const body=req.body||{},category=String(body.category||'Other').slice(0,80),tripId=String(body.tripId||''),requestedTruck=String(body.truckId||''),snapshot=await readOpsState();
     const trip=tripId?(snapshot.trips||[]).find(x=>x.id===tripId):null;
     if(tripId&&!trip)return res.status(400).json({error:'Selected trip was not found'});
-    const truckId=trip?.truckId||requestedTruck,driverId=trip?.driverId||String(body.driverId||''),date=String(body.date||new Date().toISOString().slice(0,10)).slice(0,10);
+    const truckId=trip?.truckId||requestedTruck,driverId=trip?.driverId||String(body.driverId||''),date=receiptDateISO(body.date);if(!date)return res.status(400).json({error:'Receipt date could not be read. Confirm the slip date before posting.'});
     const directApproval=['admin','manager','finance'].includes(req.user.role);
     if(category==='Diesel'){
       const litres=num(body.litres),total=num(body.amount||body.total),enteredPrice=num(body.price);
