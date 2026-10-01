@@ -3372,11 +3372,12 @@ function entrySceneWeight(p,center,i){
 }
 function paintEntryExperience(p){
   const el=$('siteEntry'),stage=$('siteEntryStage');if(!el||!stage)return;
-  p=entryClamp(p);const scene=entrySceneFromProgress(p),weights=ENTRY_SCENE_CENTERS.map((c,i)=>entrySceneWeight(p,c,i)),strongest=Math.max(...weights),fogPulse=entryClamp((1-strongest)*1.7);
+  p=entryClamp(p);const scene=entrySceneFromProgress(p),weights=ENTRY_SCENE_CENTERS.map((c,i)=>entrySceneWeight(p,c,i)),ranked=[...weights].sort((a,b)=>b-a),blendFog=entryClamp(1-(ranked[0]-ranked[1])*2.55),fogOpacity=.11+blendFog*.55;
   el.dataset.scene=String(scene);
   el.dataset.weather=scene===0?'clear':scene===1?'dust':scene===2?'clear':scene===3?'storm':'golden';
   el.style.setProperty('--entry-p',p.toFixed(4));
-  stage.style.setProperty('--entry-fog-transition',fogPulse.toFixed(3));
+  stage.style.setProperty('--entry-fog-transition',blendFog.toFixed(3));
+  stage.style.setProperty('--entry-fog-opacity',fogOpacity.toFixed(3));
   stage.style.setProperty('--cloud-shift',(-p*15).toFixed(2)+'vw');
   stage.style.setProperty('--dust-shift',(p*20).toFixed(2)+'vw');
   weights.forEach((w,i)=>{
