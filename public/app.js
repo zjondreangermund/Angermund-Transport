@@ -195,17 +195,18 @@ function renderNav(){
       return;
     }
     const activeInside=v.some(x=>x[0]===page),open=activeInside||stored;
-    html+='<button type="button" class="nav-more-toggle '+(open?'open':'')+'" aria-expanded="'+(open?'true':'false')+'"><span>•••</span><span class="nav-label">'+g+'</span><b>⌄</b></button>';
-    html+='<div class="nav-more-items '+(open?'open':'')+'">'+v.map(x=>'<button data-page="'+x[0]+'" class="'+(page===x[0]?'active':'')+'"><span>'+x[1]+'</span><span class="nav-label">'+x[2]+'</span></button>').join('')+'</div>';
+    html+='<div class="nav-more-wrap"><button type="button" class="nav-more-toggle '+(open?'open':'')+'" aria-expanded="'+(open?'true':'false')+'"><span>•••</span><span class="nav-label">'+g+'</span><b>⌄</b></button>';
+    html+='<div class="nav-more-items '+(open?'open':'')+'">'+v.map(x=>'<button data-page="'+x[0]+'" class="'+(page===x[0]?'active':'')+'"><span>'+x[1]+'</span><span class="nav-label">'+x[2]+'</span></button>').join('')+'</div></div>';
   });
   nav.innerHTML=html;
   nav.querySelectorAll('button[data-page]').forEach(b=>b.onclick=()=>go(b.dataset.page));
   const more=nav.querySelector('.nav-more-toggle');
   if(more)more.onclick=()=>{
-    const items=nav.querySelector('.nav-more-items'),open=!more.classList.contains('open');
-    more.classList.toggle('open',open);if(items)items.classList.toggle('open',open);
+    const wrap=more.closest('.nav-more-wrap'),items=wrap?.querySelector('.nav-more-items'),open=!more.classList.contains('open');
+    more.classList.toggle('open',open);if(items)items.classList.toggle('open',open);if(wrap)wrap.classList.toggle('open',open);
     more.setAttribute('aria-expanded',String(open));
     localStorage.setItem('angermund_nav_more_open',open?'1':'0');
+    if(open&&items)setTimeout(()=>items.querySelector('button.active')?.scrollIntoView({block:'nearest'}),0);
   };
 }
 function render(){document.body.classList.toggle('driver-mode',role==='driver');document.body.classList.toggle('staff-mode',!['admin','manager','driver'].includes(role));document.body.dataset.role=role;if($('mobileSidebarRole'))$('mobileSidebarRole').textContent=roleLabel();if(!canView(page))page=defaultPageForRole();renderNav();$('pageTitle').textContent={command:'Command Centre',driverPortal:'Driver Workspace',automation:'Smart Document Inbox',knowledge:'Roles & Requirements',driverAccounts:'Drivers & Staff'}[page]||navGroups.flatMap(x=>x[1]).find(x=>x[0]===page)?.[2]||'Operations';$('pageHint').textContent=hints[page]||'';$('roleSelect').value=role;$('quickTripBtn').style.display=['driver','workshop'].includes(role)?'none':'';const driverBar=role==='driver'&&page!=='driverPortal'?'<nav class="driver-bottom"><button class="nav-to" data-page="driverPortal">🚛<span>Trip</span></button><button class="nav-to '+(page==='tasks'?'active':'')+'" data-page="tasks">✓<span>Tasks</span></button><button class="nav-to '+(page==='notifications'?'active':'')+'" data-page="notifications">🔔<span>Alerts</span></button><button type="button" id="driverHelpBtn">👤<span>Help</span></button></nav>':'';const searchBar=!['driver','site_worker'].includes(role)&&!['knowledge','driverPortal'].includes(page)?globalFindBar():'';$('app').innerHTML=searchBar+(views[page]||views.command)()+driverBar;wire()}
@@ -2662,7 +2663,7 @@ function openTrip(id){
     ${expenses.length?expenses.map(x=>`<div class="approval"><span><b>${esc(x.category)} · ${money(x.amount)}</b><small>${esc(x.supplier||'')} ${x.legId?'· Leg '+num(legs.find(l=>l.id===x.legId)?.sequence)+' ':''}· Receipt: ${esc(x.receiptNo||'MISSING')}</small></span><span>${badge(x.status)} ${x.status==='Review'&&['admin','manager','finance'].includes(role)?`<button type="button" class="link-button approve-trip-expense" data-id="${x.id}">Approve</button>`:''}</span></div>`).join(''):'<div class="empty">No route expenses captured</div>'}
     <h3>What went wrong on this journey</h3>
     ${issues.length?issues.map(x=>`<div class="policy ${x.status==='Open'?'critical':''}"><h3>${esc(x.type)} · ${esc(x.location||'Location not recorded')}</h3><p>${esc(x.description)}<br><b>Action:</b> ${esc(x.action||'Pending')} · Cost ${money(x.cost)}</p></div>`).join(''):'<div class="empty">No trip problems reported</div>'}
-    <div class="form-actions">
+    <div class="form-actions trip-modal-actions">
       <button type="button" class="ghost" id="cancelForm">Close</button>
       <button type="button" class="ghost" id="refreshTripValues">↻ Refresh values</button>
       <button type="button" class="ghost" id="addExpenseModal">Add expense</button>
