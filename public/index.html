@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#07111f"><title>Angermund Transport Operations</title><link rel="manifest" href="manifest.json?v=57"><link rel="icon" href="/angermund-app-logo-hq.webp?v=38" type="image/webp"><link rel="stylesheet" href="styles.css?v=58">
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><meta name="theme-color" content="#07111f"><title>Angermund Transport Operations</title><link rel="manifest" href="manifest.json?v=57"><link rel="icon" href="/angermund-app-logo-hq.webp?v=38" type="image/webp"><link rel="stylesheet" href="styles.css?v=60">
 <script>
 (()=>{const clear=()=>{const s=document.getElementById('loadingScreen');if(!s)return;s.classList.add('is-ready');setTimeout(()=>{if(s.isConnected)s.remove()},300)};window.__dismissAngermundSplash=clear;if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',()=>setTimeout(clear,500),{once:true});else setTimeout(clear,500);window.addEventListener('load',clear,{once:true});setTimeout(clear,2200)})();
 </script></head>
@@ -10,16 +10,67 @@
 <div id="modal" class="modal hidden"><div class="modal-card"><div class="modal-head"><h2 id="modalTitle"></h2><button id="closeModal">×</button></div><form id="entryForm"></form></div></div>
 <div id="loadingScreen" class="loading-screen" role="status" aria-live="polite"><div class="loading-brand"><img src="/angermund-app-logo-hq.webp?v=38" alt="Angermund Transport"><span>Loading operations…</span></div></div>
 <div id="loginScreen" class="login-screen">
-  <section id="siteEntry" class="site-entry" aria-label="Angermund Transport">
-    <div class="site-entry-shade"></div>
-    <div class="site-entry-top"><img src="/angermund-logo.webp" alt="Angermund Transport"><span>EST. 2006 · NAMIBIA</span></div>
-    <div class="site-entry-copy">
-      <span class="site-entry-kicker">LOCAL · NATIONAL · CROSS BORDER</span>
-      <h1>Moving freight.<br>Keeping Namibia connected.</h1>
-      <p>Professional road transport, fleet operations and cross-border logistics managed from one connected platform.</p>
-      <div class="site-entry-actions"><button type="button" class="site-entry-primary" id="enterOperations">Enter Operations <span>→</span></button><button type="button" class="site-entry-link" id="entrySignIn">Staff sign in</button></div>
+  <section id="siteEntry" class="site-entry" aria-label="Angermund Transport" tabindex="0" data-scene="0" data-weather="clear">
+    <div id="siteEntryTrack" class="site-entry-track">
+      <div id="siteEntryStage" class="site-entry-stage">
+        <div class="entry-road-bg" aria-hidden="true"></div>
+        <div class="entry-depth entry-depth-far" aria-hidden="true"></div>
+        <div class="entry-weather" aria-hidden="true">
+          <div class="entry-sun"></div>
+          <div class="entry-clouds entry-clouds-a"></div>
+          <div class="entry-clouds entry-clouds-b"></div>
+          <div class="entry-heat"></div>
+          <div class="entry-dust"></div>
+          <div class="entry-rain"></div>
+          <div class="entry-lightning"></div>
+          <div class="entry-vignette"></div>
+        </div>
+
+        <header class="site-entry-top">
+          <img src="/angermund-logo.webp" alt="Angermund Transport">
+          <div class="entry-top-meta"><span>EST. 2006 · NAMIBIA</span><button type="button" class="entry-signin-top" id="entrySignIn">Staff sign in</button></div>
+        </header>
+
+        <div class="entry-scene entry-scene-0">
+          <span class="site-entry-kicker">LOCAL · NATIONAL · CROSS BORDER</span>
+          <h1>Moving freight.<br>Keeping Namibia connected.</h1>
+          <p>Professional road transport built around reliable trucks, accountable operations and one connected team.</p>
+        </div>
+
+        <div class="entry-scene entry-scene-1">
+          <span class="site-entry-kicker">01 · LOCAL</span>
+          <h2>From depot<br>to destination.</h2>
+          <p>Daily movement starts in Windhoek. Loads, drivers, proof and costs stay connected from dispatch to delivery.</p>
+          <div class="entry-stat"><b>LOCAL</b><span>Dispatch · Shunting · Distribution</span></div>
+        </div>
+
+        <div class="entry-scene entry-scene-2">
+          <span class="site-entry-kicker">02 · NAMIBIA</span>
+          <h2>Long roads.<br>One operation.</h2>
+          <p>Every kilometre matters — route distance, Namibia MDC kilometres, fuel, expenses and proof remain tied to the same trip.</p>
+          <div class="entry-stat"><b>NATIONAL</b><span>Windhoek · Coast · North · South</span></div>
+        </div>
+
+        <div class="entry-scene entry-scene-3">
+          <span class="site-entry-kicker">03 · CROSS BORDER</span>
+          <h2>Beyond the border.</h2>
+          <p>Cross-border freight with the documents, route packs and controls needed to keep the truck moving.</p>
+          <div class="entry-stat"><b>CROSS BORDER</b><span>Namibia · South Africa · Angola · Botswana</span></div>
+        </div>
+
+        <div class="entry-scene entry-scene-4">
+          <span class="site-entry-kicker">ANGER MUND TRANSPORT</span>
+          <h2>Operations<br>never stop.</h2>
+          <p>Enter the live operations platform for dispatch, fleet, drivers, documents, costs, invoicing and tracking.</p>
+          <div class="site-entry-actions"><button type="button" class="site-entry-primary" id="enterOperations">Enter Operations <span>→</span></button></div>
+        </div>
+
+        <div class="entry-progress" aria-hidden="true">
+          <i></i><i></i><i></i><i></i><i></i>
+        </div>
+        <div class="site-entry-footer"><span>Windhoek · Namibia</span><span id="entryWeatherCaption">Clear road · morning light</span><button type="button" class="entry-scroll" id="entryExplore">Scroll to travel ↓</button></div>
+      </div>
     </div>
-    <div class="site-entry-footer"><span>Windhoek · Namibia</span><span>Fleet · Freight · Cross Border</span><span class="entry-scroll">Scroll / Enter ↓</span></div>
   </section>
   <div id="loginPanel" class="login-panel hidden">
     <button type="button" class="login-back" id="loginBackToEntry">← Back</button>
@@ -28,4 +79,4 @@
 </div>
 <div id="appInstallPrompt" class="app-install-prompt hidden" role="dialog" aria-modal="true" aria-labelledby="appInstallTitle"><div class="app-install-card"><img src="/angermund-app-logo-hq.webp?v=38" alt="Angermund Transport"><div class="app-install-icon">🚛</div><h2 id="appInstallTitle">Use the Angermund app</h2><p>Install the latest Angermund Android app for background GPS, geofence testing and the full mobile experience.</p><div id="appInstallStatus" class="app-install-status">Already installed? Tap <b>Open app</b> and we’ll remember this phone.</div><button type="button" class="primary app-install-main" id="downloadAndroidApp">Download Android app</button><button type="button" class="ghost" id="openAndroidApp">Open installed app</button><button type="button" class="link-button app-install-later" id="dismissAndroidApp">Not now</button></div></div>
 <div id="toast" class="toast"></div><input type="file" id="fileInput" accept=".json,.csv" hidden><input type="file" id="scanInput" accept="image/*,application/pdf" multiple hidden>
-<script src="app.js?v=58" onerror="window.__dismissAngermundSplash&&window.__dismissAngermundSplash();document.getElementById('loginScreen')?.classList.remove('hidden')"></script></body></html>
+<script src="app.js?v=60" onerror="window.__dismissAngermundSplash&&window.__dismissAngermundSplash();document.getElementById('loginScreen')?.classList.remove('hidden')"></script></body></html>
