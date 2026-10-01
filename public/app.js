@@ -2543,10 +2543,20 @@ function carrierOrderPanel(t){
     +(refs||c.intermediateStops||c.divertedTo||c.divertedFrom?'<div class="carrier-extra"><b>Carrier notes / references</b><p>'+esc([refs,c.intermediateStops?'Intermediate: '+c.intermediateStops:'',c.divertedFrom?'Diverted from '+c.divertedFrom:'',c.divertedTo?'Diverted to '+c.divertedTo:''].filter(Boolean).join(' · '))+'</p></div>':'')
     +'</section>'
 }
+
+function historicalTripSourcePanel(t){
+  if(!t?.sourceWorkbook||!(/Trip Reports Vernon|trip report workbook/i.test(String(t.sourceWorkbook))||t.sourceSheet))return'';
+  return '<section class="carrier-order-panel historical-trip-source"><div class="panel-head"><div><h3>Imported driver trip report</h3><p class="muted-copy">'+esc(t.sourceSheet||'Workbook')+' · source row '+num(t.sourceRow)+'</p></div><span class="upload-posted">HISTORICAL</span></div><div class="carrier-detail-grid">'
+    +'<div><span>Outbound income</span><b>'+money(t.sourceTrip1Income)+'</b></div><div><span>Return income</span><b>'+money(t.sourceTrip2Income)+'</b></div><div><span>Source expenses</span><b>'+money(t.sourceExpectedTotalExpenses)+'</b></div><div><span>Source profit</span><b class="'+(num(t.sourceExpectedProfit)>=0?'positive':'negative')+'">'+money(t.sourceExpectedProfit)+'</b></div>'
+    +'<div><span>Outbound offload</span><b>'+esc(t.sourceOffloadDate||'—')+'</b></div><div><span>Return departure</span><b>'+esc(t.sourceReturnDate||'—')+'</b></div><div><span>Return offload</span><b>'+esc(t.sourceReturnOffloadDate||'—')+'</b></div><div><span>Return route</span><b>'+esc([t.sourceReturnOrigin,t.sourceReturnDestination].filter(Boolean).join(' → ')||'—')+'</b></div>'
+    +'<div><span>Source CPK</span><b>'+(num(t.sourceCpk)>0?money(t.sourceCpk)+'/km':'—')+'</b></div><div><span>Manager signature</span><b>'+esc(t.sourceManagerSignature||'—')+'</b></div><div><span>Target fuel</span><b>'+num(t.sourceTargetKml||2.3).toFixed(2)+' km/L</b></div><div><span>Profit at target usage</span><b>'+money(t.sourceProfitAtTarget)+'</b></div>'
+    +'</div>'+(t.notes?'<div class="carrier-extra"><b>Source notes</b><p>'+esc(t.notes)+'</p></div>':'')+'</section>'
+}
+
 function tripFuelBenchmark(t,m,contribution){
   if(!m.ready)return'';
   const target=num(t.sourceTargetKml)||num(clientPayProfile(t.driverId).minimumBonusKml)||2.0,expected=target>0?m.distance/target:0,variance=expected-m.litres,cash=variance*(m.pricePerL||0),atTarget=contribution-cash,good=variance>=0;
-  return '<section class="trip-fuel-benchmark"><div><span>Fuel benchmark</span><b>'+target.toFixed(2)+' km/L</b><small>'+expected.toFixed(1)+' L expected for '+num(m.distance).toLocaleString()+' km</small></div><div><span>Actual fuel</span><b>'+num(m.litres).toFixed(1)+' L</b><small>'+m.kmPerL.toFixed(2)+' km/L</small></div><div><span>'+(good?'Fuel saved vs target':'Fuel over target')+'</span><b class="'+(good?'positive':'negative')+'">'+Math.abs(variance).toFixed(1)+' L</b><small class="'+(good?'positive':'negative')+'">'+(cash>=0?'+ ':'- ')+money(Math.abs(cash))+' contribution impact</small></div><div><span>Contribution at target usage</span><b>'+money(atTarget)+'</b><small>For comparison only · does not change payroll incentive rules</small></div></section>'
+  return '<section class="trip-fuel-benchmark"><div><span>Fuel benchmark</span><b>'+target.toFixed(2)+' km/L</b><small>'+expected.toFixed(1)+' L expected for '+num(m.distance).toLocaleString()+' km</small></div><div><span>Actual fuel</span><b>'+num(m.litres).toFixed(1)+' L</b><small>'+m.kmPerL.toFixed(2)+' km/L</small></div><div><span>'+(good?'Fuel saved vs target':'Fuel over target')+'</span><b class="'+(good?'positive':'negative')+'">'+Math.abs(variance).toFixed(1)+' L</b><small class="'+(good?'positive':'negative')+'">'+(cash>=0?'+ ':'- ')+money(Math.abs(cash))+' contribution impact</small></div><div><span>Cost / km</span><b>'+(m.distance>0?money(tripCost(t)/m.distance)+'/km':'—')+'</b><small>Actual linked trip cost per kilometre</small></div><div><span>Contribution at target usage</span><b>'+money(atTarget)+'</b><small>For comparison only · does not change payroll incentive rules</small></div></section>'
 }
 function importedTollDetail(t){
   const rows=Array.isArray(t.sourceTollEntries)?t.sourceTollEntries:[];if(!rows.length)return'';
@@ -2568,6 +2578,7 @@ function openTrip(id){
     </div>
     <div class="journey-summary-bar"><div><b>${esc(truck(t.truckId))}</b><span>${esc(trailer(t.trailerId))}</span></div><div><b>${esc(driver(t.driverId))}</b><span>${esc(t.date)}</span></div><div><b>${legs.length} priced leg${legs.length===1?'':'s'}</b><span>${legs.filter(x=>x.invoiceId).length} invoiced</span></div></div>
     ${carrierOrderPanel(t)}
+    ${historicalTripSourcePanel(t)}
     <div class="journey-leg-toolbar"><h3>Journey legs / loads</h3><div><button type="button" class="ghost" id="addJourneyLeg">+ Add leg</button><button type="button" class="primary" id="addReturnLeg">↩ Add return / backload</button></div></div>
     <div class="journey-leg-list">${legs.map(x=>journeyLegCard(t,x)).join('')}</div>
     <div class="split-3">
