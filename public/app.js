@@ -3359,76 +3359,59 @@ document.addEventListener('click',e=>{const b=e.target.closest('[data-action="ex
 function showLoginPanel(){
   if($('siteEntry'))$('siteEntry').classList.add('is-exiting');
   if($('loginPanel')){$('loginPanel').classList.remove('hidden');requestAnimationFrame(()=>$('loginPanel').classList.add('is-visible'))}
-  setTimeout(()=>{if($('siteEntry'))$('siteEntry').classList.add('hidden');$('loginEmail')?.focus()},520)
+  setTimeout(()=>{if($('siteEntry'))$('siteEntry').classList.add('hidden');$('loginEmail')?.focus()},560)
 }
-const ENTRY_SCENE_CENTERS=[0,.245,.5,.755,1];
+const ENTRY_SCENE_CENTERS=[0,0.135,0.275,0.415,0.55,0.69,0.835,1];
+const ENTRY_SCENE_URLS=["https://thumb.wikimedia.org/wikipedia/commons/thumb/e/eb/Frozen_fog_%2850874345152%29.jpg/3840px-Frozen_fog_%2850874345152%29.jpg","https://assets.science.nasa.gov/dynamicimage/assets/science/esd/eo/images/imagerecords/5000/5935/BlueMarble_2005_Afr_03_lrg.jpg?crop=faces%2Cfocalpoint&fit=clip&h=3735&w=3735","https://assets.science.nasa.gov/dynamicimage/assets/science/esd/eo/images/imagerecords/8000/8753/namibia_etm_2001010_lrg.jpg?crop=faces%2Cfocalpoint&fit=clip&h=5000&w=5000","https://d2ol7oe51mr4n9.cloudfront.net/user_3JJ4hXLqjufB6CVAow5nF99Cdsh/083c68b6-917d-4671-90a1-03a8fbc0f798.png","https://d2ol7oe51mr4n9.cloudfront.net/user_3JJ4hXLqjufB6CVAow5nF99Cdsh/2454ec71-7fc4-48d9-9889-9e8b90782c05.png","https://d2ol7oe51mr4n9.cloudfront.net/user_3JJ4hXLqjufB6CVAow5nF99Cdsh/769c4b93-1413-448e-869d-cd3469612b58.png","https://d2ol7oe51mr4n9.cloudfront.net/user_3JJ4hXLqjufB6CVAow5nF99Cdsh/36f6c805-1b39-44bb-814a-32afb48f8bc4.png","https://d2ol7oe51mr4n9.cloudfront.net/user_3JJ4hXLqjufB6CVAow5nF99Cdsh/57e11349-b806-4757-a112-36bb28612373.png"];
 let entryTargetProgress=0,entrySmoothProgress=0,entryRaf=0,entryLastScene=-1;
 const entryClamp=(v,min=0,max=1)=>Math.max(min,Math.min(max,v));
 function entrySmoothstep(a,b,v){const x=entryClamp((v-a)/(b-a));return x*x*(3-2*x)}
 function entrySceneFromProgress(p){let best=0,dist=99;ENTRY_SCENE_CENTERS.forEach((c,i)=>{const d=Math.abs(p-c);if(d<dist){dist=d;best=i}});return best}
 function entrySceneWeight(p,center,i){
-  const d=Math.abs(p-center),outer=(i===0||i===4)?.30:.31;
-  return entryClamp(1-entrySmoothstep(.075,outer,d))
+  const d=Math.abs(p-center),outer=(i===0||i===ENTRY_SCENE_CENTERS.length-1)?.185:.195;
+  return entryClamp(1-entrySmoothstep(.045,outer,d))
+}
+function entryVisualMotion(i,p,center){
+  const local=entryClamp((p-center)/.18,-1,1),through=(local+1)/2;
+  if(i===0)return{scale:1.025+through*.105,x:local*-1.2,y:local*-1.5,brightness:1.02};
+  if(i===1)return{scale:.99+through*.28,x:local*.4,y:local*1.1,brightness:.93};
+  if(i===2)return{scale:1.02+through*.34,x:local*-1.0,y:local*1.2,brightness:.94};
+  if(i===3)return{scale:1.035+through*.10,x:local*1.4,y:local*-1.0,brightness:.94};
+  return{scale:1.04+through*.055,x:local*(i%2===0?-1.4:1.4),y:local*(i===6?1.1:-.7),brightness:.92}
 }
 function paintEntryExperience(p){
   const el=$('siteEntry'),stage=$('siteEntryStage');if(!el||!stage)return;
-  p=entryClamp(p);const scene=entrySceneFromProgress(p),weights=ENTRY_SCENE_CENTERS.map((c,i)=>entrySceneWeight(p,c,i)),ranked=[...weights].sort((a,b)=>b-a),blendFog=entryClamp(1-(ranked[0]-ranked[1])*2.55),fogOpacity=.11+blendFog*.55;
+  p=entryClamp(p);const scene=entrySceneFromProgress(p),weights=ENTRY_SCENE_CENTERS.map((c,i)=>entrySceneWeight(p,c,i)),ranked=[...weights].sort((a,b)=>b-a),blendFog=entryClamp(1-(ranked[0]-ranked[1])*2.65),fogOpacity=.10+blendFog*.64;
   el.dataset.scene=String(scene);
-  el.dataset.weather=scene===0?'clear':scene===1?'dust':scene===2?'clear':scene===3?'storm':'golden';
-  el.style.setProperty('--entry-p',p.toFixed(4));
-  stage.style.setProperty('--entry-fog-transition',blendFog.toFixed(3));
-  stage.style.setProperty('--entry-fog-opacity',fogOpacity.toFixed(3));
-  stage.style.setProperty('--cloud-shift',(-p*15).toFixed(2)+'vw');
-  stage.style.setProperty('--dust-shift',(p*20).toFixed(2)+'vw');
+  el.dataset.weather=['ice','space','orbit','clear','dust','clear','storm','golden'][scene]||'clear';
+  el.style.setProperty('--entry-p',p.toFixed(4));stage.style.setProperty('--entry-fog-transition',blendFog.toFixed(3));stage.style.setProperty('--entry-fog-opacity',fogOpacity.toFixed(3));stage.style.setProperty('--cloud-shift',(-p*17).toFixed(2)+'vw');stage.style.setProperty('--dust-shift',(p*22).toFixed(2)+'vw');
   weights.forEach((w,i)=>{
-    const center=ENTRY_SCENE_CENTERS[i],local=entryClamp((p-center)/.28,-1,1),visual=document.querySelector('.entry-visual-'+i),copy=document.querySelector('.entry-scene-'+i);
+    const center=ENTRY_SCENE_CENTERS[i],m=entryVisualMotion(i,p,center),visual=document.querySelector('.entry-visual-'+i),copy=document.querySelector('.entry-scene-'+i);
     if(visual){
-      visual.style.opacity=w.toFixed(4);
-      visual.style.setProperty('--scene-scale',(1.055+Math.abs(local)*.018+p*.012).toFixed(4));
-      visual.style.setProperty('--scene-x',(local*(i%2===0?-2.3:2.3)).toFixed(2)+'%');
-      visual.style.setProperty('--scene-y',(local*(i===3?1.7:-1.2)).toFixed(2)+'%');
-      visual.style.setProperty('--scene-brightness',(0.83+w*.17).toFixed(3))
+      visual.style.opacity=w.toFixed(4);visual.style.setProperty('--scene-scale',m.scale.toFixed(4));visual.style.setProperty('--scene-x',m.x.toFixed(2)+'%');visual.style.setProperty('--scene-y',m.y.toFixed(2)+'%');visual.style.setProperty('--scene-brightness',(m.brightness+w*.07).toFixed(3))
     }
     if(copy){
-      const textWeight=entryClamp(1-entrySmoothstep(.095,.235,Math.abs(p-center))),direction=p<center?1:-1;
-      copy.style.opacity=textWeight.toFixed(4);
-      copy.style.filter='blur('+(Math.max(0,(1-textWeight)*8)).toFixed(2)+'px)';
-      copy.style.transform='translate3d(0,calc(-50% + '+(direction*(1-textWeight)*44).toFixed(1)+'px),0)';
-      copy.style.pointerEvents=textWeight>.72?'auto':'none'
+      const textWeight=entryClamp(1-entrySmoothstep(.055,.145,Math.abs(p-center))),direction=p<center?1:-1;
+      copy.style.opacity=textWeight.toFixed(4);copy.style.filter='blur('+(Math.max(0,(1-textWeight)*10)).toFixed(2)+'px)';copy.style.transform='translate3d(0,calc(-50% + '+(direction*(1-textWeight)*48).toFixed(1)+'px),0)';copy.style.pointerEvents=textWeight>.72?'auto':'none'
     }
   });
-  const captions=['Morning mist · freight in motion','Depot operations · fog lifting','Namibia · open road','Cross-border · storm passage','Operations hub · road ahead'];
+  const captions=['Frozen summit · above the clouds','Earth · Africa in view','Descending · Namibia below','Road level · journey begins','Depot · local movement','Namibia · long haul','Border crossing · weather ahead','Operations hub · destination reached'];
   if($('entryWeatherCaption'))$('entryWeatherCaption').textContent=captions[scene];
   document.querySelectorAll('.entry-progress i').forEach((dot,i)=>dot.classList.toggle('active',i===scene));
-  if(scene!==entryLastScene){entryLastScene=scene;el.setAttribute('aria-label','Angermund Transport · scene '+(scene+1)+' of 5')}
+  if(scene!==entryLastScene){entryLastScene=scene;el.setAttribute('aria-label','Angermund Transport journey · scene '+(scene+1)+' of '+ENTRY_SCENE_CENTERS.length)}
 }
 function entryAnimationLoop(){
-  entrySmoothProgress+=(entryTargetProgress-entrySmoothProgress)*.085;
-  if(Math.abs(entryTargetProgress-entrySmoothProgress)<.00015)entrySmoothProgress=entryTargetProgress;
-  paintEntryExperience(entrySmoothProgress);
-  entryRaf=Math.abs(entryTargetProgress-entrySmoothProgress)>.0001?requestAnimationFrame(entryAnimationLoop):0
+  entrySmoothProgress+=(entryTargetProgress-entrySmoothProgress)*.078;
+  if(Math.abs(entryTargetProgress-entrySmoothProgress)<.00012)entrySmoothProgress=entryTargetProgress;
+  paintEntryExperience(entrySmoothProgress);entryRaf=Math.abs(entryTargetProgress-entrySmoothProgress)>.0001?requestAnimationFrame(entryAnimationLoop):0
 }
 function updateEntryExperience(){
-  const el=$('siteEntry');if(!el)return;
-  const max=Math.max(1,el.scrollHeight-el.clientHeight);
-  entryTargetProgress=entryClamp(el.scrollTop/max);
-  if(!entryRaf)entryRaf=requestAnimationFrame(entryAnimationLoop)
+  const el=$('siteEntry');if(!el)return;const max=Math.max(1,el.scrollHeight-el.clientHeight);entryTargetProgress=entryClamp(el.scrollTop/max);if(!entryRaf)entryRaf=requestAnimationFrame(entryAnimationLoop)
 }
-function preloadEntryScenes(){
-  [
-    'https://d2ol7oe51mr4n9.cloudfront.net/user_3JJ4hXLqjufB6CVAow5nF99Cdsh/083c68b6-917d-4671-90a1-03a8fbc0f798.png','https://d2ol7oe51mr4n9.cloudfront.net/user_3JJ4hXLqjufB6CVAow5nF99Cdsh/2454ec71-7fc4-48d9-9889-9e8b90782c05.png','https://d2ol7oe51mr4n9.cloudfront.net/user_3JJ4hXLqjufB6CVAow5nF99Cdsh/769c4b93-1413-448e-869d-cd3469612b58.png','https://d2ol7oe51mr4n9.cloudfront.net/user_3JJ4hXLqjufB6CVAow5nF99Cdsh/36f6c805-1b39-44bb-814a-32afb48f8bc4.png','https://d2ol7oe51mr4n9.cloudfront.net/user_3JJ4hXLqjufB6CVAow5nF99Cdsh/57e11349-b806-4757-a112-36bb28612373.png'
-  ].forEach((src,i)=>{if(i<2)return;const img=new Image();img.decoding='async';img.src=src})
-}
-function scrollEntryToScene(scene){
-  const el=$('siteEntry');if(!el)return;
-  const max=Math.max(1,el.scrollHeight-el.clientHeight),idx=Math.max(0,Math.min(4,scene));
-  el.scrollTo({top:max*ENTRY_SCENE_CENTERS[idx],behavior:'smooth'})
-}
+function preloadEntryScenes(){ENTRY_SCENE_URLS.forEach((src,i)=>{if(i<3)return;const img=new Image();img.decoding='async';img.src=src})}
+function scrollEntryToScene(scene){const el=$('siteEntry');if(!el)return;const max=Math.max(1,el.scrollHeight-el.clientHeight),idx=Math.max(0,Math.min(ENTRY_SCENE_CENTERS.length-1,scene));el.scrollTo({top:max*ENTRY_SCENE_CENTERS[idx],behavior:'smooth'})}
 function showSiteEntry(){
-  if($('siteEntry')){
-    $('siteEntry').classList.remove('hidden','is-exiting');$('siteEntry').scrollTop=0;
-    entryTargetProgress=entrySmoothProgress=0;entryLastScene=-1;requestAnimationFrame(()=>paintEntryExperience(0))
-  }
+  if($('siteEntry')){$('siteEntry').classList.remove('hidden','is-exiting');$('siteEntry').scrollTop=0;entryTargetProgress=entrySmoothProgress=0;entryLastScene=-1;requestAnimationFrame(()=>paintEntryExperience(0))}
   if($('loginPanel')){$('loginPanel').classList.remove('is-visible');setTimeout(()=>$('loginPanel')?.classList.add('hidden'),260)}
 }
 if($('enterOperations'))$('enterOperations').onclick=showLoginPanel;
@@ -3436,14 +3419,7 @@ if($('entrySignIn'))$('entrySignIn').onclick=showLoginPanel;
 if($('loginBackToEntry'))$('loginBackToEntry').onclick=showSiteEntry;
 if($('entryExplore'))$('entryExplore').onclick=()=>scrollEntryToScene(1);
 if($('siteEntry')){
-  preloadEntryScenes();
-  $('siteEntry').addEventListener('scroll',updateEntryExperience,{passive:true});
-  $('siteEntry').addEventListener('keydown',e=>{
-    if(e.key==='Enter')showLoginPanel();
-    else if(e.key==='ArrowDown'||e.key==='PageDown'){e.preventDefault();scrollEntryToScene(Math.min(4,entrySceneFromProgress(entryTargetProgress)+1))}
-    else if(e.key==='ArrowUp'||e.key==='PageUp'){e.preventDefault();scrollEntryToScene(Math.max(0,entrySceneFromProgress(entryTargetProgress)-1))}
-  });
-  requestAnimationFrame(()=>paintEntryExperience(0))
+  preloadEntryScenes();$('siteEntry').addEventListener('scroll',updateEntryExperience,{passive:true});$('siteEntry').addEventListener('keydown',e=>{const current=entrySceneFromProgress(entryTargetProgress);if(e.key==='Enter')showLoginPanel();else if(e.key==='ArrowDown'||e.key==='PageDown'){e.preventDefault();scrollEntryToScene(Math.min(ENTRY_SCENE_CENTERS.length-1,current+1))}else if(e.key==='ArrowUp'||e.key==='PageUp'){e.preventDefault();scrollEntryToScene(Math.max(0,current-1))}});requestAnimationFrame(()=>paintEntryExperience(0))
 }
 
 function wire(){wireGlobalFind();if(page==='command')wireCommandPeriod();if(page==='dispatch'||page==='trips')wireTripPeriodControls();if(page==='dispatch'){if($('dispatchScanSlip'))$('dispatchScanSlip').onclick=()=>openSlipScanSourceChooser({multiple:false});if($('dispatchScanPod'))$('dispatchScanPod').onclick=chooseTripForPod;document.querySelectorAll('.dispatch-trip-slip').forEach(b=>b.onclick=e=>{e.stopPropagation();openAdminTripSlip(b.dataset.trip)});document.querySelectorAll('.dispatch-trip-pod').forEach(b=>b.onclick=e=>{e.stopPropagation();captureAdminPod(b.dataset.trip)})}if(page==='carrierOrders')wireCarrierOrders();if(page==='shunterRecon')wireShunterRecon();if(page==='loans')wireWorkerLoans();if(page==='imports')wireExcelImports();if(page==='insurance')wireInsuranceAssets();if(page==='monthlyPnl')wireMonthlyPnl();
