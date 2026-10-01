@@ -1675,11 +1675,69 @@ function parseTripReportBlock(sheet,start,end){
   src.sAndT=metric(/^S&T$/i,true);src.driverTripMoney=metric(/^Drivers Trip Money$/i,true);src.offloading=metric(/^Offloading Expenses$/i,true);src.other=metric(/^Other Expenses$/i,true);
   src.income=src.totalIncome||src.trip1Income+src.trip2Income;
   if(!(src.distance>0)&&src.startKm>0&&src.endKm>src.startKm)src.distance=src.endKm-src.startKm;
+  const targetLabel=tripReportFind(rows,start,end,/^Expected Average LT\/KM/i),targetText=targetLabel?tripReportText((rows[targetLabel.r]||[])[targetLabel.col]):'',targetMatch=targetText.match(/([0-9]+(?:\.[0-9]+)?)\s*$/);
+  src.targetKml=targetMatch?Number(targetMatch[1]):2.3;
+  const actualLitres=(src.fuel||[]).reduce((a,x)=>a+num(x.litres),0),fuelTotal=(src.fuel||[]).reduce((a,x)=>a+num(x.amount),0),expectedLitres=src.targetKml>0&&src.distance>0?src.distance/src.targetKml:0,varianceLitres=expectedLitres-actualLitres,avgFuelPrice=actualLitres>0?fuelTotal/actualLitres:0;
+  src.expectedLitres=Number(expectedLitres.toFixed(3));src.fuelVarianceLitres=Number(varianceLitres.toFixed(3));src.fuelVarianceCash=Number((varianceLitres*avgFuelPrice).toFixed(2));src.profitAtTarget=Number((num(src.profit)-varianceLitres*avgFuelPrice).toFixed(2));
 
   const known=new Set([src.origin,src.destination,src.returnOrigin,src.returnDestination].filter(Boolean).map(excelImportKey)),notes=[];
   for(let r=Math.max(start,loadFromRow+1);r<Math.min(end,dateOffloadRow);r++)for(const v of rows[r]||[]){const x=tripReportText(v),k=excelImportKey(x);if(x.length<4||known.has(k)||/driver trip report|name of driver|registration|truck|trailers|start trip|fleet|date departure|odo|load from|load to|destination|return trip|date offload/i.test(x)||/^\d+(?:\.\d+)?$/.test(x))continue;notes.push(x)}
   src.note=[...new Set(notes)].join('; ').slice(0,700);
   return src
+}
+
+const INCEXP_MONTHS={jan:1,january:1,feb:2,february:2,mar:3,march:3,apr:4,april:4,may:5,jun:6,june:6,jul:7,july:7,aug:8,august:8,sep:9,sept:9,september:9,oct:10,october:10,nov:11,november:11,dec:12,december:12};
+function incExpPeriod(sheet){
+  const src=[sheet.name,...(sheet.rows||[]).slice(0,8).flat().map(tripReportText)].join(' ');
+  const m=src.match(/\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(20\d{2})\b/i);
+  if(!m)return'';const key=m[1].toLowerCase(),mo=INCEXP_MONTHS[key]||INCEXP_MONTHS[key.slice(0,4)]||INCEXP_MONTHS[key.slice(0,3)];return mo?m[2]+'-'+String(mo).padStart(2,'0'):''
+}
+function incExpCategory(label){
+  const s=String(label||'').toLowerCase();
+  if(/salary|wage/.test(s))return'Payroll / salaries';
+  if(/insurance|polis|git/.test(s))return'Insurance';
+  if(/bank charge/.test(s))return'Bank charges';
+  if(/medies|medical/.test(s))return'Medical';
+  if(/spaar|saving/.test(s))return'Savings';
+  if(/loan|installment|hp|mercedes|bakkie|hilux|ranger|trailer|do\d/.test(s))return'Finance / asset repayment';
+  return'Other overhead'
+}
+function incExpNumericNear(rows,r,base,preferCol=2){
+  const vals=[];for(let rr=r;rr<Math.min(rows.length,r+3);rr++)for(const cc of [base+preferCol,base+1,base+2]){const n=excelImportNumber((rows[rr]||[])[cc]);if(Number.isFinite(n)&&n!==0)vals.push(n)}
+  if(!vals.length)return 0;return vals.sort((a,b)=>Math.abs(b)-Math.abs(a))[0]
+}
+function parseIncExpSheet(sheet){
+  const period=incExpPeriod(sheet);if(!period)return null;
+  const rows=sheet.rows||[],trucks=[],usedRanges=[];
+  for(const base of [0,5]){
+    const heads=[];for(let r=0;r<rows.length;r++){const txt=tripReportText((rows[r]||[])[base]),m=txt.match(/\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+20\d{2}\s*-\s*NO\s*(\d+)/i);if(m)heads.push({r,fleet:Number(m[1]),label:txt})}
+    for(let i=0;i<heads.length;i++){
+      const h=heads[i],end=Math.min(rows.length,heads[i+1]?.r??(h.r+18)),costs=[];let income=0;
+      for(let r=h.r;r<end;r++){
+        const label=tripReportText((rows[r]||[])[base]);if(!label)continue;
+        if(/^TRUCK INCOME$/i.test(label)){income=Math.abs(incExpNumericNear(rows,r,base,2));continue}
+        let category='';
+        if(/^INSURANCE TRUCK$/i.test(label))category='Truck insurance';
+        else if(/^INSURANCE TRAILERS$/i.test(label))category='Trailer insurance';
+        else if(/^DRIVERS SALARY$/i.test(label))category='Driver salary';
+        else if(/Truck Installment HP/i.test(label))category='Truck installment / HP';
+        else if(/Trip Expenses/i.test(label))category='Trip expenses';
+        if(category){let amount=Math.abs(excelImportNumber((rows[r]||[])[base+1]));if(!amount)amount=Math.abs(excelImportNumber((rows[r]||[])[base+2]));if(amount)costs.push({category,description:label,amount:Number(amount.toFixed(2)),sourceRow:r+1})}
+      }
+      if(income||costs.length){const totalCosts=costs.reduce((a,x)=>a+num(x.amount),0);trucks.push({fleet:h.fleet,label:h.label,income:Number(income.toFixed(2)),costs,totalCosts:Number(totalCosts.toFixed(2)),profit:Number((income-totalCosts).toFixed(2)),sourceColumn:base+1,sourceRow:h.r+1});usedRanges.push([h.r,end])}
+    }
+  }
+  const lastTruckEnd=usedRanges.length?Math.max(...usedRanges.map(x=>x[1])):0,overheads=[];let sourceBalance=0,totalTrucksSource=0,started=false;
+  for(let r=Math.max(0,lastTruckEnd-3);r<rows.length;r++){
+    const label=tripReportText((rows[r]||[])[0]),amount=excelImportNumber((rows[r]||[])[1]),note=tripReportText((rows[r]||[])[2]);
+    if(/^Total Trucks(?: Income)?$/i.test(label)){started=true;totalTrucksSource=Math.abs(amount)||Math.abs(excelImportNumber((rows[r]||[])[2]));continue}
+    if(!started)continue;
+    if(note.toLowerCase()==='oor'&&amount){sourceBalance=amount;continue}
+    if(!label||!amount||/^Total Trucks|^SUB TOTAL|^LESS:?$/i.test(label))continue;
+    overheads.push({category:incExpCategory(label),description:label,amount:Number(Math.abs(amount).toFixed(2)),sourceRow:r+1})
+  }
+  const truckIncome=trucks.reduce((a,x)=>a+num(x.income),0),truckCosts=trucks.reduce((a,x)=>a+num(x.totalCosts),0),overheadTotal=overheads.reduce((a,x)=>a+num(x.amount),0);
+  return{id:'monthly_pnl_'+period,period,year:period.slice(0,4),month:period.slice(5,7),sourceSheet:sheet.name,trucks,overheads,truckIncome:Number(truckIncome.toFixed(2)),truckCosts:Number(truckCosts.toFixed(2)),truckProfit:Number((truckIncome-truckCosts).toFixed(2)),overheadTotal:Number(overheadTotal.toFixed(2)),net:Number((truckIncome-truckCosts-overheadTotal).toFixed(2)),sourceTotalTrucks:Number(totalTrucksSource.toFixed(2)),sourceBalance:Number(sourceBalance.toFixed(2)),historical:true}
 }
 function tripReportWorkbookData(parsed){
   const records=[],sheets=[],summarySheets=[];
@@ -1689,7 +1747,7 @@ function tripReportWorkbookData(parsed){
       let valid=0;
       for(let i=0;i<starts.length;i++){const src=parseTripReportBlock(sheet,starts[i],starts[i+1]??Math.min(sheet.rows.length,starts[i]+65));if(src.driver&&src.registration&&src.date&&(src.distance>0||src.endKm>src.startKm)){records.push(src);valid++}}
       sheets.push({name:sheet.name,blocks:starts.length,trips:valid})
-    }else if(/inc\s*&\s*exp|income|expense/i.test(sheet.name))summarySheets.push(sheet.name)
+    }else if(/inc\s*&\s*exp|income|expense/i.test(sheet.name)){const snap=parseIncExpSheet(sheet);if(snap)summarySheets.push(snap)}
   }
   const totalIncome=records.reduce((a,x)=>a+num(x.income),0),totalExpenses=records.reduce((a,x)=>a+num(x.totalExpenses),0),distance=records.reduce((a,x)=>a+num(x.distance),0),fuelSlips=records.reduce((a,x)=>a+(x.fuel||[]).length,0);
   return{records,sheets,summarySheets,totalIncome:Number(totalIncome.toFixed(2)),totalExpenses:Number(totalExpenses.toFixed(2)),distance:Number(distance.toFixed(1)),fuelSlips}
@@ -1721,14 +1779,14 @@ function tripReportExisting(state,src){
   })||null
 }
 function applyTripReportWorkbook(state,data,source,importId){
-  state.trips??=[];state.diesel??=[];state.expenses??=[];state.routes??=[];state.clients??=[];state.drivers??=[];state.archivedTrucks??=[];
-  let created=0,updated=0,skipped=0,fuelRecords=0,expenseRecords=0,reconciled=0;
+  state.trips??=[];state.diesel??=[];state.expenses??=[];state.routes??=[];state.clients??=[];state.drivers??=[];state.archivedTrucks??=[];state.monthlyPnlSnapshots??=[];
+  let created=0,updated=0,skipped=0,fuelRecords=0,expenseRecords=0,reconciled=0,monthlySnapshots=0;
   for(const src of data.records){
     if(!src.driver||!src.registration||!src.date){skipped++;continue}
     const driver=tripReportDriver(state,src.driver),client=tripReportClient(state,src.client||'NBL'),truck=tripReportHistoricalTruck(state,src.registration,src.fleet),route=tripReportRoute(state,src),key=excelImportSlug(src.sheet+'_'+src.sourceRow+'_'+src.registration+'_'+src.date+'_'+Math.round(num(src.startKm))),existing=tripReportExisting(state,src);
     let trip=existing,id=existing?.id||('trip_report_'+key);
     const leg={id:'leg_'+id,sequence:1,label:'Historical round trip',routeId:route.id,clientId:client.id,load:[src.origin,src.destination,src.returnDestination].filter(Boolean).join(' → '),tons:0,pallets:0,distance:num(src.distance),namibiaKm:0,pricingMethod:'Manual negotiated',unitRate:0,agreedAmount:num(src.income),income:num(src.income),status:'Delivered',pod:true,invoiceId:''};
-    const values={number:existing?.number||('HIST-'+String(src.date).replace(/-/g,'')+'-'+String(src.sourceRow)),date:src.date,routeId:route.id,truckId:truck.id,trailerId:'',driverId:driver.id,clientId:client.id,load:leg.load,tons:0,pallets:0,startKm:num(src.startKm),endKm:num(src.endKm),distance:num(src.distance),income:num(src.income),dieselCost:0,tolls:0,allowance:0,other:0,status:'Closed',stage:5,pod:true,invoiceId:existing?.invoiceId||'',approved:true,legs:[leg],sourceWorkbook:source,sourceSheet:src.sheet,sourceRow:src.sourceRow,sourceTrip1Income:num(src.trip1Income),sourceTrip2Income:num(src.trip2Income),sourceExpectedTotalExpenses:num(src.totalExpenses),sourceExpectedProfit:num(src.profit),sourceReturnDate:src.returnDate||'',sourceReturnOrigin:src.returnOrigin||'',sourceReturnDestination:src.returnDestination||'',notes:src.note||'',lastImportBatchId:importId,importedAt:existing?.importedAt||new Date().toISOString()};
+    const values={number:existing?.number||('HIST-'+String(src.date).replace(/-/g,'')+'-'+String(src.sourceRow)),date:src.date,routeId:route.id,truckId:truck.id,trailerId:'',driverId:driver.id,clientId:client.id,load:leg.load,tons:0,pallets:0,startKm:num(src.startKm),endKm:num(src.endKm),distance:num(src.distance),income:num(src.income),dieselCost:0,tolls:0,allowance:0,other:0,status:'Closed',stage:5,pod:true,invoiceId:existing?.invoiceId||'',approved:true,legs:[leg],sourceWorkbook:source,sourceSheet:src.sheet,sourceRow:src.sourceRow,sourceTrip1Income:num(src.trip1Income),sourceTrip2Income:num(src.trip2Income),sourceExpectedTotalExpenses:num(src.totalExpenses),sourceExpectedProfit:num(src.profit),sourceTargetKml:num(src.targetKml)||2.3,sourceExpectedLitres:num(src.expectedLitres),sourceFuelVarianceLitres:num(src.fuelVarianceLitres),sourceFuelVarianceCash:num(src.fuelVarianceCash),sourceProfitAtTarget:num(src.profitAtTarget),sourceTollEntries:src.tollEntries||[],sourceReturnDate:src.returnDate||'',sourceReturnOrigin:src.returnOrigin||'',sourceReturnDestination:src.returnDestination||'',notes:src.note||'',lastImportBatchId:importId,importedAt:existing?.importedAt||new Date().toISOString()};
     if(trip){Object.assign(trip,values);updated++}else{trip={id,...values};state.trips.push(trip);created++}
     state.diesel=state.diesel.filter(x=>!(x.tripId===id&&/Trip Reports Vernon|driver trip report|excel trip report/i.test(String(x.sourceWorkbook||''))));
     state.expenses=state.expenses.filter(x=>!(x.tripId===id&&/Trip Reports Vernon|driver trip report|excel trip report/i.test(String(x.sourceWorkbook||''))));
@@ -1744,7 +1802,9 @@ function applyTripReportWorkbook(state,data,source,importId){
     if(num(src.totalExpenses)>0&&Math.abs(adjustment)>.02){add('adjustment','Workbook reconciliation',adjustment,'Adjustment required to reconcile the source trip-report Total Expenses');reconciled++}
     recalcTripCosts(state,trip)
   }
-  return{created,updated,skipped,total:data.records.length,fuelRecords,expenseRecords,reconciled,sheets:data.sheets.length,summarySheets:data.summarySheets.length,totalIncome:data.totalIncome,totalExpenses:data.totalExpenses,distance:data.distance}
+  for(const snap of data.summarySheets||[]){const id=snap.id||('monthly_pnl_'+snap.period),existing=state.monthlyPnlSnapshots.find(x=>x.id===id||x.period===snap.period);const vals={...snap,id,sourceWorkbook:source,lastImportBatchId:importId,importedAt:new Date().toISOString()};if(existing)Object.assign(existing,vals);else state.monthlyPnlSnapshots.push(vals);monthlySnapshots++}
+  state.monthlyPnlSnapshots.sort((a,b)=>String(b.period||'').localeCompare(String(a.period||'')));
+  return{created,updated,skipped,total:data.records.length,fuelRecords,expenseRecords,reconciled,sheets:data.sheets.length,summarySheets:data.summarySheets.length,monthlySnapshots,totalIncome:data.totalIncome,totalExpenses:data.totalExpenses,distance:data.distance}
 }
 
 
@@ -1899,8 +1959,8 @@ function excelImportPreviewData(parsed){
   const tripData=tripReportWorkbookData(parsed);
   if(tripData.records.length){
     const sample=tripData.records.slice(0,12).map(x=>({driver:x.driver,registration:x.registration,date:x.date,origin:x.origin,destination:x.destination,returnDestination:x.returnDestination,distance:x.distance,income:x.income,totalExpenses:x.totalExpenses,profit:x.profit,fuelSlips:(x.fuel||[]).length,sheet:x.sheet,sourceRow:x.sourceRow}));
-    const warnings=[];if(tripData.summarySheets.length)warnings.push(tripData.summarySheets.length+' monthly income/expense summary sheet(s) will be archived with the source workbook but not posted again, preventing double-counting of the detailed trips.');
-    return{filename:parsed.name,kind:'trip-reports',sheet:tripData.sheets.map(x=>x.name).join(', '),headers:[],rowCount:tripData.records.length,summary:{rows:tripData.records.length,trips:tripData.records.length,sheets:tripData.sheets.length,summarySheets:tripData.summarySheets.length,totalIncome:tripData.totalIncome,totalExpenses:tripData.totalExpenses,distance:tripData.distance,fuelSlips:tripData.fuelSlips},sample,warnings,tripSheets:tripData.sheets}
+    const warnings=[];if(tripData.summarySheets.length)warnings.push(tripData.summarySheets.length+' monthly income/expense summary sheet(s) will be imported as historical Monthly P&L snapshots. Their totals are not posted again as live trip expenses, preventing double-counting.');
+    return{filename:parsed.name,kind:'trip-reports',sheet:tripData.sheets.map(x=>x.name).join(', '),headers:[],rowCount:tripData.records.length,summary:{rows:tripData.records.length,trips:tripData.records.length,sheets:tripData.sheets.length,summarySheets:tripData.summarySheets.length,monthlyPnlSheets:tripData.summarySheets.length,totalIncome:tripData.totalIncome,totalExpenses:tripData.totalExpenses,distance:tripData.distance,fuelSlips:tripData.fuelSlips},sample,warnings,tripSheets:tripData.sheets}
   }
   const insuranceData=insuranceWorkbookData(parsed);
   if(insuranceData?.current){
@@ -1915,7 +1975,7 @@ function excelImportPreviewData(parsed){
   else sample=best.objects.slice(0,8);
   return{filename:parsed.name,kind:best.kind,sheet:best.sheet,headers:best.headers,rowCount:best.objects.length,summary,sample,warnings:best.kind==='generic'?['Workbook layout is not recognised yet. Review the columns before importing; no data has been changed.']:[]}
 }
-function cloneImportArrays(state){const keys=['trips','routes','clients','trucks','archivedTrucks','trailers','drivers','diesel','expenses','permits','insurancePolicies','companyAssets'];const out={};for(const k of keys)out[k]=JSON.parse(JSON.stringify(state[k]||[]));out.currentInsurancePolicyId=state.currentInsurancePolicyId||'';return out}
+function cloneImportArrays(state){const keys=['trips','routes','clients','trucks','archivedTrucks','trailers','drivers','diesel','expenses','permits','insurancePolicies','companyAssets','monthlyPnlSnapshots'];const out={};for(const k of keys)out[k]=JSON.parse(JSON.stringify(state[k]||[]));out.currentInsurancePolicyId=state.currentInsurancePolicyId||'';return out}
 function findImportTruck(state,pro){const n=carrierFleetNumber(pro);return n?(state.trucks||[]).find(x=>Number((String(x.fleetName||'').match(/\d+/)||['0'])[0])===n):null}
 function trailerTypeFromImport(equipment=''){const s=String(equipment).toLowerCase();return s.includes('taut')?'Tautliner':s.includes('flat')?'Flat deck':'Trailer'}
 function applyCarrierWorkbookRows(state,rows,source,importId){
