@@ -1724,7 +1724,7 @@ function parseIncExpSheet(sheet){
         else if(/Trip Expenses/i.test(label))category='Trip expenses';
         if(category){let amount=Math.abs(excelImportNumber((rows[r]||[])[base+1]));if(!amount)amount=Math.abs(excelImportNumber((rows[r]||[])[base+2]));if(amount)costs.push({category,description:label,amount:Number(amount.toFixed(2)),sourceRow:r+1})}
       }
-      if(income||costs.length){const totalCosts=costs.reduce((a,x)=>a+num(x.amount),0);trucks.push({fleet:h.fleet,label:h.label,income:Number(income.toFixed(2)),costs,totalCosts:Number(totalCosts.toFixed(2)),profit:Number((income-totalCosts).toFixed(2)),sourceColumn:base+1,sourceRow:h.r+1});usedRanges.push([h.r,end])}
+      const blockText=rows.slice(h.r,end).flat().map(tripReportText).join(' '),sourceErrors=[...new Set((blockText.match(/#(?:REF!|DIV\/0!|VALUE!|N\/A)/gi)||[]))];const totalCosts=costs.reduce((a,x)=>a+num(x.amount),0);trucks.push({fleet:h.fleet,label:h.label,income:Number(income.toFixed(2)),costs,totalCosts:Number(totalCosts.toFixed(2)),profit:Number((income-totalCosts).toFixed(2)),sourceColumn:base+1,sourceRow:h.r+1,sourceErrors,dataQuality:sourceErrors.length?'Source formula error':(!income&&!totalCosts?'No activity':'OK')});usedRanges.push([h.r,end])
     }
   }
   const lastTruckEnd=usedRanges.length?Math.max(...usedRanges.map(x=>x[1])):0,overheads=[];let sourceBalance=0,totalTrucksSource=0,started=false;
