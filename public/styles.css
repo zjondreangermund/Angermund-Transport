@@ -826,3 +826,10 @@ body.driver-mode main{padding-bottom:94px!important}
 .source-toll-details{margin:8px 0 14px}.source-toll-details summary{cursor:pointer;color:#9fc9ed;font-size:11px;font-weight:700}.toll-chip-list{display:flex;gap:5px;flex-wrap:wrap;margin-top:8px}.toll-chip-list span{border:1px solid var(--line);border-radius:999px;background:#081827;padding:5px 8px;font-size:9px;color:var(--muted)}
 @media(max-width:900px){.carrier-detail-grid{grid-template-columns:repeat(2,minmax(0,1fr))}.trip-fuel-benchmark{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(max-width:520px){.carrier-detail-grid,.trip-fuel-benchmark{grid-template-columns:1fr}}
+
+
+/* Carrier Orders / TMS */
+.carrier-order-controls{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin:12px 0}
+.carrier-order-controls>input[type="month"]{width:170px}
+.carrier-order-controls>input[type="text"],.carrier-order-controls>input:not([type]){min-width:280px;flex:1}
+@media(max-width:650px){.carrier-order-controls{display:grid;grid-template-columns:1fr}.carrier-order-controls>input[type="month"],.carrier-order-controls>input{width:100%;min-width:0}}
