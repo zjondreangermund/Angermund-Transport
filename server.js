@@ -1811,15 +1811,16 @@ function applyTripReportWorkbook(state,data,source,importId){
 function insuranceText(v){return String(v??'').replace(/\s+/g,' ').trim()}
 function insuranceSheetDate(sheet){
   const rows=(sheet.rows||[]).slice(0,7),candidates=[];
+  const policyDate=v=>{
+    if(typeof v==='number'&&Number.isFinite(v)&&v>=30000&&v<=50000)return excelImportDate(v);
+    const s=String(v??'').trim();if(!s)return'';
+    const dmy=s.match(/\b(\d{1,2})\/(\d{1,2})\/(20\d{2}|\d{2})\b/);
+    if(dmy){let d=Number(dmy[1]),m=Number(dmy[2]),y=Number(dmy[3]);if(y<100)y+=2000;if(d>=1&&d<=31&&m>=1&&m<=12)return y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0')}
+    return excelImportDate(s)
+  };
   for(let r=0;r<rows.length;r++){
-    const row=rows[r]||[],non=row.filter(v=>String(v??'').trim()!=='').length;
-    if(non>3)continue;
-    for(let col=0;col<Math.min(row.length,4);col++){
-      const v=row[col];let d='';
-      if(typeof v==='number'&&Number.isFinite(v)&&v>=30000&&v<=50000)d=excelImportDate(v);
-      else if(/\b(?:20\d{2}[-/.]\d{1,2}[-/.]\d{1,2}|\d{1,2}[-/.]\d{1,2}[-/.](?:20\d{2}|\d{2}))\b/.test(String(v||'')))d=excelImportDate(v);
-      if(d)candidates.push({d,r,col})
-    }
+    const row=rows[r]||[],non=row.filter(v=>String(v??'').trim()!=='').length;if(non>3)continue;
+    for(let col=0;col<Math.min(row.length,4);col++){const d=policyDate(row[col]);if(d)candidates.push({d,r,col})}
   }
   candidates.sort((a,b)=>String(b.d).localeCompare(String(a.d))||a.r-b.r||a.col-b.col);
   return candidates[0]?.d||''
