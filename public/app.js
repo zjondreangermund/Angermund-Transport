@@ -217,7 +217,7 @@ function globalSearchEntries(){
   const rows=[];
   for(const e of workforce())rows.push({kind:'employee',id:e.id,label:e.name||'Worker',detail:[e.jobTitle||e.category||'Worker','Employee'].filter(Boolean).join(' · ')});
   for(const t of db.trucks||[])rows.push({kind:'truck',id:t.id,label:[t.fleetName,t.registration].filter(Boolean).join(' · '),detail:[t.make,t.status,'Truck'].filter(Boolean).join(' · ')});
-  for(const t of db.trips||[])rows.push({kind:'trip',id:t.id,label:t.number||t.id,detail:[journeyRouteLabel(t),truck(t.truckId),journeyLoadLabel(t)].filter(Boolean).join(' · ')});
+  for(const t of db.trips||[])rows.push({kind:'trip',id:t.id,label:t.number||t.id,detail:[t.sourceOrderRef?'Order '+t.sourceOrderRef:'',t.carrierPro||'',journeyRouteLabel(t),truck(t.truckId),journeyLoadLabel(t),t.carrierStatus||''].filter(Boolean).join(' · ')});
   for(const x of db.clients||[])rows.push({kind:'client',id:x.id,label:x.name,detail:['Client',x.contact].filter(Boolean).join(' · ')});
   for(const x of db.routes||[])rows.push({kind:'route',id:x.id,label:x.name,detail:['Route',num(x.distance)?num(x.distance).toLocaleString()+' km':''].filter(Boolean).join(' · ')});
   for(const x of db.invoices||[])rows.push({kind:'invoice',id:x.id,label:x.number||x.id,detail:[client(x.clientId),money(x.amount),x.status].filter(Boolean).join(' · ')});
