@@ -968,3 +968,16 @@ body.driver-mode main{padding-bottom:94px!important}
   .trip-live-summary{grid-template-columns:1fr!important}
   .form-actions,.trip-modal-actions{grid-template-columns:1fr!important}
 }
+
+
+/* Trip driver assignment */
+.trip-driver-assignment{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:12px 0;padding:11px 12px;border:1px solid rgba(47,140,255,.28);border-radius:11px;background:rgba(47,140,255,.07)}
+.trip-driver-assignment.needs-driver{border-color:rgba(255,189,74,.42);background:rgba(255,189,74,.08)}
+.trip-driver-copy{min-width:0;flex:1}.trip-driver-copy span,.trip-driver-copy b,.trip-driver-copy small{display:block}.trip-driver-copy span{font-size:9px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em}.trip-driver-copy b{font-size:13px;margin-top:3px}.trip-driver-copy small{color:var(--muted);font-size:10px;margin-top:4px;line-height:1.4}
+.trip-driver-controls{display:flex;gap:7px;align-items:center;min-width:min(360px,45%)}.trip-driver-controls select{min-width:0;flex:1}.trip-driver-controls button{flex:0 0 auto}
+.trip-driver-assignment.readonly{justify-content:flex-start}
+@media(max-width:650px){
+  .trip-driver-assignment{align-items:stretch;flex-direction:column}
+  .trip-driver-controls{min-width:0;width:100%;display:grid;grid-template-columns:1fr}
+  .trip-driver-controls button,.trip-driver-controls select{width:100%}
+}
