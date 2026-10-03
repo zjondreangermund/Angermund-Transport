@@ -1313,7 +1313,7 @@ app.post('/api/approvals/:id/decision',auth,roles('admin','manager','finance'),u
 });
 
 app.get('/api/state',auth,async(req,res)=>{const row=pool?(await q('SELECT payload,revision,updated_at FROM app_state WHERE id=1'))[0]:{payload:memory.state||{},revision:0};res.json(row)});
-app.put('/api/state',auth,roles('admin','manager','dispatcher','workshop','finance'),async(req,res)=>{if(!req.body||typeof req.body!=='object')return res.status(400).json({error:'Invalid state'});if(pool){const row=(await q('UPDATE app_state SET payload=$1,revision=revision+1,updated_at=now() WHERE id=1 RETURNING revision,updated_at',[req.body]))[0];emit('state',{revision:row.revision,updatedAt:row.updated_at});res.json(row)}else{memory.state=req.body;emit('state',{revision:Date.now()});res.json({revision:Date.now()})}});
+app.put('/api/state',auth,roles('admin','manager','dispatcher','workshop','finance'),async(req,res)=>{if(!req.body||typeof req.body!=='object'||Array.isArray(req.body))return res.status(400).json({error:'Invalid state'});const incoming=req.body;if(pool){const row=(await q("UPDATE app_state SET payload=COALESCE(payload,'{}'::jsonb) || $1::jsonb,revision=revision+1,updated_at=now() WHERE id=1 RETURNING revision,updated_at",[incoming]))[0];emit('state',{revision:row.revision,updatedAt:row.updated_at});res.json(row)}else{memory.state={...(memory.state||{}),...incoming};emit('state',{revision:Date.now()});res.json({revision:Date.now()})}});
 
 
 function legPricingMethod(v){
