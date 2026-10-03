@@ -1796,7 +1796,7 @@ function applyTripReportWorkbook(state,data,source,importId){
     add('other','Other',src.other,'Imported other trip expense');
     const componentTotal=fuelTotal+num(src.sAndT)+num(src.driverTripMoney)+num(src.tolls)+num(src.offloading)+num(src.other),adjustment=num(src.totalExpenses)-componentTotal;
     if(num(src.totalExpenses)>0&&Math.abs(adjustment)>.02){add('adjustment','Workbook reconciliation',adjustment,'Adjustment required to reconcile the source trip-report Total Expenses');reconciled++}
-    recalcTripCosts(state,trip)
+    setTripTypeFromTruck(trip);recalcTripCosts(state,trip)
   }
   for(const snap of data.summarySheets||[]){const id=snap.id||('monthly_pnl_'+snap.period),existing=state.monthlyPnlSnapshots.find(x=>x.id===id||x.period===snap.period);const vals={...snap,id,sourceWorkbook:source,lastImportBatchId:importId,importedAt:new Date().toISOString()};if(existing)Object.assign(existing,vals);else state.monthlyPnlSnapshots.push(vals);monthlySnapshots++}
   state.monthlyPnlSnapshots.sort((a,b)=>String(b.period||'').localeCompare(String(a.period||'')));
@@ -2049,9 +2049,10 @@ function applyCarrierWorkbookRows(state,rows,source,importId){
     let trip=state.trips.find(x=>String(x.externalTmsId||x.sourceTmsId||'')===src.tmsId||x.id==='trip_tms_'+src.tmsId);
     if(!trip){
       const leg={id:'leg_tms_'+src.tmsId,sequence:1,label:'NBL load',routeId:route.id,clientId:nbl.id,load,tons,pallets:0,distance:num(route.distance),namibiaKm:num(route.namibiaKm),pricingMethod:'Manual negotiated',unitRate:0,agreedAmount:actualRate,income:actualRate,status:desiredStatus,pod:false,invoiceId:''};
-      trip={id:'trip_tms_'+src.tmsId,number:'NBL-'+src.tmsId,date:src.pickDate||String(src.tenderDate||'').slice(0,10)||new Date().toISOString().slice(0,10),plannedDropDate:src.dropDate,routeId:route.id,truckId:truck?.id||'',trailerId:trailerIds[0]||'',trailerIds,driverId:'',clientId:nbl.id,load,tons,pallets:0,startKm:0,endKm:0,distance:num(route.distance),income:actualRate,dieselCost:0,tolls:0,allowance:0,other:0,status:desiredStatus,stage:desiredStage,pod:false,invoiceId:'',approved:true,legs:[leg],externalTmsId:src.tmsId,sourceOrderRef:src.orderRef,carrierPro:src.pro,carrierStatus:src.status||'',sourceRate:src.rate,ratePending,equipment:src.equipment,sourceTrailerRegistrations:trailerRegs,carrierDetails,sourceWorkbook:source,importBatchId:importId,importedAt:new Date().toISOString()};state.trips.push(trip);created++;if(desiredStage>1)advancedByActuals++
+      trip={id:'trip_tms_'+src.tmsId,number:'NBL-'+src.tmsId,date:src.pickDate||String(src.tenderDate||'').slice(0,10)||new Date().toISOString().slice(0,10),plannedDropDate:src.dropDate,routeId:route.id,truckId:truck?.id||'',trailerId:trailerIds[0]||'',trailerIds,driverId:'',clientId:nbl.id,load,tons,pallets:0,startKm:0,endKm:0,distance:num(route.distance),income:actualRate,dieselCost:0,tolls:0,allowance:0,other:0,status:desiredStatus,stage:desiredStage,pod:false,invoiceId:'',approved:true,legs:[leg],externalTmsId:src.tmsId,sourceOrderRef:src.orderRef,carrierPro:src.pro,carrierStatus:src.status||'',sourceRate:src.rate,ratePending,equipment:src.equipment,sourceTrailerRegistrations:trailerRegs,carrierDetails,shunter:isShunterTruckId(truck?.id),tripType:isShunterTruckId(truck?.id)?'Shunter':'Transport',sourceWorkbook:source,importBatchId:importId,importedAt:new Date().toISOString()};state.trips.push(trip);created++;if(desiredStage>1)advancedByActuals++
     }else{
       trip.date=src.pickDate||trip.date;trip.plannedDropDate=src.dropDate||trip.plannedDropDate;trip.sourceOrderRef=src.orderRef||trip.sourceOrderRef;trip.carrierPro=src.pro||trip.carrierPro;trip.carrierStatus=src.status||trip.carrierStatus;trip.sourceRate=src.rate;trip.ratePending=ratePending;trip.equipment=src.equipment||trip.equipment;trip.sourceTrailerRegistrations=trailerRegs.length?trailerRegs:trip.sourceTrailerRegistrations;trip.carrierDetails=carrierDetails;trip.sourceWorkbook=source;trip.lastImportBatchId=importId;if(truck)trip.truckId=truck.id;if(trailerIds.length){trip.trailerId=trailerIds[0];trip.trailerIds=trailerIds}trip.routeId=route.id;trip.load=load||trip.load;if(tons>0)trip.tons=tons;
+      setTripTypeFromTruck(trip);
       if(num(trip.stage)<=desiredStage&&!trip.invoiceId&&String(trip.status||'')!=='Closed'){if(num(trip.stage)<desiredStage)advancedByActuals++;trip.stage=desiredStage;trip.status=desiredStatus}
       const leg=ensureTripLegs(state,trip)[0];if(leg){leg.routeId=route.id;leg.clientId=nbl.id;leg.load=load||leg.load;if(tons>0)leg.tons=tons;if(num(trip.stage)<=4)leg.status=desiredStatus;if(!leg.invoiceId){leg.agreedAmount=actualRate;leg.income=actualRate;trip.income=actualRate}}updated++
     }
@@ -2525,6 +2526,7 @@ app.post('/api/admin/trips',auth,roles('admin','manager','dispatcher'),async(req
         journeyLegCount:1,multiLeg:false,
         dieselCost:0,tolls:0,allowance:0,other:0,
         status,stage,pod:false,approved:false,settlementStatus:'Pending',
+        shunter:isShunterTruckId(body.truckId),tripType:isShunterTruckId(body.truckId)?'Shunter':'Transport',
         createdAt:new Date().toISOString(),createdBy:req.user.sub
       };
       syncTripFromLegs(state,trip);recalcTripCosts(state,trip);
@@ -2595,6 +2597,8 @@ app.delete('/api/admin/trips/:tripId/legs/:legId',auth,roles('admin','manager','
     res.json(changed.result)
   }catch(e){res.status(e.status||500).json({error:e.message})}
 });
+function isShunterTruckId(id){return id==='trk_ang4'||id==='trk_ang5'}
+function setTripTypeFromTruck(t){const shunter=isShunterTruckId(t?.truckId);if(t){t.shunter=shunter;t.tripType=shunter?'Shunter':'Transport'}return shunter}
 function isNblClient(client){const k=String((client&&client.name)||'').toLowerCase();return String((client&&client.id)||'')==='cli_nbl'||k==='nbl'||k.indexOf('namibian breweries')>=0}
 function nblInvoiceCycleBounds(endMonth){if(!/^\d{4}-\d{2}$/.test(String(endMonth||''))){const e=Error('Cycle month must be YYYY-MM');e.status=400;throw e}const p=String(endMonth).split('-').map(Number),end=new Date(Date.UTC(p[0],p[1]-1,20)),start=new Date(Date.UTC(p[0],p[1]-2,21));return{start:start.toISOString().slice(0,10),end:end.toISOString().slice(0,10)}}
 function tripInvoiceDate(t){return String((t&&(t.deliveredDate||t.completedDate||t.closedDate||t.date))||'').slice(0,10)}
@@ -2602,6 +2606,7 @@ function tripReadyForBilling(t,leg){return Boolean((leg&&leg.pod)||(t&&t.pod)||n
 function collectNblInvoiceLines(state,nbl,start,end){
   const lines=[],excluded=[];
   for(const t of state.trips||[]){
+    if(isShunterTruckId(t.truckId)){excluded.push({tripId:t.id,tripNumber:t.number||t.id,reason:'Shunter movement - billed through Shunter Recon'});continue}
     const billDate=tripInvoiceDate(t);if(!billDate||billDate<start||billDate>end)continue;
     const mdc=serverMdcRequirement(state,t);if(mdc.required&&!mdc.ready){excluded.push({tripId:t.id,tripNumber:t.number||t.id,reason:serverMdcMissingMessage(mdc)});continue}
     const legs=ensureTripLegs(state,t);
