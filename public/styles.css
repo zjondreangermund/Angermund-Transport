@@ -1141,3 +1141,46 @@ html.mobile-lite-entry .login-panel{
   background:linear-gradient(160deg,rgba(5,19,33,.96),rgba(8,35,56,.94)),url('/angermund-truck.webp') 62% center/cover no-repeat!important
 }
 html.mobile-lite-entry .login-panel .login-card{backdrop-filter:none!important}
+
+/* Trip details modal: actions belong to the scroll content, never overlay it */
+@media(max-width:760px){
+  #entryForm .trip-modal-actions,
+  .modal-card #entryForm .trip-modal-actions{
+    position:relative!important;
+    top:auto!important;
+    right:auto!important;
+    bottom:auto!important;
+    left:auto!important;
+    inset:auto!important;
+    z-index:1!important;
+    float:none!important;
+    transform:none!important;
+    margin:24px 0 0!important;
+    padding:14px 0 calc(10px + env(safe-area-inset-bottom))!important;
+    width:100%!important;
+    max-width:100%!important;
+    background:#0c1b2c!important;
+    border-top:1px solid var(--line)!important;
+    box-shadow:none!important;
+    display:grid!important;
+    grid-template-columns:repeat(2,minmax(0,1fr))!important;
+    gap:9px!important;
+  }
+  #entryForm .trip-modal-actions>button{
+    position:relative!important;
+    inset:auto!important;
+    width:100%!important;
+    min-width:0!important;
+    min-height:48px!important;
+  }
+  #entryForm .trip-modal-actions #advanceFromModal{
+    grid-column:1/-1!important;
+  }
+}
+@media(max-width:390px){
+  #entryForm .trip-modal-actions,
+  .modal-card #entryForm .trip-modal-actions{
+    grid-template-columns:1fr!important;
+  }
+  #entryForm .trip-modal-actions #advanceFromModal{grid-column:auto!important}
+}
