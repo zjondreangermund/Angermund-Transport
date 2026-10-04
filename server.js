@@ -2025,17 +2025,37 @@ function excelImportPreviewData(parsed){
   let best=null;for(const sheet of parsed.sheets){const table=excelSheetTable(sheet),keys=table.headers.map(excelImportKey),has=k=>keys.some(x=>x===k||x.includes(k)),carrier=(has('tms id')?6:0)+(has('order ref')?3:0)+(has('origin name')?2:0)+(has('destination name')?2:0)+(has('rate')?1:0),insurance=(has('registration')?5:0)+(has('insured value')?3:0)+(has('premium')?2:0)+(has('chassis')?1:0);const flat=table.rawRows.flat().map(x=>String(x??'').trim()).filter(Boolean),regHits=flat.filter(x=>/\bN\s*\d{3,6}(?:-\d{1,3})?\s*W\b/i.test(x)).length,insuranceWords=flat.filter(x=>/santam|insurance|insured|premium|policy|goods in transit|public liability/i.test(x)).length,insuranceFallback=regHits>=3&&insuranceWords>=1,kind=carrier>=7?'nbl-carrier':(insurance>=7||insuranceFallback)?'insurance':'generic',score=Math.max(carrier,insurance,insuranceFallback?8:0),recency=kind==='insurance'?excelSheetRecency(table):0;if(!best||score>best.score||(score===best.score&&recency>num(best.recency)))best={...table,kind,score,recency}}
   if(!best)throw Object.assign(Error('No readable worksheet found'),{status:400});
   let sample=[],summary={rows:best.objects.length};
-  if(best.kind==='nbl-carrier'){const rows=best.objects.map(carrierRowFromExcel).filter(x=>x.tmsId);sample=rows.slice(0,12);summary={rows:rows.length,pendingRates:rows.filter(x=>x.rate<=1).length,unassigned:rows.filter(x=>!x.pro).length}}
+  if(best.kind==='nbl-carrier'){const rows=best.objects.map(carrierRowFromExcel).filter(x=>x.tmsId);sample=rows.slice(0,12);summary={rows:rows.length,pendingRates:rows.filter(x=>x.rate<=1).length,unassigned:rows.filter(x=>!x.pro).length,shunter:rows.filter(x=>[4,5].includes(carrierFleetNumber(x.pro))).length}}
   else if(best.kind==='insurance'){const rows=insuranceRowsFromExcel(best);sample=rows.slice(0,12);summary={rows:rows.length,totalInsured:rows.reduce((a,x)=>a+excelImportNumber(x.insuredValue),0),monthlyPremium:rows.reduce((a,x)=>a+excelImportNumber(x.monthlyPremium),0)}}
   else sample=best.objects.slice(0,8);
   return{filename:parsed.name,kind:best.kind,sheet:best.sheet,headers:best.headers,rowCount:best.objects.length,summary,sample,warnings:best.kind==='generic'?['Workbook layout is not recognised yet. Review the columns before importing; no data has been changed.']:[]}
 }
 function cloneImportArrays(state){const keys=['trips','routes','clients','trucks','archivedTrucks','trailers','drivers','diesel','expenses','permits','insurancePolicies','companyAssets','monthlyPnlSnapshots','shunterRecons'];const out={};for(const k of keys)out[k]=JSON.parse(JSON.stringify(state[k]||[]));out.currentInsurancePolicyId=state.currentInsurancePolicyId||'';out.shunterSettings=JSON.parse(JSON.stringify(state.shunterSettings||{}));return out}
 function findImportTruck(state,pro){const n=carrierFleetNumber(pro);return n?(state.trucks||[]).find(x=>Number((String(x.fleetName||'').match(/\d+/)||['0'])[0])===n):null}
+function upsertImportedShunterRecon(state,trip){
+  if(!trip||!isShunterTruckId(trip.truckId))return null;
+  const ref=String(trip.externalTmsId||trip.sourceTmsId||trip.carrierDetails?.tmsId||'').trim(),date=String(trip.date||'').slice(0,10);
+  trip.shunter=true;trip.tripType='Shunter';
+  if(!ref||!/^\d{4}-\d{2}-\d{2}$/.test(date))return null;
+  state.shunterRecons??=[];state.shunterSettings??={weekdayRate:4700,specialMovementRate:1895};
+  let rec=state.shunterRecons.find(x=>x.date===date&&x.truckId===trip.truckId);
+  if(rec?.invoiceId){trip.shunterReconPending=true;return rec}
+  const weekend=[0,6].includes(new Date(date+'T12:00:00').getDay());
+  if(!rec){
+    const rateBasis=weekend?'special':'weekday',refs=[ref],charge=rateBasis==='special'?refs.length*num(state.shunterSettings.specialMovementRate||1895):num(state.shunterSettings.weekdayRate||4700);
+    rec={id:'shrec_'+date.replace(/-/g,'')+'_'+trip.truckId,period:date.slice(0,7),date,truckId:trip.truckId,clientId:'cli_nbl',tmsIds:refs,charge:Number(charge.toFixed(2)),rateBasis,specialDay:false,notes:'Auto-created from Carrier / TMS import',source:'Carrier import',imported:true};
+    state.shunterRecons.push(rec)
+  }else{
+    rec.tmsIds??=[];
+    if(!rec.tmsIds.some(x=>String(x)===ref))rec.tmsIds.push(ref);
+    if(rec.rateBasis!=='manual')rec.charge=Number((rec.rateBasis==='special'?rec.tmsIds.length*num(state.shunterSettings.specialMovementRate||1895):num(state.shunterSettings.weekdayRate||4700)).toFixed(2))
+  }
+  trip.shunterReconId=rec.id;trip.shunterReconPending=false;return rec
+}
 function trailerTypeFromImport(equipment=''){const s=String(equipment).toLowerCase();return s.includes('taut')?'Tautliner':s.includes('flat')?'Flat deck':'Trailer'}
 function applyCarrierWorkbookRows(state,rows,source,importId){
   state.trips??=[];state.routes??=[];state.clients??=[];state.trailers??=[];let nbl=state.clients.find(x=>x.id==='cli_nbl'||/namibian breweries|^nbl$/i.test(String(x.name||'')));if(!nbl){nbl={id:'cli_nbl',name:'Namibian Breweries Limited',terms:30,contact:'',email:'',status:'Active'};state.clients.push(nbl)}
-  let created=0,updated=0,skipped=0,pendingRates=0,unassigned=0,newRoutes=0,newTrailers=0,advancedByActuals=0;
+  let created=0,updated=0,skipped=0,pendingRates=0,unassigned=0,newRoutes=0,newTrailers=0,advancedByActuals=0,shunter=0;
   for(const src of rows){
     if(!src.tmsId){skipped++;continue}
     const truck=findImportTruck(state,src.pro);if(!truck)unassigned++;
@@ -2056,9 +2076,9 @@ function applyCarrierWorkbookRows(state,rows,source,importId){
       if(num(trip.stage)<=desiredStage&&!trip.invoiceId&&String(trip.status||'')!=='Closed'){if(num(trip.stage)<desiredStage)advancedByActuals++;trip.stage=desiredStage;trip.status=desiredStatus}
       const leg=ensureTripLegs(state,trip)[0];if(leg){leg.routeId=route.id;leg.clientId=nbl.id;leg.load=load||leg.load;if(tons>0)leg.tons=tons;if(num(trip.stage)<=4)leg.status=desiredStatus;if(!leg.invoiceId){leg.agreedAmount=actualRate;leg.income=actualRate;trip.income=actualRate}}updated++
     }
-    recalcTripCosts(state,trip)
+    setTripTypeFromTruck(trip);if(isShunterTruckId(trip.truckId)){shunter++;upsertImportedShunterRecon(state,trip)}recalcTripCosts(state,trip)
   }
-  return{created,updated,skipped,pendingRates,unassigned,newRoutes,newTrailers,advancedByActuals,total:rows.length}
+  return{created,updated,skipped,pendingRates,unassigned,newRoutes,newTrailers,advancedByActuals,shunter,total:rows.length}
 }
 
 function applyInsuranceWorkbookData(state,data,source,importId,sourceReceiptId=''){
