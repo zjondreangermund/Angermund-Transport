@@ -553,7 +553,7 @@ function tripCard(t){
   const legs=tripLegs(t),active=activeJourneyLeg(t),closed=tripClosed(t),next={1:'Start loading',2:'Depart',3:'Confirm delivery',4:isShunterTrip(t)?'Shunter recon':(legs.length>1?'Next / invoice':'Create invoice'),5:'Close'}[t.stage]||'Open';
   const routeText=active?route(active.routeId):journeyRouteLabel(t),truckText=truck(t.truckId),driverText=t.driverId?driver(t.driverId):'Driver unassigned';
   const canCapture=['admin','manager','dispatcher'].includes(role);
-  return `<article class="entity-card trip-card-compact clickable-record" data-trip-open="${esc(t.id)}"><div class="panel-head"><div><h3>${esc(t.number)}</h3><small class="trip-card-date">${esc(t.date||'—')}${t.externalTmsId?' · TMS '+esc(t.externalTmsId):''}</small></div><div>${shunterTripBadge(t)}${badge(t.status)}</div></div><p class="trip-summary-route"><b>${esc(routeText||'Route not set')}</b></p><div class="trip-summary-line"><span>${esc(truckText)}</span><span>${esc(driverText)}</span></div>${legs.length>1?'<small class="muted-copy">Leg '+num(active?.sequence)+' of '+legs.length+'</small>':''}${tripRequirementChips(t)}<div class="fleet-card-actions">${closed?'':'<button class="primary small advance-trip" data-id="'+esc(t.id)+'">'+esc(next)+'</button>'}${canCapture?'<button type="button" class="ghost small dispatch-trip-slip" data-trip="'+esc(t.id)+'">📷 Slip</button><button type="button" class="ghost small dispatch-trip-pod" data-trip="'+esc(t.id)+'">📄 POD</button>':''}<button class="ghost small open-trip" data-id="${esc(t.id)}">Details</button></div></article>`
+  return `<article class="entity-card trip-card-compact clickable-record" data-trip-open="${esc(t.id)}"><div class="panel-head"><div><h3>${esc(t.number)}</h3><small class="trip-card-date">${esc(t.date||'—')}${t.externalTmsId?' · TMS '+esc(t.externalTmsId):''}</small></div><div>${shunterTripBadge(t)}${badge(t.status)}</div></div><p class="trip-summary-route"><b>${esc(routeText||'Route not set')}</b></p><div class="trip-summary-line"><span>${esc(truckText)}</span><span>${esc(driverText)}</span></div>${legs.length>1?'<small class="muted-copy">Leg '+num(active?.sequence)+' of '+legs.length+'</small>':''}${tripRequirementChips(t)}<div class="fleet-card-actions">${closed?'':'<button class="primary small advance-trip" data-id="'+esc(t.id)+'">'+esc(next)+'</button>'}${canCapture?'<button type="button" class="ghost small dispatch-trip-slip" data-trip="'+esc(t.id)+'">📷 Slip</button><button type="button" class="ghost small dispatch-trip-pod" data-trip="'+esc(t.id)+'">📄 POD</button>':''}${canCapture?'<button type="button" class="ghost small edit-load-button" data-id="'+esc(t.id)+'">Edit load</button>':''}<button class="ghost small open-trip" data-id="${esc(t.id)}">Details</button></div></article>`
 }
 function trips(){
   const periodRows=selectedTripRows(),rows=periodRows.filter(t=>tripSearchMatches(t,tripSearchTerm));
@@ -648,7 +648,7 @@ function wireShunterRecon(){
 
 function carrierOrders(){
   const all=(db.trips||[]).filter(t=>t.externalTmsId||t.carrierDetails?.tmsId),rows=carrierOrderFilterRows(),open=all.filter(t=>!tripClosed(t)),delivered=all.filter(t=>num(t.stage)>=4||/delivered|closed/i.test(String(t.status||''))),pending=all.filter(t=>t.ratePending||num(t.sourceRate)<=1);
-  const tableRows=rows.length?rows.map(t=>{const c=t.carrierDetails||{},origin=c.origin||{},dest=c.destination||{};return '<tr><td><b>'+esc(c.tmsId||t.externalTmsId||'—')+'</b><br><small>'+esc(c.status||t.carrierStatus||'')+'</small></td><td>'+esc(c.orderRef||t.sourceOrderRef||'—')+'<br><small>'+esc(c.pro||t.carrierPro||'—')+'</small></td><td>'+esc(carrierDateLabel(c.pickPlanStart||t.date))+'<br><small>'+(c.pickActualDeparture?'Departed '+esc(carrierDateLabel(c.pickActualDeparture)):'No actual departure')+'</small></td><td>'+esc([origin.name,origin.city].filter(Boolean).join(' · ')||'—')+'<br><small>→ '+esc([dest.name,dest.city].filter(Boolean).join(' · ')||'—')+'</small></td><td>'+esc(truck(t.truckId))+'<br><small>'+(t.driverId?esc(driver(t.driverId)):'⚠ Driver unassigned')+'</small><br><small>'+esc((c.trailers||t.sourceTrailerRegistrations||[]).join(' / ')||'—')+'</small></td><td>'+esc(c.equipment||t.equipment||'—')+'</td><td>'+(t.ratePending?'<span class="badge warn">Rate pending</span>':'<b>'+money(journeyIncome(t))+'</b>')+'</td><td>'+shunterTripBadge(t)+badge(t.status||'Planned')+'</td><td><button class="link-button open-carrier-trip" data-id="'+esc(t.id)+'">Open</button></td></tr>'}).join(''):'<tr><td colspan="9" class="empty">No carrier orders for this view.</td></tr>';
+  const tableRows=rows.length?rows.map(t=>{const c=t.carrierDetails||{},origin=c.origin||{},dest=c.destination||{};return '<tr><td><b>'+esc(c.tmsId||t.externalTmsId||'—')+'</b><br><small>'+esc(c.status||t.carrierStatus||'')+'</small></td><td>'+esc(c.orderRef||t.sourceOrderRef||'—')+'<br><small>'+esc(c.pro||t.carrierPro||'—')+'</small></td><td>'+esc(carrierDateLabel(c.pickPlanStart||t.date))+'<br><small>'+(c.pickActualDeparture?'Departed '+esc(carrierDateLabel(c.pickActualDeparture)):'No actual departure')+'</small></td><td>'+esc([origin.name,origin.city].filter(Boolean).join(' · ')||'—')+'<br><small>→ '+esc([dest.name,dest.city].filter(Boolean).join(' · ')||'—')+'</small></td><td>'+esc(truck(t.truckId))+'<br><small>'+(t.driverId?esc(driver(t.driverId)):'⚠ Driver unassigned')+'</small><br><small>'+esc((c.trailers||t.sourceTrailerRegistrations||[]).join(' / ')||'—')+'</small></td><td>'+esc(c.equipment||t.equipment||'—')+'</td><td>'+(t.ratePending?'<span class="badge warn">Rate pending</span>':'<b>'+money(journeyIncome(t))+'</b>')+'</td><td>'+shunterTripBadge(t)+badge(t.status||'Planned')+'</td><td><button class="link-button open-carrier-trip" data-id="'+esc(t.id)+'">Open</button>'+(['admin','manager','dispatcher','finance'].includes(role)?'<button type="button" class="link-button edit-load-button" data-id="'+esc(t.id)+'">Edit load</button>':'')+'</td></tr>'}).join(''):'<tr><td colspan="9" class="empty">No carrier orders for this view.</td></tr>';
   return '<section class="kpis">'+kpi('Carrier orders',all.length,'Imported TMS loads')+kpi('Open',open.length,'Not closed')+kpi('Delivered / closed',delivered.length,'Reached delivery stage')+kpi('Rate pending',pending.length,'Source rate 0.01 / missing')+'</section>'
     +'<section class="panel"><div class="toolbar"><div><h2>Carrier Orders / TMS</h2><p class="muted-copy">Operational view of the carrier load-status workbook without opening Excel.</p></div><button class="primary nav-to" data-page="imports">Import latest carrier sheet</button></div>'
     +'<div class="carrier-order-controls"><div class="period-switch"><button type="button" id="carrierOpenMode" class="'+(carrierOrderMode==='open'?'active':'')+'">Open orders</button><button type="button" id="carrierMonthMode" class="'+(carrierOrderMode==='month'?'active':'')+'">Month history</button></div>'+(carrierOrderMode==='month'?'<input id="carrierOrderPeriod" type="month" value="'+esc(carrierOrderPeriod)+'">':'')+'<input id="carrierOrderSearch" value="'+esc(carrierOrderSearch)+'" autocomplete="off" placeholder="Search TMS, order, PRO, destination, truck…"></div>'
@@ -2768,7 +2768,7 @@ function openJourneyLegForm(tripId,legId='',returnLoad=false){
     <div class="notice"><b>${returnLoad&&!existing?'Return/backload leg':'Journey leg'}</b><br>Each leg can have its own client, cargo, route and pricing. The parent journey totals update automatically.</div>
     <div class="form-grid">
       <div class="field"><label>Leg label</label><input id="jlLabel" value="${esc(leg.label||'')}"></div>
-      <div class="field"><label>Status</label><select id="jlStatus">${['Planned','Loading','In transit','At offloading','Delivered'].map(x=>`<option ${x===leg.status?'selected':''}>${x}</option>`).join('')}</select></div>
+      <div class="field"><label>Status</label><select id="jlStatus">${['Planned','Loading','In transit','At offloading','Delivered','Invoiced','Closed'].map(x=>`<option ${x===leg.status?'selected':''}>${x}</option>`).join('')}</select></div>
       <div class="field full"><label>Route</label><select id="jlRoute">${db.routes.map(x=>`<option value="${x.id}" ${x.id===leg.routeId?'selected':''}>${esc(x.name)} · ${num(x.distance).toLocaleString()} km</option>`).join('')}</select></div>
       <div class="field full"><label>Client</label><select id="jlClient"><option value="">Select client…</option>${db.clients.map(x=>`<option value="${x.id}" ${x.id===leg.clientId?'selected':''}>${esc(x.name)}</option>`).join('')}</select></div>
       <div class="field full"><label>Cargo / load</label><input id="jlLoad" value="${esc(leg.load||'')}" placeholder="e.g. Charcoal / furniture"></div>
@@ -2901,6 +2901,32 @@ function saveTripDriverAssignment(tripId){
   setTimeout(()=>openTrip(tripId),30)
 }
 
+function openLoadEdit(tripId){
+  if(!['admin','manager','dispatcher','finance'].includes(role))return;
+  const t=get('trips',tripId),legs=tripLegs(t);let current=legs[0];
+  const input=(name,label,value,type='text')=>'<div class="field"><label>'+label+'</label><input name="'+name+'" type="'+type+'" '+(type==='number'?'min="0" step="any" ':'')+'value="'+esc(value??'')+'"></div>';
+  const select=(name,label,rows,value,display)=>'<div class="field"><label>'+label+'</label><select name="'+name+'"><option value="">Unassigned</option>'+rows.map(x=>'<option value="'+esc(x.id)+'" '+(x.id===value?'selected':'')+'>'+esc(display(x))+'</option>').join('')+'</select></div>';
+  $('modalTitle').textContent='Edit load · '+t.number;
+  $('entryForm').innerHTML='<div class="notice">Corrections update linked views, totals and invoices. Existing POD and receipts stay attached. Manually corrected loads are protected from Excel overwrite.</div><div class="form-grid">'
+    +input('date','Pickup date',t.date,'date')+input('plannedDropDate','Planned delivery',t.plannedDropDate,'date')
+    +select('truckId','Truck',db.trucks,t.truckId,x=>x.fleetName||x.registration)
+    +select('driverId','Driver',db.drivers,t.driverId,x=>x.name)
+    +select('trailerId','Primary trailer',db.trailers,t.trailerId,x=>x.registration)
+    +input('sourceOrderRef','Order reference',t.sourceOrderRef)+input('carrierPro','Carrier PRO',t.carrierPro)
+    +input('carrierStatus','Carrier status',t.carrierStatus)+input('equipment','Equipment',t.equipment)
+    +'<div class="field"><label>Load / journey leg</label><select id="loadEditLeg">'+legs.map(l=>'<option value="'+esc(l.id)+'">'+esc(l.label||'Load '+l.sequence)+'</option>').join('')+'</select></div></div><div id="loadEditFields" class="form-grid"></div><div class="form-actions"><button type="button" class="ghost" id="cancelForm">Cancel</button><button class="primary" id="saveLoadEdit">Save linked changes</button></div>';
+  const showLeg=()=>{current=legs.find(l=>l.id===$('loadEditLeg').value)||legs[0];$('loadEditFields').innerHTML=select('routeId','Route',db.routes,current.routeId,x=>x.name)+select('clientId','Client',db.clients,current.clientId,x=>x.name)+input('load','Cargo / load',current.load)+input('tons','Tons',num(current.tons),'number')+input('pallets','Pallets',num(current.pallets),'number')+input('distance','Distance km',num(current.distance),'number')+input('namibiaKm','Namibia km',num(current.namibiaKm),'number')+'<div class="field"><label>Pricing</label><select name="pricingMethod">'+['Flat trip','Per km','Per ton','Per pallet','Manual negotiated'].map(x=>'<option '+(x===current.pricingMethod?'selected':'')+'>'+x+'</option>').join('')+'</select></div>'+input('unitRate','Unit / flat rate',num(current.unitRate),'number')+input('agreedAmount','Negotiated total',num(current.agreedAmount??current.income),'number');
+    $('entryForm').elements.routeId.onchange=e=>{const r=get('routes',e.target.value);$('entryForm').elements.distance.value=num(r.distance);$('entryForm').elements.namibiaKm.value=num(r.namibiaKm)};
+  };
+  showLeg();$('loadEditLeg').onchange=showLeg;$('modal').classList.remove('hidden');$('cancelForm').onclick=()=>openTrip(tripId);
+  $('entryForm').onsubmit=async e=>{e.preventDefault();const button=$('saveLoadEdit');button.disabled=true;
+    const body=Object.fromEntries(new FormData($('entryForm')));body.legId=current.id;body.expectedUpdatedAt=t.updatedAt||'';
+    // Do not collapse a multi-trailer assignment when only another field changes.
+    if(body.trailerId===(t.trailerId||''))delete body.trailerId;
+    try{await api('/api/admin/trips/'+encodeURIComponent(tripId),{method:'PATCH',body});await refreshCentralState(false);openTrip(tripId);notify('Load and linked records updated')}catch(err){notify(err.message);button.disabled=false}
+  };
+}
+
 function openTrip(id){
   const t=get('trips',id),legs=tripLegs(t),fuel=linked('diesel','tripId',id),expenses=linked('expenses','tripId',id),issues=linked('tripIssues','tripId',id),settlement=tripSettlement(t),m=settlement.fuel;
   const dieselSpend=tripDieselSpend(t),expenseSpend=tripRouteExpenseSpend(t),totalCost=tripCost(t),contribution=tripProfit(t);
@@ -2915,6 +2941,7 @@ function openTrip(id){
       <div><span>Journey contribution</span><b class="${contribution>=0?'positive':'negative'}">${money(contribution)}</b></div>
     </div>
     <div class="journey-summary-bar"><div><b>${esc(truck(t.truckId))}</b><span>${esc(trailer(t.trailerId))}</span></div><div><b>${t.driverId?esc(driver(t.driverId)):'Driver unassigned'}</b><span>${esc(t.date)}</span></div><div><b>${legs.length} priced leg${legs.length===1?'':'s'}</b><span>${legs.filter(x=>x.invoiceId).length} invoiced</span></div></div>
+    ${['admin','manager','dispatcher','finance'].includes(role)?'<div class="form-actions"><button type="button" class="primary" id="editLoadDetails">Edit load</button></div>':''}
     ${tripDriverAssignment(t)}
     ${carrierOrderPanel(t)}
     ${historicalTripSourcePanel(t)}
@@ -2946,6 +2973,7 @@ function openTrip(id){
     </div>`;
   $('modal').classList.remove('hidden');
   $('cancelForm').onclick=()=>$('modal').classList.add('hidden');
+  if($('editLoadDetails'))$('editLoadDetails').onclick=()=>openLoadEdit(id);
   if($('saveTripDriver'))$('saveTripDriver').onclick=()=>saveTripDriverAssignment(id);
   $('refreshTripValues').onclick=async()=>{await refreshCentralState(false);openTrip(id);notify('Journey values refreshed')};
   $('addJourneyLeg').onclick=()=>openJourneyLegForm(id);
@@ -3536,3 +3564,5 @@ if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',
 else setTimeout(dismissLoadingScreen,350);
 window.addEventListener('load',dismissLoadingScreen,{once:true});
 setTimeout(dismissLoadingScreen,2500);
+
+document.addEventListener('click',e=>{const b=e.target.closest('.edit-load-button');if(b){e.preventDefault();e.stopPropagation();openLoadEdit(b.dataset.id)}},true);
