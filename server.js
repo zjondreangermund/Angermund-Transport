@@ -1,3 +1,4 @@
+const {collectOperationalAlerts,groupAlerts,expandOfficeRecipients}=require('./operational-alerts');
 const {editInvoice,bounds:invoiceCustomBounds}=require('./invoice-edit');
 const {VERSION:CLEAN_START_VERSION,resetOperationalState}=require('./operational-reset');
 const {configureTruckDriverDefaults,defaultDriverId,applyTruckDriverDefaults}=require('./truck-driver-defaults');
@@ -574,6 +575,9 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS staff_id text;
 ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check;
 ALTER TABLE users ADD CONSTRAINT users_role_check CHECK(role IN ('admin','manager','dispatcher','driver','warehouse','workshop','finance','site_worker'));
 CREATE TABLE IF NOT EXISTS app_state(id integer PRIMARY KEY DEFAULT 1 CHECK(id=1),payload jsonb NOT NULL DEFAULT '{}'::jsonb,revision bigint NOT NULL DEFAULT 0,updated_at timestamptz DEFAULT now());
+CREATE TABLE IF NOT EXISTS operational_notification_state(id integer PRIMARY KEY CHECK(id=1),payload jsonb NOT NULL DEFAULT '{}'::jsonb);
+INSERT INTO operational_notification_state(id) VALUES(1) ON CONFLICT DO NOTHING;
+CREATE TABLE IF NOT EXISTS operational_notification_outbox(event_key text PRIMARY KEY,payload jsonb NOT NULL,sent_at timestamptz,created_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS app_state_backups(id uuid PRIMARY KEY,version text UNIQUE NOT NULL,payload jsonb NOT NULL,note text,created_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS gps_positions(id bigserial PRIMARY KEY,vehicle_id text NOT NULL,driver_id text,trip_id text,latitude double precision NOT NULL,longitude double precision NOT NULL,speed double precision DEFAULT 0,heading double precision DEFAULT 0,accuracy double precision,source text DEFAULT 'driver',recorded_at timestamptz DEFAULT now());
 CREATE INDEX IF NOT EXISTS gps_vehicle_time ON gps_positions(vehicle_id,recorded_at DESC);
@@ -587,7 +591,10 @@ ALTER TABLE geofence_state ADD COLUMN IF NOT EXISTS last_position_at timestamptz
 CREATE TABLE IF NOT EXISTS notifications(id uuid PRIMARY KEY,type text NOT NULL,severity text DEFAULT 'info',title text NOT NULL,message text NOT NULL,role text,user_id uuid,driver_id text,linked_type text,linked_id text,read boolean DEFAULT false,created_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS push_subscriptions(id bigserial PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE CASCADE,subscription jsonb NOT NULL,created_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS scan_jobs(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id),filename text,status text NOT NULL DEFAULT 'processing',raw_text text,extracted jsonb,confidence double precision,error text,created_at timestamptz DEFAULT now(),completed_at timestamptz);\nCREATE TABLE IF NOT EXISTS driver_uploads(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,trip_id text NOT NULL,kind text NOT NULL,filename text NOT NULL,mime_type text NOT NULL,content bytea NOT NULL,created_at timestamptz DEFAULT now());\nCREATE TABLE IF NOT EXISTS company_receipts(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,linked_type text NOT NULL,linked_id text NOT NULL,kind text NOT NULL,filename text NOT NULL,mime_type text NOT NULL,content bytea NOT NULL,created_at timestamptz DEFAULT now());\nCREATE INDEX IF NOT EXISTS company_receipts_link ON company_receipts(linked_type,linked_id,created_at DESC);\nCREATE TABLE IF NOT EXISTS trip_documents(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,trip_id text NOT NULL,leg_id text,kind text NOT NULL,reference text,filename text,mime_type text,content bytea,created_at timestamptz DEFAULT now());\nCREATE INDEX IF NOT EXISTS trip_documents_trip ON trip_documents(trip_id,created_at DESC);\nCREATE TABLE IF NOT EXISTS mobile_devices(id uuid PRIMARY KEY,device_id text UNIQUE NOT NULL,user_id uuid REFERENCES users(id) ON DELETE CASCADE,driver_id text,token_hash text UNIQUE NOT NULL,name text,platform text,active boolean DEFAULT true,last_seen timestamptz,created_at timestamptz DEFAULT now());
-CREATE TABLE IF NOT EXISTS user_quick_pins(user_id uuid REFERENCES users(id) ON DELETE CASCADE,device_id text NOT NULL,pin_hash text NOT NULL,failed_attempts integer DEFAULT 0,locked_until timestamptz,updated_at timestamptz DEFAULT now(),PRIMARY KEY(user_id,device_id));\nCREATE INDEX IF NOT EXISTS mobile_devices_driver ON mobile_devices(driver_id,active);\nALTER TABLE notifications ADD COLUMN IF NOT EXISTS driver_id text;
+CREATE TABLE IF NOT EXISTS user_quick_pins(user_id uuid REFERENCES users(id) ON DELETE CASCADE,device_id text NOT NULL,pin_hash text NOT NULL,failed_attempts integer DEFAULT 0,locked_until timestamptz,updated_at timestamptz DEFAULT now(),PRIMARY KEY(user_id,device_id));\nCREATE INDEX IF NOT EXISTS mobile_devices_driver ON mobile_devices(driver_id,active);\nALTER TABLE notifications ADD COLUMN IF NOT EXISTS details jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS event_key text;
+CREATE UNIQUE INDEX IF NOT EXISTS notifications_event_key ON notifications(event_key) WHERE event_key IS NOT NULL;
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS driver_id text;
 ALTER TABLE notifications ADD COLUMN IF NOT EXISTS user_id uuid;
 ALTER TABLE mobile_devices ALTER COLUMN driver_id DROP NOT NULL;\nCREATE INDEX IF NOT EXISTS driver_uploads_trip ON driver_uploads(trip_id,created_at DESC);`);
  const email=(process.env.INITIAL_ADMIN_EMAIL||'admin@angermund.local').toLowerCase(),pass=process.env.INITIAL_ADMIN_PASSWORD||'ChangeMe123!';const found=await q('SELECT id FROM users WHERE email=$1',[email]);if(!found.length)await q('INSERT INTO users(id,email,password_hash,name,role) VALUES($1,$2,$3,$4,$5)',[crypto.randomUUID(),email,await bcrypt.hash(pass,12),'System Administrator','admin']);await q("INSERT INTO app_state(id,payload) VALUES(1,'{}') ON CONFLICT(id) DO NOTHING");
@@ -646,8 +653,12 @@ async function createNotification(n){
       if(existing)return existing
     }
   }
-  if(pool)await q('INSERT INTO notifications(id,type,severity,title,message,role,user_id,driver_id,linked_type,linked_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[row.id,row.type,row.severity,row.title,row.message,row.role,row.user_id,row.driver_id,row.linked_type,row.linked_id]);
-  else memory.notifications.unshift(row);
+  row.details=n.items||[];
+  if(pool){
+    const inserted=await q('INSERT INTO notifications(id,type,severity,title,message,role,user_id,driver_id,linked_type,linked_id,event_key,details) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) ON CONFLICT(event_key) WHERE event_key IS NOT NULL DO NOTHING RETURNING id',[row.id,row.type,row.severity,row.title,row.message,row.role,row.user_id,row.driver_id,row.linked_type,row.linked_id,n.eventKey||null,JSON.stringify(row.details)]);
+    if(!inserted.length)return null;
+  }else{if(n.eventKey&&memory.notifications.some(x=>x.eventKey===n.eventKey))return null;row.eventKey=n.eventKey;memory.notifications.unshift(row)}
+
   emit('notification',row);await sendExternal(row);return row
 }
 async function sendExternal(n){
@@ -2510,6 +2521,11 @@ app.post('/api/mdc/record',auth,roles('admin','manager','dispatcher','finance'),
 });
 app.post('/api/payroll/loans',auth,roles('admin','manager','finance'),async(req,res)=>{try{const body=req.body&&typeof req.body==='object'?req.body:{},employeeId=String(body.employeeId||''),amount=num(body.amount),monthlyDeduction=num(body.monthlyDeduction);if(!employeeId||amount<=0||monthlyDeduction<=0)return res.status(400).json({error:'Employee, loan amount and monthly deduction are required'});const changed=await mutateOpsState(state=>{const employee=workforceEmployee(state,employeeId);if(!employee){const e=Error('Employee not found');e.status=404;throw e}state.loans??=[];const loan={id:'loan_'+crypto.randomUUID(),employeeId,date:String(body.date||new Date().toISOString().slice(0,10)),startPeriod:String(body.startPeriod||monthPeriod(new Date())),amount:Number(amount.toFixed(2)),balance:Number(amount.toFixed(2)),monthlyDeduction:Number(monthlyDeduction.toFixed(2)),reference:String(body.reference||'').slice(0,100),notes:String(body.notes||'').slice(0,500),status:['Active','Paused'].includes(body.status)?body.status:'Active',repayments:[],createdAt:new Date().toISOString(),createdBy:req.user.sub};state.loans.unshift(loan);return loan});res.status(201).json(changed.result)}catch(e){res.status(e.status||500).json({error:e.message})}});
 app.patch('/api/payroll/loans/:id',auth,roles('admin','manager','finance'),async(req,res)=>{try{const body=req.body&&typeof req.body==='object'?req.body:{};const changed=await mutateOpsState(state=>{state.loans??=[];const loan=state.loans.find(x=>x.id===req.params.id);if(!loan){const e=Error('Loan not found');e.status=404;throw e}if(body.monthlyDeduction!==undefined){const v=num(body.monthlyDeduction);if(v<=0){const e=Error('Monthly deduction must be greater than zero');e.status=400;throw e}loan.monthlyDeduction=Number(v.toFixed(2))}if(body.balance!==undefined){const v=Math.max(0,num(body.balance));loan.balance=Number(v.toFixed(2));if(v<=0)loan.status='Paid'}if(body.reference!==undefined)loan.reference=String(body.reference||'').slice(0,100);if(body.notes!==undefined)loan.notes=String(body.notes||'').slice(0,500);if(body.startPeriod!==undefined)loan.startPeriod=String(body.startPeriod||'');if(body.status!==undefined&&['Active','Paused','Cancelled','Paid'].includes(String(body.status)))loan.status=String(body.status);loan.updatedAt=new Date().toISOString();loan.updatedBy=req.user.sub;return loan});res.json(changed.result)}catch(e){res.status(e.status||500).json({error:e.message})}});
+app.get('/api/payslips/mine/:id',auth,async(req,res)=>{
+  const state=await readOpsState(),p=(state.payroll||[]).find(x=>x.id===req.params.id),employeeIds=[req.user.driverId,req.user.staffId].filter(Boolean);
+  if(!p||!employeeIds.includes(p.employeeId)||!['Approved','Paid'].includes(p.status))return res.status(404).json({error:'Payslip not available'});
+  const employee=workforceEmployee(state,p.employeeId);res.json({payslip:p,name:employee?.name||req.user.name});
+});
 app.post('/api/payroll/generate',auth,roles('admin','manager','finance'),async(req,res)=>{
   try{
     const period=String(req.body?.period||monthPeriod(new Date()));
@@ -3242,7 +3258,7 @@ app.delete('/api/geofences/:id',auth,roles('admin','manager','dispatcher'),async
   if(pool){const rows=await q('DELETE FROM geofences WHERE id=$1 RETURNING id,name',[id]);if(!rows.length)return res.status(404).json({error:'Geofence not found'});emit('geofence-delete',{id,name:rows[0].name});return res.json({success:true,id})}
   const i=memory.geofences.findIndex(x=>x.id===id);if(i<0)return res.status(404).json({error:'Geofence not found'});const [removed]=memory.geofences.splice(i,1);emit('geofence-delete',{id,name:removed.name});res.json({success:true,id})
 });
-app.get('/api/notifications',auth,async(req,res)=>res.json(pool?await q(`SELECT id,type,severity,title,message,role,user_id AS "userId",driver_id AS "driverId",linked_type AS "linkedType",linked_id AS "linkedId",read,created_at AS "createdAt" FROM notifications WHERE user_id=$1 OR (user_id IS NULL AND driver_id IS NOT NULL AND driver_id=$2) OR (user_id IS NULL AND driver_id IS NULL AND role=$3) OR (user_id IS NULL AND driver_id IS NULL AND role IS NULL) ORDER BY created_at DESC LIMIT 100`,[req.user.sub,req.user.driverId||'',req.user.role]):memory.notifications.filter(x=>x.user_id?x.user_id===req.user.sub:x.driver_id?x.driver_id===req.user.driverId:x.role?x.role===req.user.role:true).slice(0,100)));
+app.get('/api/notifications',auth,async(req,res)=>res.json(pool?await q(`SELECT id,type,severity,title,message,role,user_id AS "userId",driver_id AS "driverId",linked_type AS "linkedType",linked_id AS "linkedId",details,read,created_at AS "createdAt" FROM notifications WHERE user_id=$1 OR (user_id IS NULL AND driver_id IS NOT NULL AND driver_id=$2) OR (user_id IS NULL AND driver_id IS NULL AND role=$3) OR (user_id IS NULL AND driver_id IS NULL AND role IS NULL) ORDER BY created_at DESC LIMIT 100`,[req.user.sub,req.user.driverId||'',req.user.role]):memory.notifications.filter(x=>x.user_id?x.user_id===req.user.sub:x.driver_id?x.driver_id===req.user.driverId:x.role?x.role===req.user.role:true).slice(0,100)));
 app.patch('/api/notifications/:id/read',auth,async(req,res)=>{if(pool)await q('UPDATE notifications SET read=true WHERE id=$1',[req.params.id]);else{const n=memory.notifications.find(x=>x.id===req.params.id);if(n)n.read=true}res.json({success:true})});
 app.get('/api/push/status',auth,async(req,res)=>{
   let count=0;
@@ -3324,6 +3340,33 @@ app.post('/api/documents/scan',auth,upload.single('document'),async(req,res)=>{i
 app.get('/api/documents/scans/:id',auth,async(req,res)=>{const row=pool?(await q('SELECT id,filename,status,raw_text AS "rawText",extracted,confidence,error,created_at AS "createdAt",completed_at AS "completedAt" FROM scan_jobs WHERE id=$1',[req.params.id]))[0]:memory.scanJobs.find(x=>x.id===req.params.id);if(!row)return res.status(404).json({error:'Scan not found'});res.json(row)});
 app.post('/api/notifications/test',auth,roles('admin','manager'),async(req,res)=>res.status(201).json(await createNotification({type:'test',severity:'info',title:'Angermund Transport test alert',message:'Notification providers are connected and working.'})));
 
+let enhancedAlertsRunning=false,enhancedAlertsLastRun=0;
+async function ensureEnhancedNotifications(){
+  if(enhancedAlertsRunning||Date.now()-enhancedAlertsLastRun<30000||!pool)return;
+  enhancedAlertsRunning=true;enhancedAlertsLastRun=Date.now();
+  let c;
+  try{
+    c=await pool.connect();
+    await c.query('BEGIN');
+    // Lock the durable cursor before reading the latest state; concurrent replicas cannot enqueue duplicates.
+    const row=(await c.query('SELECT payload FROM operational_notification_state WHERE id=1 FOR UPDATE')).rows[0];
+    const state=(await c.query('SELECT payload FROM app_state WHERE id=1')).rows[0]?.payload||{};
+    const users=(await c.query('SELECT id,role,driver_id,staff_id,active FROM users WHERE active=true')).rows;
+    const result=collectOperationalAlerts(state,row?.payload||{},users);
+    for(const batch of groupAlerts(expandOfficeRecipients(result.events,users))){
+      const eventKey='ops:'+crypto.createHash('sha256').update(batch.eventKeys.slice().sort().join('|')).digest('hex');
+      await c.query('INSERT INTO operational_notification_outbox(event_key,payload) VALUES($1,$2) ON CONFLICT DO NOTHING',[eventKey,batch]);
+    }
+    await c.query('UPDATE operational_notification_state SET payload=$1 WHERE id=1',[result.cursor]);
+    await c.query('COMMIT');
+    const pending=await q('SELECT event_key,payload FROM operational_notification_outbox WHERE sent_at IS NULL ORDER BY created_at LIMIT 100');
+    for(const event of pending){
+      await createNotification({...event.payload,eventKey:event.event_key});
+      await q('UPDATE operational_notification_outbox SET sent_at=now() WHERE event_key=$1',[event.event_key]);
+    }
+    if(result.events.length||pending.length)console.log('Enhanced notifications',{events:result.events.length,digests:pending.length});
+  }catch(e){try{if(c)await c.query('ROLLBACK')}catch{}console.error('Enhanced notifications failed',e.message)}finally{if(c)c.release();enhancedAlertsRunning=false}
+}
 async function ensureOperationalAlerts(){
   try{
     const today=new Date(Date.now()+2*60*60*1000).toISOString().slice(0,10),snapshot=await readOpsState(),alerts=[];
@@ -3416,4 +3459,4 @@ app.get('/download/android',async(req,res)=>{
   }
 });
 app.get('/login',(req,res)=>{res.setHeader('Cache-Control','no-store, no-cache, must-revalidate');res.sendFile(path.join(root,'index.html'))});app.use(express.static(root,{maxAge:'1h',setHeaders:(res,file)=>{if(file.endsWith('.html')||file.endsWith('/app.js')||file.endsWith('/styles.css')||file.endsWith('/sw.js'))res.setHeader('Cache-Control','no-store, no-cache, must-revalidate')}}));app.use((req,res)=>res.sendFile(path.join(root,'index.html')));
-initDb().then(async()=>{if(process.argv.includes('--init-only'))return pool?.end();const fleet=await ensureCanonicalFleet();if(!fleet?.skipped)console.log('Canonical fleet applied',fleet);const insuranceImport=await applyInsuranceWorkbookImport();if(!insuranceImport?.skipped)console.log('Insurance workbook import applied',insuranceImport);const imported=await applyWorkforceEnvImport();if(!imported?.skipped)console.log('Workforce import applied',imported);const linked=await reconcileWorkforceUserLinks();if(linked.linkedDrivers||linked.linkedStaff)console.log('Workforce user links reconciled',linked);const tripImport=await applyTripWorkbookTestImport();if(!tripImport?.skipped)console.log('Trip workbook test import applied',tripImport.actual);else console.log('Trip workbook test import already applied',tripImport.actual||'');const carrierImport=await applyNblCarrierLoadImport();if(!carrierImport?.skipped)console.log('NBL carrier loads imported',carrierImport);const shunterImport=await applyShunterReconAugustImport();if(!shunterImport?.skipped)console.log('Shunter recon imported',shunterImport);const payeMigration=await applyPayeThresholdMigration();if(!payeMigration?.skipped)console.log('PAYE threshold migration applied',payeMigration);await applyAuthorizedCleanStart();await repairEditedLoadWorkflow();await initializeTruckDriverDefaults();app.listen(PORT,()=>console.log(`Angermund Transport V3 running on port ${PORT}`));setTimeout(ensureMonthEndPayroll,15000);setInterval(ensureMonthEndPayroll,6*60*60*1000);setTimeout(ensureOperationalAlerts,20000);setInterval(ensureOperationalAlerts,10*60*1000)}).catch(e=>{console.error('Startup failed',e);process.exit(1)});
+initDb().then(async()=>{if(process.argv.includes('--init-only'))return pool?.end();const fleet=await ensureCanonicalFleet();if(!fleet?.skipped)console.log('Canonical fleet applied',fleet);const insuranceImport=await applyInsuranceWorkbookImport();if(!insuranceImport?.skipped)console.log('Insurance workbook import applied',insuranceImport);const imported=await applyWorkforceEnvImport();if(!imported?.skipped)console.log('Workforce import applied',imported);const linked=await reconcileWorkforceUserLinks();if(linked.linkedDrivers||linked.linkedStaff)console.log('Workforce user links reconciled',linked);const tripImport=await applyTripWorkbookTestImport();if(!tripImport?.skipped)console.log('Trip workbook test import applied',tripImport.actual);else console.log('Trip workbook test import already applied',tripImport.actual||'');const carrierImport=await applyNblCarrierLoadImport();if(!carrierImport?.skipped)console.log('NBL carrier loads imported',carrierImport);const shunterImport=await applyShunterReconAugustImport();if(!shunterImport?.skipped)console.log('Shunter recon imported',shunterImport);const payeMigration=await applyPayeThresholdMigration();if(!payeMigration?.skipped)console.log('PAYE threshold migration applied',payeMigration);await applyAuthorizedCleanStart();await repairEditedLoadWorkflow();await initializeTruckDriverDefaults();app.listen(PORT,()=>console.log(`Angermund Transport V3 running on port ${PORT}`));setTimeout(ensureMonthEndPayroll,15000);setInterval(ensureMonthEndPayroll,6*60*60*1000);setTimeout(ensureEnhancedNotifications,20000);setInterval(ensureEnhancedNotifications,60000);setTimeout(ensureOperationalAlerts,20000);setInterval(ensureOperationalAlerts,10*60*1000)}).catch(e=>{console.error('Startup failed',e);process.exit(1)});
