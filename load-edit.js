@@ -1,3 +1,4 @@
+const {defaultDriverId,syncDriverReferences}=require('./truck-driver-defaults');
 'use strict';
 const fail=message=>{const e=new Error(message);e.status=400;throw e};
 const number=v=>{const n=Number(v);if(!Number.isFinite(n)||n<0)fail('Amounts and quantities must be valid non-negative numbers');return n};
@@ -43,6 +44,9 @@ function editLoad(state,t,body,helpers){
   const legs=ensureTripLegs(state,t),leg=body.legId&&!String(body.legId).startsWith('legacy_')?legs.find(x=>x.id===body.legId):legs[0];if(!leg)fail('Load leg not found');
   if(body.status!==undefined){if(!workflowStages[body.status])fail('Invalid load status');leg.status=body.status;syncJourneyWorkflow(t)}
   const old={truckId:t.truckId,date:t.date,driverId:t.driverId};
+  const explicitDriver=body.driverAssignmentOverride===true||body.driverId!==undefined&&String(body.driverId||'')!==String(t.driverId||'');
+  if(explicitDriver){t.driverAssignmentOverride=true;t.driverAssignmentSource='manual';t.assignedDriverAt=new Date().toISOString()}
+  if(body.truckId!==undefined&&body.truckId!==t.truckId&&!explicitDriver&&!t.driverAssignmentOverride){body={...body,driverId:defaultDriverId(state,body.truckId)};t.driverAssignmentSource='truck-default'}
   for(const [field,collection,optional] of [['truckId','trucks',true],['driverId','drivers',true],['trailerId','trailers',true],['routeId','routes',false],['clientId','clients',false]]){
     if(body[field]===undefined)continue;const value=String(body[field]||'');
     if((value||!optional)&&!(state[collection]||[]).some(x=>x.id===value))fail('Invalid '+field);
@@ -67,7 +71,7 @@ function editLoad(state,t,body,helpers){
   }
   t.shunter=isShunterTruckId(t.truckId);t.tripType=t.shunter?'Shunter':'Transport';
   if(reconChanged&&t.shunter)helpers.upsertImportedShunterRecon(state,t);
-  syncTripFromLegs(state,t);t.load=legs[0].load;recalcTripCosts(state,t);syncLinkedLoad(state,t,leg);
+  syncTripFromLegs(state,t);t.load=legs[0].load;recalcTripCosts(state,t);syncLinkedLoad(state,t,leg);syncDriverReferences(state,t);
   if(t.carrierDetails){if(body.date!==undefined){t.carrierDetails.pickPlanStart=t.date;t.carrierDetails.pickPlanEnd=t.date}if(body.plannedDropDate!==undefined){t.carrierDetails.dropPlanStart=t.plannedDropDate;t.carrierDetails.dropPlanEnd=t.plannedDropDate}}
   t.updatedAt=new Date().toISOString();return{trip:t,leg};
 }
