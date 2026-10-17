@@ -1,3 +1,4 @@
+const {editLoad,syncLinkedLoad}=require('./load-edit');
 const express=require('express'),path=require('path'),fs=require('fs'),crypto=require('crypto'),jwt=require('jsonwebtoken'),bcrypt=require('bcryptjs'),multer=require('multer'),webpush=require('web-push'),ExcelJS=require('exceljs');
 const {Pool}=require('pg');const {createWorker}=require('tesseract.js');
 const app=express(),root=path.join(__dirname,'public'),upload=multer({storage:multer.memoryStorage(),limits:{fileSize:12*1024*1024}});
@@ -1321,7 +1322,7 @@ function legPricingMethod(v){
   return ['Flat trip','Per km','Per ton','Per pallet','Manual negotiated'].includes(x)?x:'Flat trip'
 }
 function calculateLegIncome(leg){
-  const method=legPricingMethod(leg.pricingMethod),rate=num(leg.unitRate),manual=num(leg.agreedAmount||leg.income);
+  const method=legPricingMethod(leg.pricingMethod),rate=num(leg.unitRate),manual=num(leg.agreedAmount??leg.income);
   if(method==='Per km')return rate*num(leg.distance);
   if(method==='Per ton')return rate*num(leg.tons);
   if(method==='Per pallet')return rate*num(leg.pallets);
@@ -1347,8 +1348,8 @@ function syncTripFromLegs(state,t){
   const legs=ensureTripLegs(state,t).sort((a,b)=>num(a.sequence)-num(b.sequence));
   legs.forEach((leg,i)=>{
     const r=(state.routes||[]).find(x=>x.id===leg.routeId);
-    leg.sequence=i+1;leg.label=String(leg.label||('Leg '+(i+1)));leg.distance=num(leg.distance)||num(r?.distance);
-    if(!leg.namibiaKm)leg.namibiaKm=num(r?.namibiaKm);
+    leg.sequence=i+1;leg.label=String(leg.label||('Leg '+(i+1)));leg.distance=leg.distance==null?num(r?.distance):num(leg.distance);
+    if(leg.namibiaKm==null)leg.namibiaKm=num(r?.namibiaKm);
     leg.pricingMethod=legPricingMethod(leg.pricingMethod);leg.income=Number(calculateLegIncome(leg).toFixed(2))
   });
   const first=legs[0]||{};
@@ -1461,7 +1462,7 @@ function monthPeriod(d=new Date()){return d.getUTCFullYear()+'-'+String(d.getUTC
 function previousMonthPeriod(d=new Date()){const x=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()-1,1));return monthPeriod(x)}
 async function readOpsState(){if(pool){const row=(await q('SELECT payload FROM app_state WHERE id=1'))[0];return row?.payload||{}}return memory.state||{}}
 function driverTrip(state,req){const did=req.user.driverId;if(!did){const e=Error('Driver account is not linked to a driver profile');e.status=400;throw e}const trip=(state.trips||[]).find(x=>x.id===req.params.tripId);if(!trip){const e=Error('Trip not found');e.status=404;throw e}if(trip.driverId!==did){const e=Error('This trip is not assigned to you');e.status=403;throw e}return{trip,did}}
-async function mutateOpsState(mutator){if(pool){const c=await pool.connect();try{await c.query('BEGIN');const row=(await c.query('SELECT payload,revision FROM app_state WHERE id=1 FOR UPDATE')).rows[0]||{payload:{},revision:0};const state=row.payload||{};const result=await mutator(state);const updated=(await c.query('UPDATE app_state SET payload=$1,revision=revision+1,updated_at=now() WHERE id=1 RETURNING revision,updated_at',[state])).rows[0];await c.query('COMMIT');emit('state',{revision:updated.revision,updatedAt:updated.updated_at});return{result,revision:updated.revision}}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}const state=memory.state||{};const result=await mutator(state);memory.state=state;const revision=Date.now();emit('state',{revision});return{result,revision}}
+async function mutateOpsState(mutator){if(pool){const c=await pool.connect();try{await c.query('BEGIN');const row=(await c.query('SELECT payload,revision FROM app_state WHERE id=1 FOR UPDATE')).rows[0]||{payload:{},revision:0};const state=row.payload||{};const result=await mutator(state);const updated=(await c.query('UPDATE app_state SET payload=$1,revision=revision+1,updated_at=now() WHERE id=1 RETURNING revision,updated_at',[state])).rows[0];await c.query('COMMIT');emit('state',{revision:updated.revision,updatedAt:updated.updated_at});return{result,revision:updated.revision}}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}const state=structuredClone(memory.state||{});const result=await mutator(state);memory.state=state;const revision=Date.now();emit('state',{revision});return{result,revision}}
 
 
 
@@ -2058,6 +2059,7 @@ function applyCarrierWorkbookRows(state,rows,source,importId){
   let created=0,updated=0,skipped=0,pendingRates=0,unassigned=0,newRoutes=0,newTrailers=0,advancedByActuals=0,shunter=0;
   for(const src of rows){
     if(!src.tmsId){skipped++;continue}
+    if(state.trips.some(x=>(String(x.externalTmsId||'')===String(src.tmsId)||x.id==='trip_tms_'+src.tmsId)&&x.loadEditedAt)){skipped++;continue}
     const truck=findImportTruck(state,src.pro);if(!truck)unassigned++;
     const trailerRegs=String(src.trailers||'').split(/[\/;,]+/).map(x=>x.trim()).filter(Boolean),trailerIds=[];
     for(const reg of trailerRegs){let tr=state.trailers.find(x=>fleetKey(x.registration)===fleetKey(reg));if(!tr){tr={id:'trl_excel_'+excelImportSlug(reg),registration:reg,type:trailerTypeFromImport(src.equipment),status:'Available',sourceWorkbook:source,importBatchId:importId};state.trailers.push(tr);newTrailers++}trailerIds.push(tr.id)}
@@ -2564,6 +2566,21 @@ app.post('/api/admin/trips',auth,roles('admin','manager','dispatcher'),async(req
   }catch(e){res.status(e.status||500).json({error:e.message})}
 });
 
+app.patch('/api/admin/trips/:tripId',auth,roles('admin','manager','dispatcher','finance'),async(req,res)=>{
+  try{
+    const changed=await mutateOpsState(state=>{
+      const t=(state.trips||[]).find(x=>x.id===req.params.tripId);if(!t){const e=Error('Load not found');e.status=404;throw e}
+      if(req.body.expectedUpdatedAt!==undefined&&String(t.updatedAt||'')!==String(req.body.expectedUpdatedAt)){const e=Error('This load changed. Reopen it before saving.');e.status=409;throw e}
+      const result=editLoad(state,t,req.body,{ensureTripLegs,syncTripFromLegs,recalcTripCosts,isShunterTruckId,upsertImportedShunterRecon});
+      t.updatedBy=req.user.sub;t.loadEditedAt=t.updatedAt;
+      state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:t.updatedAt,actor:req.user.name||req.user.email||req.user.role,action:'Load corrected and linked records updated',linkedType:'trip',linkedId:t.id});state.audit=state.audit.slice(0,100);
+      return result;
+    });
+    await linkTripLegGeofences(changed.result.trip.id,changed.result.leg.id);
+    res.json(changed.result);
+  }catch(e){res.status(e.status||500).json({error:e.message})}
+});
+
 app.post('/api/admin/trips/:tripId/legs',auth,roles('admin','manager','dispatcher','finance'),async(req,res)=>{
   try{
     const body=req.body&&typeof req.body==='object'?req.body:{};
@@ -2591,13 +2608,11 @@ app.patch('/api/admin/trips/:tripId/legs/:legId',auth,roles('admin','manager','d
     const changed=await mutateOpsState(async state=>{
       const t=(state.trips||[]).find(x=>x.id===req.params.tripId);if(!t){const e=Error('Trip not found');e.status=404;throw e}
       const legs=ensureTripLegs(state,t),leg=String(req.params.legId).startsWith('legacy_')?legs[0]:legs.find(x=>x.id===req.params.legId);if(!leg){const e=Error('Journey leg not found');e.status=404;throw e}
-      if(body.routeId!==undefined){const r=(state.routes||[]).find(x=>x.id===body.routeId);if(!r){const e=Error('Route not found');e.status=400;throw e}leg.routeId=String(body.routeId);if(body.distance===undefined)leg.distance=num(r.distance);if(body.namibiaKm===undefined)leg.namibiaKm=num(r.namibiaKm)}
-      if(body.clientId!==undefined){if(!(state.clients||[]).some(x=>x.id===body.clientId)){const e=Error('Client not found');e.status=400;throw e}leg.clientId=String(body.clientId)}
-      for(const key of ['label','load','status'])if(body[key]!==undefined)leg[key]=String(body[key]||'');
-      for(const key of ['tons','pallets','distance','namibiaKm','unitRate','agreedAmount'])if(body[key]!==undefined)leg[key]=num(body[key]);
-      if(body.pricingMethod!==undefined)leg.pricingMethod=legPricingMethod(body.pricingMethod);
+      editLoad(state,t,{...body,legId:leg.id},{ensureTripLegs,syncTripFromLegs,recalcTripCosts,isShunterTruckId,upsertImportedShunterRecon});
+      if(body.label!==undefined)leg.label=String(body.label||'').slice(0,240);
+      if(body.status!==undefined){if(!['Planned','Loading','In transit','At offloading','Delivered','Invoiced','Closed'].includes(body.status)){const e=Error('Invalid leg status');e.status=400;throw e}leg.status=body.status}
       if(body.pod!==undefined)leg.pod=Boolean(body.pod);
-      leg.income=Number(calculateLegIncome(leg).toFixed(2));leg.updatedAt=new Date().toISOString();syncTripFromLegs(state,t);recalcTripCosts(state,t);
+      leg.updatedAt=t.updatedAt;t.loadEditedAt=t.updatedAt;
       return{trip:t,leg}
     });
     const geo=await linkTripLegGeofences(changed.result.trip.id,changed.result.leg.id);
