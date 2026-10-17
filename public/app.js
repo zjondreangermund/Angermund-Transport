@@ -2317,9 +2317,21 @@ function rates(){
       <div class="field"><label>Waiting days</label><input id="jqWaiting" type="number" value="0"></div>
       <div class="field full"><label>Target profit margin (%)</label><input id="jqMargin" type="number" value="${num(db.settings.defaultMargin)}"></div>
     </div><div id="journeyQuoteResult"></div><button class="primary" id="saveJourneyQuote">Save journey quotation</button></div></div></section>
-    <section class="panel" style="margin-top:18px"><h2>Standing / detention</h2><p>${db.settings.freeStandingHours} free offloading hours, then <b>${money(db.settings.standingFee)}</b> per commenced 24 hours excluding VAT. Weekend/public holiday guide: <b>${money(db.settings.weekendStandingFee)}</b>.</p></section>`;
+    ${savedQuotationsPanel()}<section class="panel" style="margin-top:18px"><h2>Standing / detention</h2><p>${db.settings.freeStandingHours} free offloading hours, then <b>${money(db.settings.standingFee)}</b> per commenced 24 hours excluding VAT. Weekend/public holiday guide: <b>${money(db.settings.weekendStandingFee)}</b>.</p></section>`;
+}
+function savedQuotationsPanel(){
+  const rows=(db.quotes||[]).slice().sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
+  return '<section class="panel" style="margin-top:18px"><h2>Saved quotations</h2><div class="table-wrap"><table><thead><tr><th>Quotation</th><th>Date</th><th>Loads</th><th>Quoted amount</th><th>Status</th><th></th></tr></thead><tbody>'+(rows.length?rows.map(q=>'<tr><td>'+esc(q.number||q.id)+'</td><td>'+esc(q.date||'')+'</td><td>'+esc((q.legs||[]).map(l=>client(l.clientId)+' · '+route(l.routeId)).join(' / '))+'</td><td>'+money(q.quotedIncome)+'</td><td>'+badge(q.status||'Draft')+'</td><td><button type="button" class="link-button open-saved-quote" data-id="'+esc(q.id)+'">Open / print</button></td></tr>').join(''):'<tr><td colspan="6">No saved quotations yet.</td></tr>')+'</tbody></table></div></section>';
+}
+function openSavedQuotation(id){
+  const q=(db.quotes||[]).find(x=>x.id===id);if(!q)return notify('Quotation not found');
+  $('modalTitle').textContent='Quotation '+(q.number||'');
+  const body='<h2>Angermund Transport CC</h2><h3>'+esc(q.number||'Quotation')+'</h3><p>'+esc(q.date||'')+' · '+esc(q.status||'Draft')+'</p><div class="table-wrap"><table><thead><tr><th>Client</th><th>Route</th><th>Cargo</th><th>Amount</th></tr></thead><tbody>'+(q.legs||[]).map(l=>'<tr><td>'+esc(client(l.clientId))+'</td><td>'+esc(route(l.routeId))+'</td><td>'+esc(l.load||'')+'</td><td>'+money(quoteLegIncome(l))+'</td></tr>').join('')+'</tbody></table></div><h3>Total quoted: '+money(q.quotedIncome)+'</h3>';
+  $('entryForm').innerHTML=body+'<div class="form-actions"><button type="button" class="ghost" id="cancelForm">Close</button><button type="button" class="primary" id="printSavedQuote">Print / PDF</button></div>';
+  $('entryForm').onsubmit=e=>e.preventDefault();$('modal').classList.remove('hidden');$('cancelForm').onclick=()=>$('modal').classList.add('hidden');$('printSavedQuote').onclick=()=>openPrintWindow(q.number||'Quotation',body);
 }
 function wireRates(){
+  document.querySelectorAll('.open-saved-quote').forEach(b=>b.onclick=()=>openSavedQuotation(b.dataset.id));
   wireQuoteLegRows();
   ['jqKml','jqDiesel','jqMdc','jqDriver','jqTolls','jqWear','jqOther','jqWaiting','jqMargin'].forEach(id=>{if($(id))$(id).oninput=renderJourneyQuote});
   if($('addQuoteLeg'))$('addQuoteLeg').onclick=()=>{readQuoteLegRows();const r=db.routes[0]||{};journeyQuoteLegs.push({id:uid('ql'),label:'Additional load',routeId:r.id||'',clientId:'',load:'',tons:0,pallets:0,pricingMethod:'Manual negotiated',unitRate:0,manualAmount:0});renderJourneyQuote()};
