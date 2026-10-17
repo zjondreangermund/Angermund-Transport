@@ -1,4 +1,4 @@
-const {editLoad,syncLinkedLoad}=require('./load-edit');
+const {editLoad,syncLinkedLoad,syncJourneyWorkflow}=require('./load-edit');
 const express=require('express'),path=require('path'),fs=require('fs'),crypto=require('crypto'),jwt=require('jsonwebtoken'),bcrypt=require('bcryptjs'),multer=require('multer'),webpush=require('web-push'),ExcelJS=require('exceljs');
 const {Pool}=require('pg');const {createWorker}=require('tesseract.js');
 const app=express(),root=path.join(__dirname,'public'),upload=multer({storage:multer.memoryStorage(),limits:{fileSize:12*1024*1024}});
@@ -1460,6 +1460,17 @@ function generatePayrollPeriod(state,period,auto=false){
 }
 function monthPeriod(d=new Date()){return d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0')}
 function previousMonthPeriod(d=new Date()){const x=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()-1,1));return monthPeriod(x)}
+async function repairEditedLoadWorkflow(){
+  return mutateOpsState(state=>{
+    let repaired=0;
+    for(const t of state.trips||[]){
+      if(!t.loadEditedAt||Number(t.stage)>=5||t.invoiceId||!(t.legs||[]).length||t.legs.some(l=>l.invoiceId))continue;
+      const status=t.status,stage=t.stage;syncJourneyWorkflow(t);
+      if(t.status!==status||t.stage!==stage)repaired++;
+    }
+    return{repaired};
+  });
+}
 async function readOpsState(){if(pool){const row=(await q('SELECT payload FROM app_state WHERE id=1'))[0];return row?.payload||{}}return memory.state||{}}
 function driverTrip(state,req){const did=req.user.driverId;if(!did){const e=Error('Driver account is not linked to a driver profile');e.status=400;throw e}const trip=(state.trips||[]).find(x=>x.id===req.params.tripId);if(!trip){const e=Error('Trip not found');e.status=404;throw e}if(trip.driverId!==did){const e=Error('This trip is not assigned to you');e.status=403;throw e}return{trip,did}}
 async function mutateOpsState(mutator){if(pool){const c=await pool.connect();try{await c.query('BEGIN');const row=(await c.query('SELECT payload,revision FROM app_state WHERE id=1 FOR UPDATE')).rows[0]||{payload:{},revision:0};const state=row.payload||{};const result=await mutator(state);const updated=(await c.query('UPDATE app_state SET payload=$1,revision=revision+1,updated_at=now() WHERE id=1 RETURNING revision,updated_at',[state])).rows[0];await c.query('COMMIT');emit('state',{revision:updated.revision,updatedAt:updated.updated_at});return{result,revision:updated.revision}}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}const state=structuredClone(memory.state||{});const result=await mutator(state);memory.state=state;const revision=Date.now();emit('state',{revision});return{result,revision}}
@@ -2610,7 +2621,7 @@ app.patch('/api/admin/trips/:tripId/legs/:legId',auth,roles('admin','manager','d
       const legs=ensureTripLegs(state,t),leg=String(req.params.legId).startsWith('legacy_')?legs[0]:legs.find(x=>x.id===req.params.legId);if(!leg){const e=Error('Journey leg not found');e.status=404;throw e}
       editLoad(state,t,{...body,legId:leg.id},{ensureTripLegs,syncTripFromLegs,recalcTripCosts,isShunterTruckId,upsertImportedShunterRecon});
       if(body.label!==undefined)leg.label=String(body.label||'').slice(0,240);
-      if(body.status!==undefined){if(!['Planned','Loading','In transit','At offloading','Delivered','Invoiced','Closed'].includes(body.status)){const e=Error('Invalid leg status');e.status=400;throw e}leg.status=body.status}
+
       if(body.pod!==undefined)leg.pod=Boolean(body.pod);
       leg.updatedAt=t.updatedAt;t.loadEditedAt=t.updatedAt;
       return{trip:t,leg}
@@ -3350,4 +3361,4 @@ app.get('/download/android',async(req,res)=>{
   }
 });
 app.get('/login',(req,res)=>{res.setHeader('Cache-Control','no-store, no-cache, must-revalidate');res.sendFile(path.join(root,'index.html'))});app.use(express.static(root,{maxAge:'1h',setHeaders:(res,file)=>{if(file.endsWith('.html')||file.endsWith('/app.js')||file.endsWith('/styles.css')||file.endsWith('/sw.js'))res.setHeader('Cache-Control','no-store, no-cache, must-revalidate')}}));app.use((req,res)=>res.sendFile(path.join(root,'index.html')));
-initDb().then(async()=>{if(process.argv.includes('--init-only'))return pool?.end();const fleet=await ensureCanonicalFleet();if(!fleet?.skipped)console.log('Canonical fleet applied',fleet);const insuranceImport=await applyInsuranceWorkbookImport();if(!insuranceImport?.skipped)console.log('Insurance workbook import applied',insuranceImport);const imported=await applyWorkforceEnvImport();if(!imported?.skipped)console.log('Workforce import applied',imported);const linked=await reconcileWorkforceUserLinks();if(linked.linkedDrivers||linked.linkedStaff)console.log('Workforce user links reconciled',linked);const tripImport=await applyTripWorkbookTestImport();if(!tripImport?.skipped)console.log('Trip workbook test import applied',tripImport.actual);else console.log('Trip workbook test import already applied',tripImport.actual||'');const carrierImport=await applyNblCarrierLoadImport();if(!carrierImport?.skipped)console.log('NBL carrier loads imported',carrierImport);const shunterImport=await applyShunterReconAugustImport();if(!shunterImport?.skipped)console.log('Shunter recon imported',shunterImport);const payeMigration=await applyPayeThresholdMigration();if(!payeMigration?.skipped)console.log('PAYE threshold migration applied',payeMigration);app.listen(PORT,()=>console.log(`Angermund Transport V3 running on port ${PORT}`));setTimeout(ensureMonthEndPayroll,15000);setInterval(ensureMonthEndPayroll,6*60*60*1000);setTimeout(ensureOperationalAlerts,20000);setInterval(ensureOperationalAlerts,10*60*1000)}).catch(e=>{console.error('Startup failed',e);process.exit(1)});
+initDb().then(async()=>{if(process.argv.includes('--init-only'))return pool?.end();const fleet=await ensureCanonicalFleet();if(!fleet?.skipped)console.log('Canonical fleet applied',fleet);const insuranceImport=await applyInsuranceWorkbookImport();if(!insuranceImport?.skipped)console.log('Insurance workbook import applied',insuranceImport);const imported=await applyWorkforceEnvImport();if(!imported?.skipped)console.log('Workforce import applied',imported);const linked=await reconcileWorkforceUserLinks();if(linked.linkedDrivers||linked.linkedStaff)console.log('Workforce user links reconciled',linked);const tripImport=await applyTripWorkbookTestImport();if(!tripImport?.skipped)console.log('Trip workbook test import applied',tripImport.actual);else console.log('Trip workbook test import already applied',tripImport.actual||'');const carrierImport=await applyNblCarrierLoadImport();if(!carrierImport?.skipped)console.log('NBL carrier loads imported',carrierImport);const shunterImport=await applyShunterReconAugustImport();if(!shunterImport?.skipped)console.log('Shunter recon imported',shunterImport);const payeMigration=await applyPayeThresholdMigration();if(!payeMigration?.skipped)console.log('PAYE threshold migration applied',payeMigration);await repairEditedLoadWorkflow();app.listen(PORT,()=>console.log(`Angermund Transport V3 running on port ${PORT}`));setTimeout(ensureMonthEndPayroll,15000);setInterval(ensureMonthEndPayroll,6*60*60*1000);setTimeout(ensureOperationalAlerts,20000);setInterval(ensureOperationalAlerts,10*60*1000)}).catch(e=>{console.error('Startup failed',e);process.exit(1)});

@@ -25,9 +25,23 @@ function syncLinkedLoad(state,t,leg){
     inv.paidAmount=paid;inv.balance=Number((inv.amount-paid).toFixed(2));inv.status=inv.balance<=.005?'Paid':paid>0?'Part Paid':inv.due&&inv.due<new Date().toISOString().slice(0,10)?'Overdue':'Unpaid';inv.updatedAt=new Date().toISOString();
   }
 }
+const workflowStages={Planned:1,Loading:2,'In transit':3,'At offloading':3,Delivered:4,Invoiced:5,Closed:6};
+function syncJourneyWorkflow(t){
+  const legs=(t.legs||[]).slice().sort((a,b)=>Number(a.sequence||0)-Number(b.sequence||0));
+  if(!legs.length)return;
+  const active=legs.find(l=>!['Delivered','Invoiced','Closed'].includes(l.status));
+  const status=active?.status||(legs.every(l=>l.status==='Closed')?'Closed':legs.every(l=>l.status==='Invoiced'||l.status==='Closed')?'Invoiced':'Delivered');
+  if(!workflowStages[status])return;
+  const previous=Number(t.stage||0);t.status=status;t.stage=workflowStages[status];
+  if(t.stage<previous){
+    if(t.stage<3){delete t.startedAt;for(const l of legs.filter(l=>['Planned','Loading'].includes(l.status))){delete l.startedAt;l.geo={}}t.geo={}}
+    if(t.stage<4){delete t.arrivedAt;delete t.deliveredDate;delete t.completedDate;delete t.closedDate;t.driverComplete=false;delete t.driverCompletedAt;if(active)delete active.arrivedAt}
+  }
+}
 function editLoad(state,t,body,helpers){
   const {ensureTripLegs,syncTripFromLegs,recalcTripCosts,isShunterTruckId}=helpers;
   const legs=ensureTripLegs(state,t),leg=body.legId&&!String(body.legId).startsWith('legacy_')?legs.find(x=>x.id===body.legId):legs[0];if(!leg)fail('Load leg not found');
+  if(body.status!==undefined){if(!workflowStages[body.status])fail('Invalid load status');leg.status=body.status;syncJourneyWorkflow(t)}
   const old={truckId:t.truckId,date:t.date,driverId:t.driverId};
   for(const [field,collection,optional] of [['truckId','trucks',true],['driverId','drivers',true],['trailerId','trailers',true],['routeId','routes',false],['clientId','clients',false]]){
     if(body[field]===undefined)continue;const value=String(body[field]||'');
@@ -57,4 +71,4 @@ function editLoad(state,t,body,helpers){
   if(t.carrierDetails){if(body.date!==undefined){t.carrierDetails.pickPlanStart=t.date;t.carrierDetails.pickPlanEnd=t.date}if(body.plannedDropDate!==undefined){t.carrierDetails.dropPlanStart=t.plannedDropDate;t.carrierDetails.dropPlanEnd=t.plannedDropDate}}
   t.updatedAt=new Date().toISOString();return{trip:t,leg};
 }
-module.exports={editLoad,syncLinkedLoad};
+module.exports={editLoad,syncLinkedLoad,syncJourneyWorkflow};
