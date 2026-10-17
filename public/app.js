@@ -2664,6 +2664,10 @@ function entrySuggestions(type,key){
   return [...new Set((db[map[type]]||[]).map(row=>String(row[key]??'').trim()).filter(Boolean))].slice(0,10)
 }
 function openForm(type,prefill={}){$('entryForm').onsubmit=saveForm;formType=type;const list=forms[type];if(!list)return notify(`Open ${type} from its linked workflow`);$('modalTitle').textContent=`Add ${type}`;$('entryForm').innerHTML=`<div class="form-grid">${list.map(([key,label,kind,def,vals])=>{const value=prefill[key]??def??'',opts=kind==='select'?(vals||[]).map(v=>[String(v),String(v)]):options(kind);if(opts.length)return `<div class="field"><label>${label}</label><select name="${key}"><option value="">Select…</option>${opts.map(([v,l])=>`<option value="${esc(v)}" ${String(v)===String(value)?'selected':''}>${esc(l)}</option>`).join('')}</select></div>`;if(kind==='textarea')return `<div class="field full"><label>${label}</label><textarea name="${key}" rows="3">${esc(value)}</textarea></div>`;const suggestions=['text','number'].includes(kind)?entrySuggestions(type,key):[],listId=`suggest-${type}-${key}`;return `<div class="field"><label>${label}</label><input name="${key}" type="${kind}" step="any" value="${esc(value)}" ${suggestions.length?`list="${listId}"`:''} autocomplete="on">${suggestions.length?`<datalist id="${listId}">${suggestions.map(v=>`<option value="${esc(v)}"></option>`).join('')}</datalist>`:''}</div>`}).join('')}<div class="form-actions"><button type="button" class="ghost" id="cancelForm">Cancel</button><button class="primary">Save & link record</button></div></div>`;$('modal').classList.remove('hidden');$('cancelForm').onclick=()=>$('modal').classList.add('hidden');
+  if(type==='trip'){
+    const f=$('entryForm');f.elements.truckId.onchange=()=>{const truck=get('trucks',f.elements.truckId.value);f.elements.driverId.value=truck.defaultDriverId||''};
+    if(prefill.truckId&&!prefill.driverId)f.elements.truckId.onchange();
+  }
   if(type==='expense'){
     const b=document.createElement('button');b.type='button';b.className='ghost';b.textContent='⛽ Manual diesel (slip missing)';b.onclick=manualDieselFromExpense;$('entryForm').prepend(b);
     $('entryForm').elements.category.onchange=e=>{if(e.target.value==='Diesel (manual)')manualDieselFromExpense()};
@@ -2906,14 +2910,12 @@ function assignableTripDrivers(t){
 function tripDriverAssignment(t){
   const canAssign=['admin','manager','dispatcher'].includes(role),assigned=driver(t.driverId),drivers=assignableTripDrivers(t);
   if(!canAssign)return '<section class="trip-driver-assignment readonly"><div><span>Assigned driver</span><b>'+esc(assigned)+'</b></div></section>';
-  return '<section class="trip-driver-assignment '+(!t.driverId?'needs-driver':'')+'"><div class="trip-driver-copy"><span>Assigned driver</span><b>'+(t.driverId?esc(assigned):'⚠ Driver not assigned')+'</b><small>The carrier Excel does not include the driver. Assign the actual driver here so this trip appears in that driver\'s workspace.</small></div><div class="trip-driver-controls"><select id="tripDriverAssign"><option value="">Unassigned</option>'+drivers.map(d=>'<option value="'+esc(d.id)+'" '+(d.id===t.driverId?'selected':'')+'>'+esc(d.name)+(d.otherOpen?' · '+d.otherOpen+' other open trip'+(d.otherOpen===1?'':'s'):'')+'</option>').join('')+'</select><button type="button" class="primary" id="saveTripDriver">'+(t.driverId?'Change driver':'Assign driver')+'</button></div></section>'
+  return '<section class="trip-driver-assignment '+(!t.driverId?'needs-driver':'')+'"><div class="trip-driver-copy"><span>Assigned driver</span><b>'+(t.driverId?esc(assigned):'⚠ Driver not assigned')+'</b><small>The truck default is assigned automatically. Change the driver here when someone takes over.</small></div><div class="trip-driver-controls"><select id="tripDriverAssign"><option value="">Unassigned</option>'+drivers.map(d=>'<option value="'+esc(d.id)+'" '+(d.id===t.driverId?'selected':'')+'>'+esc(d.name)+(d.otherOpen?' · '+d.otherOpen+' other open trip'+(d.otherOpen===1?'':'s'):'')+'</option>').join('')+'</select><button type="button" class="primary" id="saveTripDriver">'+(t.driverId?'Change driver':'Assign driver')+'</button></div></section>'
 }
-function saveTripDriverAssignment(tripId){
+async function saveTripDriverAssignment(tripId){
   const t=get('trips',tripId),select=$('tripDriverAssign');if(!t.id||!select)return;
-  const old=t.driverId||'',next=select.value||'';if(old===next)return notify(next?'Driver already assigned':'Trip is already unassigned');
-  const newName=driver(next);t.driverId=next;t.assignedDriverAt=new Date().toISOString();t.assignedDriverBy=roleLabel();
-  commit(next?'Driver assigned to '+t.number+': '+newName:'Driver removed from '+t.number,'trip',t.id);
-  setTimeout(()=>openTrip(tripId),30)
+  const next=select.value||'';if((t.driverId||'')===next)return notify(next?'Driver already assigned':'Trip is already unassigned');
+  try{await api('/api/admin/trips/'+encodeURIComponent(tripId),{method:'PATCH',body:{driverId:next,driverAssignmentOverride:true,expectedUpdatedAt:t.updatedAt||''}});await refreshCentralState(false);openTrip(tripId);notify(next?'Driver updated':'Driver removed')}catch(err){notify(err.message)}
 }
 
 function openLoadEdit(tripId){

@@ -1,3 +1,4 @@
+const {configureTruckDriverDefaults,defaultDriverId,applyTruckDriverDefaults}=require('./truck-driver-defaults');
 const {createManualDiesel}=require('./manual-diesel');
 const {editLoad,syncLinkedLoad,syncJourneyWorkflow}=require('./load-edit');
 const express=require('express'),path=require('path'),fs=require('fs'),crypto=require('crypto'),jwt=require('jsonwebtoken'),bcrypt=require('bcryptjs'),multer=require('multer'),webpush=require('web-push'),ExcelJS=require('exceljs');
@@ -1461,6 +1462,14 @@ function generatePayrollPeriod(state,period,auto=false){
 }
 function monthPeriod(d=new Date()){return d.getUTCFullYear()+'-'+String(d.getUTCMonth()+1).padStart(2,'0')}
 function previousMonthPeriod(d=new Date()){const x=new Date(Date.UTC(d.getUTCFullYear(),d.getUTCMonth()-1,1));return monthPeriod(x)}
+async function initializeTruckDriverDefaults(){
+  const changed=await mutateOpsState(state=>{
+    const result=applyTruckDriverDefaults(state,{backfill:true});
+    if(result.assigned){state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:'System',action:'Truck default drivers applied to '+result.assigned+' trips',linkedType:'fleet',linkedId:'truck-drivers-2026-10-17'});state.audit=state.audit.slice(0,100)}
+    return result;
+  });
+  console.log('Truck driver defaults',changed.result);return changed.result;
+}
 async function repairEditedLoadWorkflow(){
   return mutateOpsState(state=>{
     let repaired=0;
@@ -2092,6 +2101,7 @@ function applyCarrierWorkbookRows(state,rows,source,importId){
     }
     setTripTypeFromTruck(trip);if(isShunterTruckId(trip.truckId)){shunter++;upsertImportedShunterRecon(state,trip)}recalcTripCosts(state,trip)
   }
+  applyTruckDriverDefaults(state);
   return{created,updated,skipped,pendingRates,unassigned,newRoutes,newTrailers,advancedByActuals,shunter,total:rows.length}
 }
 
@@ -2523,6 +2533,7 @@ app.patch('/api/payroll/:id',auth,roles('admin','manager','finance'),async(req,r
 app.post('/api/admin/trips',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
   try{
     const body=req.body&&typeof req.body==='object'?req.body:{};
+    if(!body.driverId&&body.truckId){const state=await readOpsState();configureTruckDriverDefaults(state);body.driverId=defaultDriverId(state,body.truckId)}
     const required=['date','routeId','clientId','truckId','driverId'];
     if(required.some(k=>!body[k]))return res.status(400).json({error:'Date, route, client, truck and driver are required'});
     const changed=await mutateOpsState(async state=>{
@@ -3372,4 +3383,4 @@ app.get('/download/android',async(req,res)=>{
   }
 });
 app.get('/login',(req,res)=>{res.setHeader('Cache-Control','no-store, no-cache, must-revalidate');res.sendFile(path.join(root,'index.html'))});app.use(express.static(root,{maxAge:'1h',setHeaders:(res,file)=>{if(file.endsWith('.html')||file.endsWith('/app.js')||file.endsWith('/styles.css')||file.endsWith('/sw.js'))res.setHeader('Cache-Control','no-store, no-cache, must-revalidate')}}));app.use((req,res)=>res.sendFile(path.join(root,'index.html')));
-initDb().then(async()=>{if(process.argv.includes('--init-only'))return pool?.end();const fleet=await ensureCanonicalFleet();if(!fleet?.skipped)console.log('Canonical fleet applied',fleet);const insuranceImport=await applyInsuranceWorkbookImport();if(!insuranceImport?.skipped)console.log('Insurance workbook import applied',insuranceImport);const imported=await applyWorkforceEnvImport();if(!imported?.skipped)console.log('Workforce import applied',imported);const linked=await reconcileWorkforceUserLinks();if(linked.linkedDrivers||linked.linkedStaff)console.log('Workforce user links reconciled',linked);const tripImport=await applyTripWorkbookTestImport();if(!tripImport?.skipped)console.log('Trip workbook test import applied',tripImport.actual);else console.log('Trip workbook test import already applied',tripImport.actual||'');const carrierImport=await applyNblCarrierLoadImport();if(!carrierImport?.skipped)console.log('NBL carrier loads imported',carrierImport);const shunterImport=await applyShunterReconAugustImport();if(!shunterImport?.skipped)console.log('Shunter recon imported',shunterImport);const payeMigration=await applyPayeThresholdMigration();if(!payeMigration?.skipped)console.log('PAYE threshold migration applied',payeMigration);await repairEditedLoadWorkflow();app.listen(PORT,()=>console.log(`Angermund Transport V3 running on port ${PORT}`));setTimeout(ensureMonthEndPayroll,15000);setInterval(ensureMonthEndPayroll,6*60*60*1000);setTimeout(ensureOperationalAlerts,20000);setInterval(ensureOperationalAlerts,10*60*1000)}).catch(e=>{console.error('Startup failed',e);process.exit(1)});
+initDb().then(async()=>{if(process.argv.includes('--init-only'))return pool?.end();const fleet=await ensureCanonicalFleet();if(!fleet?.skipped)console.log('Canonical fleet applied',fleet);const insuranceImport=await applyInsuranceWorkbookImport();if(!insuranceImport?.skipped)console.log('Insurance workbook import applied',insuranceImport);const imported=await applyWorkforceEnvImport();if(!imported?.skipped)console.log('Workforce import applied',imported);const linked=await reconcileWorkforceUserLinks();if(linked.linkedDrivers||linked.linkedStaff)console.log('Workforce user links reconciled',linked);const tripImport=await applyTripWorkbookTestImport();if(!tripImport?.skipped)console.log('Trip workbook test import applied',tripImport.actual);else console.log('Trip workbook test import already applied',tripImport.actual||'');const carrierImport=await applyNblCarrierLoadImport();if(!carrierImport?.skipped)console.log('NBL carrier loads imported',carrierImport);const shunterImport=await applyShunterReconAugustImport();if(!shunterImport?.skipped)console.log('Shunter recon imported',shunterImport);const payeMigration=await applyPayeThresholdMigration();if(!payeMigration?.skipped)console.log('PAYE threshold migration applied',payeMigration);await repairEditedLoadWorkflow();await initializeTruckDriverDefaults();app.listen(PORT,()=>console.log(`Angermund Transport V3 running on port ${PORT}`));setTimeout(ensureMonthEndPayroll,15000);setInterval(ensureMonthEndPayroll,6*60*60*1000);setTimeout(ensureOperationalAlerts,20000);setInterval(ensureOperationalAlerts,10*60*1000)}).catch(e=>{console.error('Startup failed',e);process.exit(1)});
