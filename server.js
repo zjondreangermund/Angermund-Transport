@@ -1,3 +1,4 @@
+const {createManualDiesel}=require('./manual-diesel');
 const {editLoad,syncLinkedLoad,syncJourneyWorkflow}=require('./load-edit');
 const express=require('express'),path=require('path'),fs=require('fs'),crypto=require('crypto'),jwt=require('jsonwebtoken'),bcrypt=require('bcryptjs'),multer=require('multer'),webpush=require('web-push'),ExcelJS=require('exceljs');
 const {Pool}=require('pg');const {createWorker}=require('tesseract.js');
@@ -3122,6 +3123,16 @@ app.post('/api/admin/fuel',auth,roles('admin','manager','dispatcher','workshop',
     if(!verified)createNotification({type:'fuel-review',severity:'info',title:'Fuel slip awaiting review',message:req.user.name+' recorded '+litres+' L company fuel.',role:'finance',linkedType:'fuel',linkedId:id}).catch(()=>{});
     res.status(201).json({record:changed.result,receipt,revision:changed.revision})
   }catch(err){res.status(err.status||500).json({error:err.message})}
+});
+app.post('/api/admin/diesel',auth,roles('admin','manager','dispatcher','finance'),async(req,res)=>{
+  try{
+    const changed=await mutateOpsState(state=>{
+      const rec=createManualDiesel(state,req.body||{},'fuel_'+crypto.randomUUID(),req.user.sub);
+      const trip=(state.trips||[]).find(t=>t.id===rec.tripId);if(trip)recalcTripCosts(state,trip);
+      state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:rec.createdAt,actor:req.user.name||req.user.email||req.user.role,action:'Manual diesel entry recorded'+(rec.receiptMissing?' - slip missing':''),linkedType:'diesel',linkedId:rec.id});state.audit=state.audit.slice(0,100);
+      return rec;
+    });res.status(201).json(changed.result);
+  }catch(e){res.status(e.status||500).json({error:e.message})}
 });
 app.patch('/api/admin/diesel/:id',auth,roles('admin','manager','dispatcher','finance'),async(req,res)=>{
   try{

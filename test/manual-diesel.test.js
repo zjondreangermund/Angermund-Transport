@@ -1,0 +1,8 @@
+const {test}=require('node:test'),assert=require('node:assert/strict');const {createManualDiesel}=require('../manual-diesel');
+const state=()=>({trips:[{id:'t',truckId:'truck',driverId:'driver',legs:[{id:'l',status:'In transit'}]}],trucks:[{id:'truck'}],drivers:[{id:'driver'}],expenses:[]});
+const body={date:'2026-10-17',tripId:'t',litres:100,total:2800,receiptStatus:'Slip lost / unavailable'};
+test('missing-slip diesel links trip/truck/driver/leg and creates no expense double-count',()=>{const s=state(),r=createManualDiesel(s,body,'fuel','user');assert.equal(r.price,28);assert.equal(r.total,2800);assert.equal(r.truckId,'truck');assert.equal(r.driverId,'driver');assert.equal(r.legId,'l');assert.equal(r.receiptMissing,true);assert.equal(r.verified,false);assert.equal(s.diesel.length,1);assert.equal(s.expenses.length,0)});
+test('price-only entry calculates the total',()=>{const s=state(),r=createManualDiesel(s,{...body,total:0,price:28.35},'fuel','user');assert.equal(r.total,2835)});
+test('company fuel can be entered without a trip',()=>{const s=state(),r=createManualDiesel(s,{...body,tripId:'',truckId:'truck'},'fuel','user');assert.equal(r.tripId,'');assert.equal(r.truckId,'truck')});
+test('invalid quantities, dates and missing vehicle are rejected',()=>{for(const patch of [{litres:0},{litres:-1},{litres:'bad'},{total:0,price:0},{date:'2026-02-31'},{tripId:'missing'},{tripId:'',truckId:''}])assert.throws(()=>createManualDiesel(state(),{...body,...patch},'f','u'))});
+test('slip reference is optional and unverified even when supplied',()=>{const r=createManualDiesel(state(),{...body,receiptStatus:'Reference available',slip:'ABC'},'f','u');assert.equal(r.receiptMissing,false);assert.equal(r.verified,false);assert.equal(r.status,'Review')});
