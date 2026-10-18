@@ -13,5 +13,19 @@
   function rowDate(row,state){const trip=(state.trips||[]).find(t=>t.id===row.tripId);return String(row.date||row.period||row.createdAt||row.created_at||trip?.date||'').slice(0,10)}
   function matches(row,state,selection,{master=false}={}){const f=normalize(selection);if(f.truckId&&!truckIds(row,state).has(f.truckId))return false;if(master||!f.year)return true;const date=rowDate(row,state);return date.startsWith(f.year+'-')&&(!f.month||date.slice(5,7)===f.month)}
   function rows(state,key,selection){return(state[key]||[]).filter(row=>matches(row,state,selection))}
-  const api={normalize,truckIds,rowDate,matches,rows};if(typeof module==='object'&&module.exports)module.exports=api;else root.RecordFilters=api;
+  function fuelSummary(state,selection){
+    const number=v=>Number.isFinite(Number(v))?Number(v):0;
+    const cost=x=>number(x.printedTotal)||number(x.total)||number(x.litres)*number(x.price);
+    const fuel=rows(state,'diesel',selection),litres=fuel.reduce((a,x)=>a+Math.max(0,number(x.litres)),0),spend=fuel.reduce((a,x)=>a+cost(x),0);
+    let distance=0,matchedLitres=0,matchedSpend=0,matchedTrips=0,excludedTrips=0;
+    for(const t of rows(state,'trips',selection)){
+      const done=number(t.stage)>=4||/^(delivered|invoiced|closed|completed)$/i.test(String(t.status||''));
+      const entries=(state.diesel||[]).filter(x=>x.tripId===t.id),litres=entries.reduce((a,x)=>a+Math.max(0,number(x.litres)),0),km=number(t.startKm)>0&&number(t.endKm)>number(t.startKm)?number(t.endKm)-number(t.startKm):0;
+      if(!done||!km||!litres){excludedTrips++;continue}
+      distance+=km;matchedLitres+=litres;matchedSpend+=entries.reduce((a,x)=>a+cost(x),0);matchedTrips++;
+    }
+    const ready=distance>0&&matchedLitres>0;
+    return{litres,spend,pricePerL:litres>0?spend/litres:null,distance,matchedLitres,matchedTrips,excludedTrips,kmPerL:ready?distance/matchedLitres:null,litresPerKm:ready?matchedLitres/distance:null,litresPer100Km:ready?matchedLitres/distance*100:null,costPerKm:ready?matchedSpend/distance:null};
+  }
+  const api={normalize,truckIds,rowDate,matches,rows,fuelSummary};if(typeof module==='object'&&module.exports)module.exports=api;else root.RecordFilters=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
