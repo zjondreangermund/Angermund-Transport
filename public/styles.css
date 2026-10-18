@@ -1200,3 +1200,5 @@ html.mobile-lite-entry .login-panel .login-card{backdrop-filter:none!important}
 
 .page-date-range{display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end;margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}.page-date-range label{display:grid;gap:6px;color:var(--muted);font-size:12px;min-width:0}.page-date-range input{width:100%;min-width:0;min-height:44px}
 @media(max-width:760px){.page-date-range{grid-template-columns:1fr 1fr}.page-date-range button{grid-column:1/-1;min-height:44px}}
+
+.invoice-summary{max-width:420px;margin:16px 0 16px auto;border:1px solid var(--line);border-radius:12px;overflow:hidden}.invoice-summary .sum-row{display:flex;justify-content:space-between;gap:16px;padding:10px 12px;border-bottom:1px solid var(--line)}.invoice-summary .sum-row:last-child{border-bottom:0;font-weight:700}

@@ -1,3 +1,4 @@
+const {calculate:calculateInvoiceCharges}=require('./public/invoice-charges');
 const {VERSION:WORKBOOK_TEST_CLEANUP_VERSION,removeWorkbookTests}=require('./workbook-test-cleanup');
 const {collectOperationalAlerts,groupAlerts,expandOfficeRecipients}=require('./operational-alerts');
 const {editInvoice,bounds:invoiceCustomBounds}=require('./invoice-edit');
@@ -2761,7 +2762,7 @@ function buildNblConsolidatedInvoice(state,cycleMonth,custom={}){
   const highest=state.invoices.reduce((m,x)=>{const n=Number(String(x.number||'').split('-').pop())||0;return Math.max(m,n)},999);
   const terms=num(nbl.terms)||30,endDate=new Date(end+'T00:00:00Z'),dueDate=new Date(endDate.getTime()+terms*86400000),amount=Number(lines.reduce((a,x)=>a+num(x.amount),0).toFixed(2));
   const inv={id:'inv_'+crypto.randomUUID(),number:'INV-'+(highest+1),date:end,clientId:nbl.id,tripId:'',amount,due:dueDate.toISOString().slice(0,10),status:'Unpaid',consolidated:true,billingCycle:'Custom billing dates',periodStart:start,periodEnd:end,cutoffDay:null,lines,tripIds:Array.from(new Set(lines.map(x=>x.tripId))),lineCount:lines.length};
-  state.invoices.unshift(inv);linkNblInvoiceLines(state,inv,lines);
+  calculateInvoiceCharges(state,inv,{newInvoice:true,vatRate:custom.vatRate,includeMdc:custom.includeMdc});state.invoices.unshift(inv);linkNblInvoiceLines(state,inv,lines);
   return{invoice:inv,existing:false,lines,excluded}
 }
 app.patch('/api/invoices/:id',auth,roles('admin','manager','finance'),async(req,res)=>{
@@ -2785,7 +2786,7 @@ function buildNblShunterInvoice(state,period){
   const lines=rows.slice().sort((a,b)=>String(a.date).localeCompare(String(b.date))||String(a.truckId).localeCompare(String(b.truckId))).map(r=>{const tr=(state.trucks||[]).find(x=>x.id===r.truckId);return{shunterReconId:r.id,date:r.date,tripNumber:'Shunter',route:'NBL Windhoek shunting',truck:(tr&&(tr.fleetName||tr.registration))||r.truckId,registration:(tr&&tr.registration)||'',load:'TMS: '+(r.tmsIds||[]).join(', '),amount:Number(num(r.charge).toFixed(2))}});
   const highest=state.invoices.reduce((m,x)=>{const n=Number(String(x.number||'').split('-').pop())||0;return Math.max(m,n)},999),terms=num(nbl.terms)||30,endDate=new Date(bounds.end+'T00:00:00Z'),dueDate=new Date(endDate.getTime()+terms*86400000),amount=Number(lines.reduce((a,x)=>a+num(x.amount),0).toFixed(2));
   const inv={id:'inv_'+crypto.randomUUID(),number:'INV-'+(highest+1),date:bounds.end,clientId:nbl.id,tripId:'',amount,due:dueDate.toISOString().slice(0,10),status:'Unpaid',shunterRecon:true,shunterPeriod:period,billingCycle:'Calendar month shunter recon',periodStart:bounds.start,periodEnd:bounds.end,lines,lineCount:lines.length,source:'Shunter Recon'};
-  state.invoices.unshift(inv);for(const r of rows)r.invoiceId=inv.id;return{invoice:inv,existing:false,lines}
+  calculateInvoiceCharges(state,inv,{newInvoice:true});state.invoices.unshift(inv);for(const r of rows)r.invoiceId=inv.id;return{invoice:inv,existing:false,lines}
 }
 app.post('/api/invoices/nbl/shunter',auth,roles('admin','manager','finance'),async(req,res)=>{try{const changed=await mutateOpsState(state=>buildNblShunterInvoice(state,String((req.body&&req.body.period)||'')));res.status(changed.result.existing?200:201).json(changed.result)}catch(e){res.status(e.status||500).json({error:e.message})}});
 
@@ -2803,7 +2804,7 @@ app.post('/api/admin/trips/:tripId/legs/:legId/invoice',auth,roles('admin','mana
       const highest=state.invoices.reduce((m,x)=>Math.max(m,Number(String(x.number||'').match(/INV-(\d+)/)?.[1]||0)),999);
       const client=(state.clients||[]).find(x=>x.id===leg.clientId),terms=num(client?.terms)||30,date=new Date(),due=new Date(date.getTime()+terms*86400000).toISOString().slice(0,10);
       const inv={id:'inv_'+crypto.randomUUID(),number:'INV-'+(highest+1),date:date.toISOString().slice(0,10),clientId:leg.clientId,tripId:t.id,legId:leg.id,amount:num(leg.income),due,status:'Unpaid',journeyLeg:true};
-      state.invoices.unshift(inv);leg.invoiceId=inv.id;leg.invoiceStatus='Unpaid';
+      calculateInvoiceCharges(state,inv,{newInvoice:true});state.invoices.unshift(inv);leg.invoiceId=inv.id;leg.invoiceStatus='Unpaid';
       const legs=ensureTripLegs(state,t);if(legs.every(x=>x.invoiceId)){t.stage=Math.max(num(t.stage),5);t.status='Invoiced';t.invoiceIds=legs.map(x=>x.invoiceId);const tr=(state.trucks||[]).find(x=>x.id===t.truckId);if(tr)tr.status='Available';const dr=(state.drivers||[]).find(x=>x.id===t.driverId);if(dr)dr.status='Available'}
       return{invoice:inv,trip:t,leg,existing:false}
     });
