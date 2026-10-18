@@ -1,3 +1,4 @@
+const {calculate:calculateInvoiceCharges}=require('./public/invoice-charges');
 const {defaultDriverId,syncDriverReferences}=require('./truck-driver-defaults');
 'use strict';
 const fail=message=>{const e=new Error(message);e.status=400;throw e};
@@ -20,7 +21,9 @@ function syncLinkedLoad(state,t,leg){
     }
     if(inv.tripId===t.id&&(!inv.legId||inv.legId===leg.id)&&!inv.consolidated&&!inv.shunterRecon){inv.clientId=leg.clientId;inv.amount=inv.legId?leg.income:t.income;changed=true}
     if(!changed)continue;
+    if(!inv.lines?.length)inv.transportSubtotal=inv.amount;
     if(inv.lines?.length)inv.amount=Number(inv.lines.reduce((a,l)=>a+Number(l.amount||0),0).toFixed(2));
+    calculateInvoiceCharges(state,inv);
     const paid=Math.max(Number(inv.paidAmount||0),(state.payments||[]).filter(p=>p.invoiceId===inv.id).reduce((a,p)=>a+Number(p.amount||0),0));
     if(inv.amount<paid-.005)fail('The corrected invoice total is below payments received. Resolve the payment or credit first.');
     inv.paidAmount=paid;inv.balance=Number((inv.amount-paid).toFixed(2));inv.status=inv.balance<=.005?'Paid':paid>0?'Part Paid':inv.due&&inv.due<new Date().toISOString().slice(0,10)?'Overdue':'Unpaid';inv.updatedAt=new Date().toISOString();
