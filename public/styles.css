@@ -1184,3 +1184,11 @@ html.mobile-lite-entry .login-panel .login-card{backdrop-filter:none!important}
   }
   #entryForm .trip-modal-actions #advanceFromModal{grid-column:auto!important}
 }
+
+/* Keep mobile More navigation in the drawer's scroll flow. */
+@media(max-width:760px){
+  #sidebar nav{overflow-y:auto!important;overscroll-behavior-y:contain;padding-bottom:24px}
+  #sidebar .nav-more-toggle{position:sticky;top:0;z-index:2;background:#0b2033;min-height:44px}
+  #sidebar .nav-more-items{position:static!important;width:auto!important;max-width:none;max-height:none!important;box-shadow:none;margin-top:6px}
+  #sidebar .nav-more-items.open{overflow:visible!important}
+}
