@@ -1,21 +1,22 @@
 let opsSelection=(()=>{try{return RecordFilters.normalize(JSON.parse(sessionStorage.getItem('angermund_page_filters')||'{}'))}catch{return RecordFilters.normalize()}})();
 const opsFilterPages=new Set(['fleet','command','dispatch','trips','carrierOrders','diesel','inspections','workshop','incidents','invoices','roadCharges','reports','monthlyPnl']);
-function opsFiltering(){return Boolean(opsSelection.truckId||opsSelection.year)}
+function opsFiltering(){return Boolean(opsSelection.truckId||opsSelection.year||opsSelection.from)}
 function opsRows(key){return opsFiltering()?RecordFilters.rows(db,key,opsSelection):(db[key]||[])}
-function opsLabel(){return[opsSelection.truckId?truck(opsSelection.truckId):'All trucks',opsSelection.year?(opsSelection.month?monthName(opsSelection.month)+' ':'Full year ')+opsSelection.year:'All dates'].join(' · ')}
+function opsLabel(){return[opsSelection.truckId?truck(opsSelection.truckId):'All trucks',opsSelection.from?opsSelection.from+' to '+opsSelection.to:opsSelection.year?(opsSelection.month?monthName(opsSelection.month)+' ':'Full year ')+opsSelection.year:'All dates'].join(' · ')}
 function opsFilterPanel(){
   if(!opsFilterPages.has(page)||['driver','site_worker'].includes(role))return'';
   const years=new Set([String(new Date().getFullYear()),opsSelection.year]);
   for(const key of ['trips','diesel','expenses','invoices','maintenance','inspections','incidents','shunterRecons'])for(const x of db[key]||[]){const y=RecordFilters.rowDate(x,db).slice(0,4);if(/^\d{4}$/.test(y))years.add(y)}
   const trucks=[...(db.trucks||[]),...(db.archivedTrucks||[])].filter((x,i,a)=>a.findIndex(t=>t.id===x.id)===i).sort((a,b)=>String(a.fleetName||a.registration).localeCompare(String(b.fleetName||b.registration),undefined,{numeric:true}));
-  return '<section class="page-filters panel" aria-label="Truck and date filters"><div class="page-filter-fields"><label>Truck<select id="opsTruck"><option value="">All trucks</option>'+trucks.map(t=>'<option value="'+esc(t.id)+'" '+(opsSelection.truckId===t.id?'selected':'')+'>'+esc(truck(t.id))+'</option>').join('')+'</select></label><label>Year<select id="opsYear"><option value="">All dates</option>'+[...years].filter(Boolean).sort().reverse().map(y=>'<option '+(opsSelection.year===y?'selected':'')+'>'+y+'</option>').join('')+'</select></label><label>Month<select id="opsMonth"><option value="">All months</option>'+Array.from({length:12},(_,i)=>String(i+1).padStart(2,'0')).map(m=>'<option value="'+m+'" '+(opsSelection.month===m?'selected':'')+'>'+monthName(m)+'</option>').join('')+'</select></label><div class="page-filter-actions"><button type="button" class="ghost small" id="opsCurrent">Current month</button><button type="button" class="ghost small" id="opsClear">Clear filters</button></div></div><p class="muted-copy">'+esc(opsLabel())+' · Selection follows you between operational pages. '+(opsFiltering()?'Trips use the trip date; other entries use their recorded date.':'Choose a truck or period to filter this page.')+'</p></section>';
+  return '<section class="page-filters panel" aria-label="Truck and date filters"><div class="page-filter-fields"><label>Truck<select id="opsTruck"><option value="">All trucks</option>'+trucks.map(t=>'<option value="'+esc(t.id)+'" '+(opsSelection.truckId===t.id?'selected':'')+'>'+esc(truck(t.id))+'</option>').join('')+'</select></label><label>Year<select id="opsYear"><option value="">All dates</option>'+[...years].filter(Boolean).sort().reverse().map(y=>'<option '+(opsSelection.year===y?'selected':'')+'>'+y+'</option>').join('')+'</select></label><label>Month<select id="opsMonth"><option value="">All months</option>'+Array.from({length:12},(_,i)=>String(i+1).padStart(2,'0')).map(m=>'<option value="'+m+'" '+(opsSelection.month===m?'selected':'')+'>'+monthName(m)+'</option>').join('')+'</select></label><div class="page-filter-actions"><button type="button" class="ghost small" id="opsCurrent">Current month</button><button type="button" class="ghost small" id="opsClear">Clear filters</button></div></div><div class="page-date-range"><label>From date<input type="date" id="opsFrom" value="'+esc(opsSelection.from||'')+'"></label><label>To date (inclusive)<input type="date" id="opsTo" value="'+esc(opsSelection.to||'')+'"></label><button type="button" class="primary" id="opsApplyDates">Apply exact dates</button></div><p class="muted-copy">'+esc(opsLabel())+' · Selection follows you between operational pages. '+(opsFiltering()?'Trips use the trip date; other entries use their recorded date.':'Choose a truck or period to filter this page.')+'</p></section>';
 }
 function wireOpsFilters(){
   const save=()=>{sessionStorage.setItem('angermund_page_filters',JSON.stringify(opsSelection));render()};
   if($('opsTruck'))$('opsTruck').onchange=e=>{opsSelection.truckId=e.target.value;save()};
-  if($('opsYear'))$('opsYear').onchange=e=>{opsSelection.year=e.target.value;if(!opsSelection.year)opsSelection.month='';save()};
-  if($('opsMonth'))$('opsMonth').onchange=e=>{opsSelection.month=e.target.value;if(opsSelection.month&&!opsSelection.year)opsSelection.year=String(new Date().getFullYear());save()};
-  if($('opsCurrent'))$('opsCurrent').onclick=()=>{const d=new Date();opsSelection.year=String(d.getFullYear());opsSelection.month=String(d.getMonth()+1).padStart(2,'0');save()};
+  if($('opsYear'))$('opsYear').onchange=e=>{opsSelection.from='';opsSelection.to='';opsSelection.year=e.target.value;if(!opsSelection.year)opsSelection.month='';save()};
+  if($('opsMonth'))$('opsMonth').onchange=e=>{opsSelection.from='';opsSelection.to='';opsSelection.month=e.target.value;if(opsSelection.month&&!opsSelection.year)opsSelection.year=String(new Date().getFullYear());save()};
+  if($('opsCurrent'))$('opsCurrent').onclick=()=>{const d=new Date();opsSelection.from='';opsSelection.to='';opsSelection.year=String(d.getFullYear());opsSelection.month=String(d.getMonth()+1).padStart(2,'0');save()};
+  if($('opsApplyDates'))$('opsApplyDates').onclick=()=>{try{const range=RecordFilters.dateRange($('opsFrom').value,$('opsTo').value);opsSelection=RecordFilters.normalize({...opsSelection,...range});save()}catch(e){notify(e.message)}};
   if($('opsClear'))$('opsClear').onclick=()=>{opsSelection=RecordFilters.normalize();save()};
 }
 function opsOverview(){
@@ -35,6 +36,8 @@ function opsOverview(){
 
 function opsTrucks(){return (db.trucks||[]).filter(t=>!opsSelection.truckId||t.id===opsSelection.truckId)}
 function opsFleetSummary(t){
+  if(opsSelection.from){const expenses=opsRows('expenses').filter(x=>!x.tripId&&x.truckId===t.id&&x.status!=='Rejected'),maintenance=opsRows('maintenance').filter(m=>m.truckId===t.id&&!(db.expenses||[]).some(e=>e.maintenanceId===m.id&&e.status!=='Rejected'));return{total:sum(expenses,x=>x.amount)+sum(maintenance,x=>x.cost)}}
+
   const periods=opsSelection.year?(opsSelection.month?[opsSelection.year+'-'+opsSelection.month]:Array.from({length:12},(_,i)=>opsSelection.year+'-'+String(i+1).padStart(2,'0'))):[today().slice(0,7)];
   const result={};for(const period of periods)for(const [key,value] of Object.entries(fleetCostSummary(t,period)))if(typeof value==='number')result[key]=(result[key]||0)+value;return result;
 }
