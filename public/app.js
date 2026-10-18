@@ -209,6 +209,7 @@ function renderNav(){
   const more=nav.querySelector('.nav-more-toggle');
   const placeMore=()=>{
     if(!more)return;const wrap=more.closest('.nav-more-wrap'),items=wrap?.querySelector('.nav-more-items');if(!items||!more.classList.contains('open'))return;
+    if(window.matchMedia('(max-width:760px)').matches){items.removeAttribute('style');return;}
     const r=more.getBoundingClientRect(),gap=7,spaceAbove=Math.max(180,r.top-gap-12);
     items.style.position='fixed';items.style.left=Math.round(r.left)+'px';items.style.width=Math.round(r.width)+'px';items.style.bottom=Math.round(window.innerHeight-r.top+gap)+'px';items.style.maxHeight=Math.round(Math.min(spaceAbove,window.innerHeight*.72))+'px';
     items.style.top='auto';items.style.right='auto';items.style.zIndex='1500';
