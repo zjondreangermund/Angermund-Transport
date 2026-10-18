@@ -1,0 +1,39 @@
+let opsSelection=(()=>{try{return RecordFilters.normalize(JSON.parse(sessionStorage.getItem('angermund_page_filters')||'{}'))}catch{return RecordFilters.normalize()}})();
+const opsFilterPages=new Set(['fleet','command','dispatch','trips','carrierOrders','diesel','inspections','workshop','incidents','invoices','roadCharges','reports','monthlyPnl']);
+function opsFiltering(){return Boolean(opsSelection.truckId||opsSelection.year)}
+function opsRows(key){return opsFiltering()?RecordFilters.rows(db,key,opsSelection):(db[key]||[])}
+function opsLabel(){return[opsSelection.truckId?truck(opsSelection.truckId):'All trucks',opsSelection.year?(opsSelection.month?monthName(opsSelection.month)+' ':'Full year ')+opsSelection.year:'All dates'].join(' · ')}
+function opsFilterPanel(){
+  if(!opsFilterPages.has(page)||['driver','site_worker'].includes(role))return'';
+  const years=new Set([String(new Date().getFullYear()),opsSelection.year]);
+  for(const key of ['trips','diesel','expenses','invoices','maintenance','inspections','incidents','shunterRecons'])for(const x of db[key]||[]){const y=RecordFilters.rowDate(x,db).slice(0,4);if(/^\d{4}$/.test(y))years.add(y)}
+  const trucks=[...(db.trucks||[]),...(db.archivedTrucks||[])].filter((x,i,a)=>a.findIndex(t=>t.id===x.id)===i).sort((a,b)=>String(a.fleetName||a.registration).localeCompare(String(b.fleetName||b.registration),undefined,{numeric:true}));
+  return '<section class="page-filters panel" aria-label="Truck and date filters"><div class="page-filter-fields"><label>Truck<select id="opsTruck"><option value="">All trucks</option>'+trucks.map(t=>'<option value="'+esc(t.id)+'" '+(opsSelection.truckId===t.id?'selected':'')+'>'+esc(truck(t.id))+'</option>').join('')+'</select></label><label>Year<select id="opsYear"><option value="">All dates</option>'+[...years].filter(Boolean).sort().reverse().map(y=>'<option '+(opsSelection.year===y?'selected':'')+'>'+y+'</option>').join('')+'</select></label><label>Month<select id="opsMonth"><option value="">All months</option>'+Array.from({length:12},(_,i)=>String(i+1).padStart(2,'0')).map(m=>'<option value="'+m+'" '+(opsSelection.month===m?'selected':'')+'>'+monthName(m)+'</option>').join('')+'</select></label><div class="page-filter-actions"><button type="button" class="ghost small" id="opsCurrent">Current month</button><button type="button" class="ghost small" id="opsClear">Clear filters</button></div></div><p class="muted-copy">'+esc(opsLabel())+' · Selection follows you between operational pages. '+(opsFiltering()?'Trips use the trip date; other entries use their recorded date.':'Choose a truck or period to filter this page.')+'</p></section>';
+}
+function wireOpsFilters(){
+  const save=()=>{sessionStorage.setItem('angermund_page_filters',JSON.stringify(opsSelection));render()};
+  if($('opsTruck'))$('opsTruck').onchange=e=>{opsSelection.truckId=e.target.value;save()};
+  if($('opsYear'))$('opsYear').onchange=e=>{opsSelection.year=e.target.value;if(!opsSelection.year)opsSelection.month='';save()};
+  if($('opsMonth'))$('opsMonth').onchange=e=>{opsSelection.month=e.target.value;if(opsSelection.month&&!opsSelection.year)opsSelection.year=String(new Date().getFullYear());save()};
+  if($('opsCurrent'))$('opsCurrent').onclick=()=>{const d=new Date();opsSelection.year=String(d.getFullYear());opsSelection.month=String(d.getMonth()+1).padStart(2,'0');save()};
+  if($('opsClear'))$('opsClear').onclick=()=>{opsSelection=RecordFilters.normalize();save()};
+}
+function opsOverview(){
+  const trips=opsRows('trips'),fuel=opsRows('diesel'),expenses=opsRows('expenses').filter(x=>x.status!=='Rejected'),shunter=opsRows('shunterRecons');
+  const revenue=sum(trips,journeyIncome)+sum(shunter,x=>x.charge),tripCosts=sum(trips,tripCost),companyFuel=sum(fuel.filter(x=>!x.tripId),fuelRecordCost),companyExpenses=sum(expenses.filter(x=>!x.tripId),x=>x.amount);
+  const maintenance=opsRows('maintenance').filter(m=>!(db.expenses||[]).some(e=>e.maintenanceId===m.id&&e.status!=='Rejected')),service=sum(maintenance,x=>x.cost),cost=tripCosts+companyFuel+companyExpenses+service;
+  const ids=new Set(trips.map(t=>t.truckId));if(opsSelection.truckId)ids.add(opsSelection.truckId);for(const x of [...fuel,...expenses,...maintenance,...shunter]){for(const id of RecordFilters.truckIds(x,db))ids.add(id)}
+  const performance=[...ids].map(id=>{const ts=trips.filter(t=>t.truckId===id),rev=sum(ts,journeyIncome)+sum(shunter.filter(x=>x.truckId===id),x=>x.charge),fu=fuel.filter(x=>RecordFilters.truckIds(x,db).has(id)),ex=expenses.filter(x=>RecordFilters.truckIds(x,db).has(id)),co=sum(ts,tripCost)+sum(fu.filter(x=>!x.tripId),fuelRecordCost)+sum(ex.filter(x=>!x.tripId),x=>x.amount)+sum(maintenance.filter(x=>x.truckId===id),x=>x.cost);return{id,trips:ts.length,revenue:rev,cost:co,distance:sum(ts,journeyDistance),fuel:sum(fu,fuelRecordCost),litres:sum(fu,x=>x.litres)}});
+  return '<div class="notice"><b>'+esc(opsLabel())+'</b><br>Recorded operational contribution includes all linked costs of the selected trips, plus unlinked fuel, expenses and service recorded in the selected period. Payroll, insurance estimates and unallocated company overhead are available in the company Monthly P&amp;L view after clearing filters.</div>'
+    +'<section class="kpis">'+kpi('Trips',trips.length,opsLabel())+kpi('Revenue',money(revenue),'Trips + shunter records')+kpi('Operational costs',money(cost),'Recorded linked costs')+kpi('Contribution',money(revenue-cost),'Before payroll / fixed overhead',revenue-cost<0?'negative':'positive')+kpi('Distance',sum(trips,journeyDistance).toLocaleString()+' km','Selected trips')+kpi('Fuel spend',money(sum(fuel,fuelRecordCost)),sum(fuel,x=>x.litres).toLocaleString()+' L · entry dates')+'</section>'
+    +'<section class="panel"><h2>Truck performance</h2>'+table(['Truck','Trips','Distance','Revenue','Costs','Contribution','Fuel spend','Litres'],performance,x=>[truck(x.id),x.trips,x.distance.toLocaleString()+' km',money(x.revenue),money(x.cost),money(x.revenue-x.cost),money(x.fuel),x.litres.toLocaleString()])+'</section>'
+    +'<section class="panel" style="margin-top:18px"><div class="toolbar"><h2>Trips in this selection</h2><button class="ghost export" data-kind="trips">Export trips</button></div>'+tripTable(trips)+'</section>'
+    +'<section class="panel" style="margin-top:18px"><div class="toolbar"><h2>Fuel in this selection</h2><button class="ghost export" data-kind="diesel">Export fuel</button></div>'+table(['Date','Truck','Trip','Supplier','Litres','Amount'],fuel,x=>[x.date,truck(x.truckId||get('trips',x.tripId).truckId),get('trips',x.tripId).number||'Company',x.supplier,num(x.litres).toLocaleString(),money(fuelRecordCost(x))])+'</section>'
+    +'<section style="margin-top:18px">'+dataTable('Expenses in this selection','expense',['Date','Truck','Trip','Category','Supplier','Amount','Status'],expenses,x=>[x.date,truck(x.truckId||get('trips',x.tripId).truckId),get('trips',x.tripId).number||'Company',x.category,x.supplier,money(x.amount),x.status])+'</section>';
+}
+
+function opsTrucks(){return (db.trucks||[]).filter(t=>!opsSelection.truckId||t.id===opsSelection.truckId)}
+function opsFleetSummary(t){
+  const periods=opsSelection.year?(opsSelection.month?[opsSelection.year+'-'+opsSelection.month]:Array.from({length:12},(_,i)=>opsSelection.year+'-'+String(i+1).padStart(2,'0'))):[today().slice(0,7)];
+  const result={};for(const period of periods)for(const [key,value] of Object.entries(fleetCostSummary(t,period)))if(typeof value==='number')result[key]=(result[key]||0)+value;return result;
+}
