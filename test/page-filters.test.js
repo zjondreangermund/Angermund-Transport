@@ -16,4 +16,10 @@ vm.runInContext(`
 `,context);
 assert.deepEqual(Array.from(context.tripIds),['a']);assert.ok(context.summary.includes('REAL-ANG12-SEP'));assert.ok(!context.summary.includes('OTHER-OCT'));assert.ok(!context.summary.includes('OTHER-TRUCK'));assert.ok(context.summary.includes('600.00'));assert.ok(context.panel.includes('opsTruck'));for(const [name,html] of Object.entries(context.results))assert.equal(typeof html,'string',name);console.log('All 13 filtered views rendered successfully; linked costs and September selection verified.');
 
+vm.runInContext(`opsSelection=RecordFilters.normalize({truckId:'t12',from:'2026-09-20',to:'2026-10-23'});page='invoices';globalThis.rangeInvoice=invoices();globalThis.rangePanel=opsFilterPanel();globalThis.rangeTrips=selectedTripRows().map(t=>t.id);`,context);
+assert.deepEqual(Array.from(context.rangeTrips),['b','a']);
+assert.ok(context.rangePanel.includes('Apply exact dates'));
+assert.ok(context.rangeInvoice.includes('id="nblPeriodStart" type="date" value="2026-09-20"'));
+assert.ok(context.rangeInvoice.includes('id="nblPeriodEnd" type="date" value="2026-10-23"'));
+
 });

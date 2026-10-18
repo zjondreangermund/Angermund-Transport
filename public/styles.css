@@ -1197,3 +1197,6 @@ html.mobile-lite-entry .login-panel .login-card{backdrop-filter:none!important}
 @media(max-width:760px){.page-filter-fields{grid-template-columns:1fr 1fr}.page-filter-fields label:first-child,.page-filter-actions{grid-column:1/-1}.page-filter-actions button{flex:1;min-height:44px}}
 
 .ops-filtered .carrier-order-controls .period-switch{display:none}
+
+.page-date-range{display:grid;grid-template-columns:1fr 1fr auto;gap:12px;align-items:end;margin-top:14px;padding-top:14px;border-top:1px solid var(--line)}.page-date-range label{display:grid;gap:6px;color:var(--muted);font-size:12px;min-width:0}.page-date-range input{width:100%;min-width:0;min-height:44px}
+@media(max-width:760px){.page-date-range{grid-template-columns:1fr 1fr}.page-date-range button{grid-column:1/-1;min-height:44px}}

@@ -12,3 +12,10 @@ test('empty or incomplete trips show no fabricated efficiency or division by zer
  const state={trips:[{id:'missing',truckId:'12',date:'2026-09-30',status:'Closed',distance:1000,startKm:0,endKm:0}],diesel:[{tripId:'missing',date:'2026-09-30',litres:100,total:2500}]};
  const result=f.fuelSummary(state,{truckId:'12'});assert.equal(result.litres,100);assert.equal(result.kmPerL,null);assert.equal(result.litresPerKm,null);assert.equal(result.litresPer100Km,null);assert.equal(result.costPerKm,null);assert.equal(f.fuelSummary({},{}).pricePerL,null);
 });
+test('exact dates include both endpoints across months and override month shortcuts',()=>{
+ const state={trips:[{id:'before',truckId:'12',date:'2026-09-19'},{id:'first',truckId:'12',date:'2026-09-20'},{id:'middle',truckId:'12',date:'2026-10-01'},{id:'last',truckId:'12',date:'2026-10-23'},{id:'after',truckId:'12',date:'2026-10-24'},{id:'other',truckId:'4',date:'2026-10-01'}]};
+ const selection={truckId:'12',year:'2025',month:'01',from:'2026-09-20',to:'2026-10-23'};assert.deepEqual(f.rows(state,'trips',selection).map(x=>x.id),['first','middle','last']);assert.equal(f.normalize(selection).year,'');assert.deepEqual(f.rows(state,'trips',{from:'2026-10-23',to:'2026-10-23'}).map(x=>x.id),['last']);
+});
+test('invalid, incomplete and reversed ranges are rejected before applying',()=>{
+ for(const [from,to] of [['2026-02-30','2026-03-01'],['2026-10-23','2026-09-20'],['','2026-10-23']])assert.throws(()=>f.dateRange(from,to));assert.equal(f.validDate('2024-02-29'),true);assert.equal(f.validDate('2026-02-29'),false);
+});

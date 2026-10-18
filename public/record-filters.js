@@ -1,6 +1,9 @@
 (function(root){
   'use strict';
-  function normalize(value={}){const year=/^\d{4}$/.test(String(value.year))?String(value.year):'',month=/^(0[1-9]|1[0-2])$/.test(String(value.month))?String(value.month):'';return{truckId:String(value.truckId||''),year,month:year?month:''}}
+  function validDate(value){const s=String(value||'');return /^\d{4}-\d{2}-\d{2}$/.test(s)&&Number.isFinite(Date.parse(s))&&new Date(s).toISOString().slice(0,10)===s}
+  function dateRange(from,to){if(!validDate(from)||!validDate(to))throw Error('Choose valid From and To dates');if(from>to)throw Error('From date must be on or before To date');return{from,to}}
+  function normalize(value={}){const year=/^\d{4}$/.test(String(value.year))?String(value.year):'',month=/^(0[1-9]|1[0-2])$/.test(String(value.month))?String(value.month):'';let range={from:'',to:''};try{range=dateRange(value.from,value.to)}catch{}return{truckId:String(value.truckId||''),year:range.from?'':year,month:range.from?'':year?month:'',...range}}
+
   function truckIds(row,state){
     const ids=new Set();if(row.truckId)ids.add(row.truckId);
     const tripIds=new Set([row.tripId,...(row.tripIds||[]),...(row.lines||[]).map(x=>x.tripId)].filter(Boolean));
@@ -11,7 +14,8 @@
     return ids;
   }
   function rowDate(row,state){const trip=(state.trips||[]).find(t=>t.id===row.tripId);return String(row.date||row.period||row.createdAt||row.created_at||trip?.date||'').slice(0,10)}
-  function matches(row,state,selection,{master=false}={}){const f=normalize(selection);if(f.truckId&&!truckIds(row,state).has(f.truckId))return false;if(master||!f.year)return true;const date=rowDate(row,state);return date.startsWith(f.year+'-')&&(!f.month||date.slice(5,7)===f.month)}
+  function matches(row,state,selection,{master=false}={}){const f=normalize(selection);if(f.truckId&&!truckIds(row,state).has(f.truckId))return false;if(master)return true;const date=rowDate(row,state);if(f.from)return validDate(date)&&date>=f.from&&date<=f.to;if(!f.year)return true;return date.startsWith(f.year+'-')&&(!f.month||date.slice(5,7)===f.month)}
+
   function rows(state,key,selection){return(state[key]||[]).filter(row=>matches(row,state,selection))}
   function fuelSummary(state,selection){
     const number=v=>Number.isFinite(Number(v))?Number(v):0;
@@ -27,5 +31,5 @@
     const ready=distance>0&&matchedLitres>0;
     return{litres,spend,pricePerL:litres>0?spend/litres:null,distance,matchedLitres,matchedTrips,excludedTrips,kmPerL:ready?distance/matchedLitres:null,litresPerKm:ready?matchedLitres/distance:null,litresPer100Km:ready?matchedLitres/distance*100:null,costPerKm:ready?matchedSpend/distance:null};
   }
-  const api={normalize,truckIds,rowDate,matches,rows,fuelSummary};if(typeof module==='object'&&module.exports)module.exports=api;else root.RecordFilters=api;
+  const api={validDate,dateRange,normalize,truckIds,rowDate,matches,rows,fuelSummary};if(typeof module==='object'&&module.exports)module.exports=api;else root.RecordFilters=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
