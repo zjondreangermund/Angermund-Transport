@@ -1,3 +1,4 @@
+const {isWorkbookTest}=require('./workbook-test-cleanup');
 'use strict';
 const done=t=>Number(t.stage)>=4||/delivered|invoiced|closed/i.test(String(t.status||''));
 const n=v=>Number.isFinite(Number(v))?Number(v):0;
@@ -5,7 +6,9 @@ function collectOperationalAlerts(state,cursor={},users=[],now=Date.now()){
   const first=!cursor.initialized;cursor.initialized=true;cursor.assignments??={};cursor.conditions??={};const events=[],active=new Set();
   const add=(key,condition,alert)=>{if(!condition)return;active.add(key);const record=cursor.conditions[key]||{active:false,episode:0};if(!record.active){record.episode++;events.push({...alert,key:key+':'+record.episode})}record.active=true;cursor.conditions[key]=record};
   const role=(role,linkedType,linkedId)=>({role,linkedType,linkedId});
+  const inactive=t=>isWorkbookTest(t)||(t.date&&String(t.date).slice(0,10)<(state.operationalStartDate||'2026-09-20'));
   for(const t of state.trips||[]){
+    if(inactive(t))continue;
     const previous=cursor.assignments[t.id],driver=String(t.driverId||'');cursor.assignments[t.id]={driver,sequence:(previous?.sequence||0)+(previous&&previous.driver!==driver?1:0)};
     if(!first&&driver&&!done(t)&&(!previous||previous.driver!==driver))events.push({key:'assign:'+t.id+':'+driver+':'+cursor.assignments[t.id].sequence,title:'Trip assigned: '+t.number,message:'You are assigned to '+t.number+' on '+(t.date||'the planned date')+'. Open Driver Workspace for the load details.',type:'trip-assigned',severity:'info',driverId:driver,linkedType:'trip',linkedId:t.id});
     const legs=t.legs?.length?t.legs:[t],missing=legs.filter(l=>!l.pod&&(done(l)||done(t)));
@@ -23,6 +26,7 @@ function collectOperationalAlerts(state,cursor={},users=[],now=Date.now()){
     add('profit:'+t.id,!shunter&&done(t)&&income>0&&cost>0&&margin<minMargin,{...role('admin','trip',t.id),type:'low-trip-profit',severity:margin<0?'critical':'warning',title:'Low trip profit: '+t.number,message:t.number+' has a recorded margin of '+margin.toFixed(1)+'%, below the '+minMargin+'% target. Costs may still need reconciliation.'});
   }
   for(const f of state.diesel||[]){
+    if(f.tripId){const trip=(state.trips||[]).find(t=>t.id===f.tripId);if(!trip||inactive(trip))continue;}
     const noProof=!(f.receiptUploadId||(f.receiptUploadIds||[]).length),missing=f.receiptMissing===true||/missing|lost|unavailable/i.test(String(f.receiptStatus||f.status||''));
     const t=(state.trips||[]).find(t=>t.id===f.tripId),alert={...role('finance','diesel',f.id),type:'missing-diesel-slip',severity:'warning',title:'Diesel slip missing',message:(t?.number||'Company fuel')+' · '+n(f.litres).toFixed(2)+' L · '+(f.date||'date not recorded')+' · '+(f.supplier||'supplier not recorded')+'. Add the slip when available.'};
     add('slip:'+f.id,noProof&&missing,alert);
