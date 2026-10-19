@@ -23,7 +23,7 @@ assert.ok(context.rangeInvoice.includes('id="nblPeriodStart" type="date" value="
 assert.ok(context.rangeInvoice.includes('id="nblPeriodEnd" type="date" value="2026-10-23"'));
 
 vm.runInContext(`
- db.invoices=[{id:'taxed',clientId:'cli_rf',tripId:'a',amount:1000,number:'INV-TAX',date:'2026-09-30'}];InvoiceCharges.calculate(db,db.invoices[0],{newInvoice:true});
+ db.invoices=[{id:'taxed',clientId:'cli_rf',tripId:'a',amount:1000,number:'INV-TAX',date:'2026-09-30'}];InvoiceCharges.calculate(db,db.invoices[0],{newInvoice:true,includeMdc:false});
  globalThis.printed='';window.open=()=>({document:{write(html){globalThis.printed=html},close(){}},focus(){}});printInvoice('taxed');globalThis.printed=$('documentPreviewFrame').srcdoc||globalThis.printed;openInvoiceEdit('taxed');globalThis.editHtml=$('entryForm').innerHTML;
 `,context);
 assert.ok(context.printed.includes('VAT 15%'));assert.ok(context.printed.includes('Transport excl. VAT'));assert.ok(context.editHtml.includes('editInvoiceVatRate'));

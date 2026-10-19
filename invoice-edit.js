@@ -31,7 +31,7 @@ function editInvoice(state,inv,body,h){
   }
   if(inv.lines?.length)inv.amount=Number(inv.lines.reduce((a,l)=>a+Number(l.amount||0),0).toFixed(2));
   else if(body.amount!==undefined){const amount=Number(body.amount);if(!Number.isFinite(amount)||amount<0)fail('Invalid invoice amount');inv.amount=Number(amount.toFixed(2));inv.transportSubtotal=inv.amount;const t=(state.trips||[]).find(x=>x.id===inv.tripId);if(t){const legs=h.ensureTripLegs(state,t);const l=inv.legId?legs.find(x=>x.id===inv.legId):legs.length===1?legs[0]:null;if(!l)fail('Edit each journey leg amount for this multi-load invoice');l.pricingMethod='Manual negotiated';l.agreedAmount=inv.amount;l.income=inv.amount;h.syncTripFromLegs(state,t);h.recalcTripCosts(state,t);t.loadEditedAt=new Date().toISOString();if(t.legs[0]?.id===l.id){t.sourceRate=l.income;if(t.carrierDetails)t.carrierDetails.rate=l.income}}}
-  calculateInvoiceCharges(state,inv,{vatRate:body.vatRate,includeMdc:body.includeMdc});
+  calculateInvoiceCharges(state,inv,{vatRate:body.vatRate,includeMdc:body.includeMdc,mdcOverrideKm:body.mdcOverrideKm,mdcRatePer100km:body.mdcRatePer100km});
   const paid=Math.max(Number(inv.paidAmount||0),(state.payments||[]).filter(p=>p.invoiceId===inv.id).reduce((a,p)=>a+Number(p.amount||0),0));
   if(inv.amount<paid-.005)fail('Invoice total cannot be less than payments already received');
   inv.paidAmount=paid;inv.balance=Number((inv.amount-paid).toFixed(2));inv.status=inv.balance<=.005?'Paid':paid>0?'Part Paid':inv.due<new Date().toISOString().slice(0,10)?'Overdue':'Unpaid';inv.updatedAt=new Date().toISOString();return{invoice:inv,before};
