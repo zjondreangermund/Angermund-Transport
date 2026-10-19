@@ -44,4 +44,13 @@ vm.runInContext(`$('globalSearchHost').parentElement={getBoundingClientRect:()=>
 assert.equal(context.headerOffset.key,'--app-header-height');
 assert.equal(context.headerOffset.value,'228px');
 
+vm.runInContext(`
+ $('nav').scrollTop=40;globalThis.prevented=0;
+ $('sidebar').onwheel({target:{closest:()=>null},deltaY:60,deltaMode:0,preventDefault(){globalThis.prevented++}});
+ globalThis.navScroll=$('nav').scrollTop;
+ globalThis.morePanel={scrollTop:20,clientHeight:100};
+ $('sidebar').onwheel({target:{closest:()=>globalThis.morePanel},deltaY:-1,deltaMode:1,preventDefault(){globalThis.prevented++}});
+`,context);
+assert.equal(context.navScroll,100);assert.equal(context.morePanel.scrollTop,0);assert.equal(context.prevented,2);
+
 });

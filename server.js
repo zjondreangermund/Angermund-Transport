@@ -2789,7 +2789,7 @@ function shunterMonthBounds(period){
   if(!/^\d{4}-\d{2}$/.test(String(period||''))){const e=Error('Shunter period must be YYYY-MM');e.status=400;throw e}
   const [y,m]=String(period).split('-').map(Number),start=period+'-01',end=new Date(Date.UTC(y,m,0)).toISOString().slice(0,10);return{start,end}
 }
-function buildNblShunterInvoice(state,period){
+function buildNblShunterInvoice(state,period,custom={}){
   const bounds=shunterMonthBounds(period);state.invoices??=[];state.shunterRecons??=[];
   const nbl=(state.clients||[]).find(isNblClient);if(!nbl){const e=Error('Namibian Breweries / NBL client was not found');e.status=404;throw e}
   const existing=state.invoices.find(x=>x.shunterRecon===true&&x.clientId===nbl.id&&x.shunterPeriod===period);if(existing)return{invoice:existing,existing:true,lines:existing.lines||[]};
@@ -2797,9 +2797,9 @@ function buildNblShunterInvoice(state,period){
   const lines=rows.slice().sort((a,b)=>String(a.date).localeCompare(String(b.date))||String(a.truckId).localeCompare(String(b.truckId))).map(r=>{const tr=(state.trucks||[]).find(x=>x.id===r.truckId);return{shunterReconId:r.id,date:r.date,tripNumber:'Shunter',route:'NBL Windhoek shunting',truck:(tr&&(tr.fleetName||tr.registration))||r.truckId,registration:(tr&&tr.registration)||'',load:'TMS: '+(r.tmsIds||[]).join(', '),amount:Number(num(r.charge).toFixed(2))}});
   const highest=[...state.invoices,...(state.recordHistory||[]).filter(h=>h.kind==='invoices'&&h.action==='Deleted').map(h=>h.record)].reduce((m,x)=>{const n=Number(String(x.number||'').split('-').pop())||0;return Math.max(m,n)},999),terms=num(nbl.terms)||30,endDate=new Date(bounds.end+'T00:00:00Z'),dueDate=new Date(endDate.getTime()+terms*86400000),amount=Number(lines.reduce((a,x)=>a+num(x.amount),0).toFixed(2));
   const inv={id:'inv_'+crypto.randomUUID(),number:'INV-'+(highest+1),date:bounds.end,clientId:nbl.id,tripId:'',amount,due:dueDate.toISOString().slice(0,10),status:'Unpaid',shunterRecon:true,shunterPeriod:period,billingCycle:'Calendar month shunter recon',periodStart:bounds.start,periodEnd:bounds.end,lines,lineCount:lines.length,source:'Shunter Recon'};
-  calculateInvoiceCharges(state,inv,{newInvoice:true,includeMdc:false});state.invoices.unshift(inv);for(const r of rows)r.invoiceId=inv.id;return{invoice:inv,existing:false,lines}
+  calculateInvoiceCharges(state,inv,{newInvoice:true,vatRate:custom.vatRate,includeMdc:custom.includeMdc,mdcOverrideKm:custom.mdcOverrideKm,mdcRatePer100km:custom.mdcRatePer100km});state.invoices.unshift(inv);for(const r of rows)r.invoiceId=inv.id;return{invoice:inv,existing:false,lines}
 }
-app.post('/api/invoices/nbl/shunter',auth,roles('admin','manager','finance'),async(req,res)=>{try{const changed=await mutateOpsState(state=>buildNblShunterInvoice(state,String((req.body&&req.body.period)||'')));res.status(changed.result.existing?200:201).json(changed.result)}catch(e){res.status(e.status||500).json({error:e.message})}});
+app.post('/api/invoices/nbl/shunter',auth,roles('admin','manager','finance'),async(req,res)=>{try{const changed=await mutateOpsState(state=>buildNblShunterInvoice(state,String((req.body&&req.body.period)||''),req.body||{}));res.status(changed.result.existing?200:201).json(changed.result)}catch(e){res.status(e.status||500).json({error:e.message})}});
 
 app.post('/api/admin/trips/:tripId/legs/:legId/invoice',auth,roles('admin','manager','finance'),async(req,res)=>{
   try{
