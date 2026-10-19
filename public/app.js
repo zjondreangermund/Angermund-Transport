@@ -2811,7 +2811,6 @@ async function advanceTrip(id){
     if(isShunterTrip(t)){
       const recon=ensureShunterReconFromTrip(t),period=String(t.date||today()).slice(0,7);t.tripType='Shunter';t.shunter=true;t.status='Delivered';t.stage=4;shunterReconPeriod=period;
       commit(t.number+' identified as shunter movement · '+truck(t.truckId),'shunter-recon',recon?.id||t.id);
-      setTimeout(()=>go('shunterRecon'),40);
       return notify(recon?'Shunter movement linked to '+pnlPeriodLabel(period)+' recon':'Shunter identified. Add its TMS reference in Shunter Recon')
     }
     if(legs.some(x=>!x.pod)&&!t.pod)return notify('POD is required for every journey leg before invoicing');
