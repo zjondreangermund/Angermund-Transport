@@ -1,0 +1,30 @@
+function useInAppDocumentPreview(){return runningInsideAndroidApp()||window.matchMedia('(max-width:760px)').matches||/Android|iPhone|iPad|Mobile/i.test(navigator.userAgent||'')}
+function createPrintSurface({title='Document',invoiceId=''}={}){
+  if(!useInAppDocumentPreview())return window.open('','_blank','width=980,height=950');
+  let html='';return{document:{write(value){html+=value},close(){openDocumentPreview(html,{title,invoiceId})}},focus(){}};
+}
+function prepareDocumentPreview(html){
+  const style='<style>@media screen and (max-width:760px){html,body{box-sizing:border-box!important;width:100%!important;max-width:100%!important;min-width:0!important;margin:0!important;padding:12px!important;overflow-wrap:anywhere}body>p:has(button),body>button{display:none!important}.head,.print-brand,.meta{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:12px!important}.head img,.print-brand img{max-width:100%!important}.right{text-align:left!important}.table-scroll,.table-wrap{width:100%!important;max-width:100%!important;overflow:visible!important}table{width:100%!important;min-width:0!important}table thead{display:none!important}table tbody,table tr{display:block!important;width:100%!important}table tr{padding:10px!important;margin-bottom:12px;border:1px solid #d8e1ec;border-radius:10px}table td{display:block!important;min-width:0!important;width:100%!important;padding:7px 4px!important;text-align:left!important;white-space:normal!important;overflow-wrap:anywhere;border:0!important}table td:before{content:attr(data-label);display:block;color:#667085;font-size:10px;font-weight:700;text-transform:uppercase;margin-bottom:3px}.invoice-summary{width:100%!important;max-width:100%!important}.sum-row{flex-wrap:wrap;gap:8px!important}}</style>';
+  if(typeof DOMParser!=='undefined'){
+    const doc=new DOMParser().parseFromString(html,'text/html');
+    for(const table of doc.querySelectorAll('table')){const labels=[...table.querySelectorAll('thead th')].map(th=>th.textContent.trim());for(const row of table.querySelectorAll('tbody tr'))[...row.children].forEach((td,i)=>{if(td.colSpan>1)td.setAttribute('data-label','Details');else if(labels[i])td.setAttribute('data-label',labels[i])})}
+    if(!doc.querySelector('meta[name="viewport"]')){const meta=doc.createElement('meta');meta.name='viewport';meta.content='width=device-width,initial-scale=1';doc.head.appendChild(meta)}
+    html='<!doctype html>'+doc.documentElement.outerHTML;
+  }
+  return html.replace('</head>',style+'</head>');
+}
+function openDocumentPreview(html,{title='Document',invoiceId=''}={}){
+  $('modalTitle').textContent=title+' · Preview';
+  $('entryForm').onsubmit=e=>e.preventDefault();
+  $('entryForm').innerHTML='<div class="document-preview"><div class="document-preview-actions"><button type="button" class="ghost" id="documentPreviewBack">← Back</button>'+(invoiceId&&['admin','manager','finance'].includes(role)?'<button type="button" class="primary" id="documentPreviewEdit">Edit invoice</button>':'')+'<button type="button" class="ghost" id="documentPreviewPrint">Print / PDF</button></div><iframe id="documentPreviewFrame" class="document-preview-frame" title="'+esc(title)+'" sandbox="allow-same-origin allow-modals"></iframe></div>';
+  $('documentPreviewFrame').srcdoc=prepareDocumentPreview(html);
+  $('documentPreviewBack').onclick=()=>{if(invoiceId)openInvoice(invoiceId);else $('modal').classList.add('hidden')};
+  if($('documentPreviewEdit'))$('documentPreviewEdit').onclick=()=>openInvoiceEdit(invoiceId);
+  $('documentPreviewPrint').onclick=()=>{try{const frame=$('documentPreviewFrame');frame.contentWindow.focus();frame.contentWindow.print()}catch{notify('Printing is unavailable on this device. Your document remains open.')}};
+  $('modal').classList.remove('hidden');$('entryForm').scrollTop=0;
+}
+function invoiceMobileCards(rows){return '<div class="invoice-mobile-cards">'+rows.map(i=>'<article class="entity-card"><div class="panel-head"><h3>'+esc(i.number)+'</h3>'+badge(i.status)+'</div><p>'+esc(client(i.clientId))+'</p><p>'+esc(i.date)+' · Due '+esc(i.due||'—')+'</p>'+(i.periodStart?'<p>'+esc(i.periodStart)+' → '+esc(i.periodEnd)+'</p>':'')+'<div class="metric-line"><span>Total</span><b>'+money(i.amount)+'</b></div><div class="metric-line"><span>Outstanding</span><b>'+money(invoiceBalance(i))+'</b></div><div class="invoice-card-actions"><button type="button" class="ghost open-invoice" data-id="'+esc(i.id)+'">View details</button>'+managedButtons('invoices',i.id)+(invoiceBalance(i)>.005?'<button type="button" class="primary pay-invoice" data-id="'+esc(i.id)+'">Record payment</button>':'')+'</div></article>').join('')+'</div>'}
+function invoiceTopActions(id){return '<div class="invoice-top-actions"><button type="button" class="ghost" data-invoice-action="back" data-id="'+esc(id)+'">← Back</button>'+(['admin','manager','finance'].includes(role)?'<button type="button" class="primary" data-invoice-action="edit" data-id="'+esc(id)+'">Edit invoice</button>':'')+'<button type="button" class="ghost" data-invoice-action="print" data-id="'+esc(id)+'">Preview / Print</button></div>'}
+document.addEventListener('click',e=>{const b=e.target.closest('[data-invoice-action]');if(!b)return;e.preventDefault();e.stopPropagation();const action=b.dataset.invoiceAction;if(action==='back')$('modal').classList.add('hidden');if(action==='view')openInvoice(b.dataset.id);if(action==='edit')openInvoiceEdit(b.dataset.id);if(action==='print')printInvoice(b.dataset.id)});
+
+function invoiceEditTopActions(id){return '<div class="invoice-top-actions invoice-edit-actions"><button type="button" class="ghost" data-invoice-action="view" data-id="'+esc(id)+'">← Back to invoice</button><button type="submit" class="primary">Save changes</button></div>'}
