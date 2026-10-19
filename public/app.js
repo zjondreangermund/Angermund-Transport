@@ -4,7 +4,7 @@ const STORE='angermund_transport_ops_v2',LEGACY_STORE='angermund_transport_erp_v
 const $=id=>document.getElementById(id),today=()=>new Date().toISOString().slice(0,10),uid=(p='id')=>`${p}_${Date.now().toString(36)}${Math.random().toString(36).slice(2,6)}`;
 const SMART_SLIP_CATEGORIES=['Diesel','Toll','Meals','Accommodation','Parking','Border permit','Customs / clearing','Road permit / RFA','Mass distance charge (MDC)','Weighbridge','Loading / offloading','Ferry / crossing','Wash bay','Tyre repair','Emergency repair','Breakdown parts','Workshop / spares','Police / traffic fine','General supplies','Other'];
 let authToken=appLocalStorage.getItem('angermund_token')||'',sessionUser=null,liveGps=[],geofences=[],serverNotifications=[],providerConfig={},pushDeviceStatus={supported:false,permission:typeof Notification!=='undefined'?Notification.permission:'unsupported',subscribed:false,serverCount:0},mapInstance=null,mapLayers=[],geofencePickerMap=null,geofencePickerMarker=null,geofencePickerCircle=null,geofenceDraftPoint=null,appUsers=[],usersLoaded=false,driverUploads=[],driverUploadsLoaded=false,activeUploadObjectUrl='',activeUploadPreviewUrl='',driverPreviewId='',driverGeoWatchId=null,phoneGpsTestWatchId=null,lastPhoneGpsTestSentAt=0,lastDriverGpsSentAt=0,lastDriverGpsPoint=null,payrollPeriodFilter=new Date().toISOString().slice(0,7),mdcTripPrefill='',journeyQuoteLegs=[],crossBorderPackTripId='',crossBorderDocs=[],crossBorderDocsLoadedFor='';
-let adminSlipBatch=null,excelImportFile=null,excelImportPreview=null,tripViewMode='live',tripHistoryYear=String(new Date().getFullYear()),tripHistoryMonth='all',tripSearchTerm='',pnlPeriodFilter=new Date().toISOString().slice(0,7),carrierOrderMode='open',carrierOrderPeriod=new Date().toISOString().slice(0,7),carrierOrderSearch='',shunterReconPeriod='',commandYearFilter=String(new Date().getFullYear()),commandMonthFilter=String(new Date().getMonth()+1).padStart(2,'0');
+let adminSlipBatch=null,excelImportFile=null,excelImportPreview=null,tripCompletionFilter='process', tripViewMode='live',tripHistoryYear=String(new Date().getFullYear()),tripHistoryMonth='all',tripSearchTerm='',pnlPeriodFilter=new Date().toISOString().slice(0,7),carrierOrderMode='open',carrierOrderPeriod=new Date().toISOString().slice(0,7),carrierOrderSearch='',shunterReconPeriod='',commandYearFilter=String(new Date().getFullYear()),commandMonthFilter=String(new Date().getMonth()+1).padStart(2,'0');
 const QUICK_PIN_DEVICE_KEY='angermund_quick_pin_device',QUICK_PIN_READY_KEY='angermund_quick_pin_ready',QUICK_PIN_LOGIN_KEY='angermund_quick_pin_login',PHONE_GPS_TEST_KEY='angermund_phone_gps_test';
 function quickPinDeviceId(){let id=appLocalStorage.getItem(QUICK_PIN_DEVICE_KEY);if(!id){id=(crypto.randomUUID?crypto.randomUUID():'web-'+Date.now().toString(36)+Math.random().toString(36).slice(2));appLocalStorage.setItem(QUICK_PIN_DEVICE_KEY,id)}return id}
 function accountUsername(u){return String(u?.username||u?.email||'').split('@')[0]}
@@ -394,7 +394,7 @@ function wireCommandPeriod(){
 
 function commandTripList(rows){
   if(!rows.length)return'<div class="empty">No trips in this period.</div>';
-  return '<div class="command-trip-list">'+rows.map(t=>'<button type="button" class="command-trip-item" data-command-trip="'+esc(t.id)+'"><span class="command-trip-main"><b>'+esc(t.number)+'</b><small>'+esc(journeyRouteLabel(t)||'Route not set')+'</small></span><span class="command-trip-meta"><span>'+esc(truck(t.truckId)||'No truck')+'</span><span>'+esc(t.driverId?driver(t.driverId):'Driver unassigned')+'</span></span>'+badge(t.status)+'</button>').join('')+'</div>'
+  return '<div class="command-trip-list">'+rows.map(t=>'<button type="button" class="command-trip-item" data-command-trip="'+esc(t.id)+'"><span class="command-trip-main"><b>'+esc(t.number)+'</b><small>'+esc(journeyRouteLabel(t)||'Route not set')+'</small></span><span class="command-trip-meta"><span>'+esc(truck(t.truckId)||'No truck')+'</span><span>'+esc(t.driverId?driver(t.driverId):'Driver unassigned')+'</span></span>'+badge(tripOperationsCompleted(t)?'Completed':t.status)+'</button>').join('')+'</div>'
 }
 function commandAttentionLabel(a){
   const text=String(a?.text||'');
@@ -441,6 +441,17 @@ function sortTripsByDate(rows,ascending=false){
   return rows.slice().sort((a,b)=>(ascending?1:-1)*(tripDateStamp(a)-tripDateStamp(b))||String(b.number||'').localeCompare(String(a.number||''),undefined,{numeric:true}))
 }
 function tripClosed(t){return String(t?.status||'').toLowerCase()==='closed'||num(t?.stage)>=6}
+function tripOperationsCompleted(t){
+  const attached=x=>Boolean(x&&(x.podDocumentId||x.podUploadId));
+  const legs=(t.legs||[]).filter(l=>!l.cancelled&&String(l.status||'').toLowerCase()!=='cancelled');
+  const pod=legs.length>1?legs.every(attached):(attached(t)||legs.some(attached));
+  const diesel=(db.diesel||[]).some(x=>x.tripId===t.id&&(x.receiptUploadId||(x.receiptUploadIds||[]).some(Boolean)));
+  return pod&&diesel
+}
+function tripCompletionMatches(t){return tripCompletionFilter==='all'||(tripCompletionFilter==='completed'?tripOperationsCompleted(t)||tripClosed(t):!tripOperationsCompleted(t)&&!tripClosed(t))}
+function tripCompletionControls(){
+  return '<section class="trip-period-panel"><label>Trip progress <select id="tripCompletionFilter">'+[['process','In process'],['completed','Completed'],['all','All trips']].map(([v,label])=>'<option value="'+v+'" '+(tripCompletionFilter===v?'selected':'')+'>'+label+'</option>').join('')+'</select></label><small>Completed: POD for every leg and a linked diesel slip uploaded. Closed trips are also included.</small></section>'
+}
 function liveTripRows(){
   const current=currentTripMonthKey();return sortTripsByDate((db.trips||[]).filter(t=>!tripClosed(t)||tripMonthKeyFromDate(t.date)===current))
 }
@@ -454,9 +465,9 @@ function availableTripHistoryYears(){
 function ensureTripHistoryPeriod(){
   const years=availableTripHistoryYears();if(!years.includes(String(tripHistoryYear)))tripHistoryYear=years[0];if(!/^(all|0[1-9]|1[0-2])$/.test(String(tripHistoryMonth)))tripHistoryMonth='all'
 }
-function selectedTripRows(){if(opsFiltering())return sortTripsByDate(opsRows('trips'));
-  if(tripViewMode!=='history')return liveTripRows();
-  ensureTripHistoryPeriod();return sortTripsByDate(historicalTripRows().filter(t=>{
+function selectedTripRows(){if(opsFiltering())return sortTripsByDate(opsRows('trips').filter(tripCompletionMatches));
+  if(tripViewMode!=='history')return sortTripsByDate((db.trips||[]).filter(tripCompletionMatches));
+  ensureTripHistoryPeriod();return sortTripsByDate(historicalTripRows().filter(tripCompletionMatches).filter(t=>{
     const key=tripMonthKeyFromDate(t.date);if(!key.startsWith(String(tripHistoryYear)+'-'))return false;return tripHistoryMonth==='all'||key.endsWith('-'+tripHistoryMonth)
   }))
 }
@@ -468,21 +479,21 @@ function tripSearchMatches(t,q){
 function monthName(m,short=false){const n=Math.max(1,Math.min(12,Number(m)||1));return new Intl.DateTimeFormat('en',{month:short?'short':'long'}).format(new Date(2020,n-1,1))}
 function tripPeriodLabel(rows=selectedTripRows()){if(opsFiltering())return opsLabel()+' · '+rows.length+' journey(s)';
   if(tripViewMode!=='history'){
-    const current=currentTripMonthKey().split('-'),label=monthName(current[1])+' '+current[0],open=(db.trips||[]).filter(t=>!tripClosed(t)).length;
-    return label+' + all open trips · '+rows.length+' journey'+(rows.length===1?'':'s')+' shown · '+open+' open'
+    return ({process:'In process',completed:'Completed',all:'All trips'}[tripCompletionFilter])+' · '+rows.length+' journey(s)'
   }
   ensureTripHistoryPeriod();return 'History · '+(tripHistoryMonth==='all'?'All months':monthName(tripHistoryMonth))+' '+tripHistoryYear+' · '+rows.length+' journey'+(rows.length===1?'':'s')
 }
-function tripPeriodControls(){if(opsFiltering())return '';
+function tripPeriodControls(){if(opsFiltering())return tripCompletionControls();
   ensureTripHistoryPeriod();const years=availableTripHistoryYears(),history=tripViewMode==='history',histAll=historicalTripRows(),yearRows=histAll.filter(t=>String(t.date||'').startsWith(String(tripHistoryYear)+'-'));
   const months=Array.from({length:12},(_,i)=>String(i+1).padStart(2,'0'));
-  return '<section class="trip-period-panel"><div class="trip-period-top"><div class="period-switch"><button type="button" id="tripViewLive" class="'+(!history?'active':'')+'">Live & current month</button><button type="button" id="tripViewHistory" class="'+(history?'active':'')+'">History</button></div>'
+  return tripCompletionControls()+'<section class="trip-period-panel"><div class="trip-period-top"><div class="period-switch"><button type="button" id="tripViewLive" class="'+(!history?'active':'')+'">All dates</button><button type="button" id="tripViewHistory" class="'+(history?'active':'')+'">History</button></div>'
     +(history?'<label class="trip-year-select"><span>Year</span><select id="tripHistoryYear">'+years.map(y=>'<option value="'+y+'" '+(String(y)===String(tripHistoryYear)?'selected':'')+'>'+y+'</option>').join('')+'</select></label>':'')
     +'<div class="trip-period-caption">'+esc(tripPeriodLabel())+'</div></div>'
     +(history?'<div class="trip-month-strip"><button type="button" class="trip-month '+(tripHistoryMonth==='all'?'active':'')+'" data-month="all">All <small>'+yearRows.length+'</small></button>'+months.map(m=>{const count=yearRows.filter(t=>tripMonthKeyFromDate(t.date)===tripHistoryYear+'-'+m).length;return '<button type="button" class="trip-month '+(tripHistoryMonth===m?'active':'')+'" data-month="'+m+'">'+monthName(m,true)+' <small>'+count+'</small></button>'}).join('')+'</div>':'')
     +'</section>'
 }
 function wireTripPeriodControls(){
+  if($('tripCompletionFilter'))$('tripCompletionFilter').onchange=e=>{tripCompletionFilter=e.target.value;render()};
   if($('tripViewLive'))$('tripViewLive').onclick=()=>{tripViewMode='live';tripHistoryMonth='all';render()};
   if($('tripViewHistory'))$('tripViewHistory').onclick=()=>{tripViewMode='history';ensureTripHistoryPeriod();render()};
   if($('tripHistoryYear'))$('tripHistoryYear').onchange=e=>{tripHistoryYear=e.target.value;tripHistoryMonth='all';render()};
@@ -500,7 +511,7 @@ function tripTable(rows){
       +'<div class="trip-summary-vehicle"><b>'+esc(truck(t.truckId)||'Truck not set')+'</b><small>'+esc(t.driverId?driver(t.driverId):'Driver unassigned')+'</small></div>'
       +'<div class="trip-summary-proof">'+proof+'</div>'
       +(fin?'<div class="trip-summary-money"><small>Contribution</small><b class="'+(profit>=0?'positive':'negative')+'">'+money(profit)+'</b></div>':'')
-      +'<div class="trip-summary-status">'+shunterTripBadge(t)+badge(t.status)+'<button type="button" class="ghost small open-trip" data-id="'+esc(t.id)+'">Details</button>'+tripDeleteButton(t)+'</div>'
+      +'<div class="trip-summary-status">'+shunterTripBadge(t)+badge(tripOperationsCompleted(t)?'Completed':t.status)+'<button type="button" class="ghost small open-trip" data-id="'+esc(t.id)+'">Details</button>'+tripDeleteButton(t)+'</div>'
       +'</article>'
   }).join('')+'</div>'
 }
@@ -604,8 +615,8 @@ function dispatch(){
     const income=sum(rows,journeyIncome),cost=sum(rows,tripCost),profit=income-cost;
     summary='<section class="kpis compact-period-kpis">'+kpi('Journeys',rows.length,tripHistoryMonth==='all'?'All months '+tripHistoryYear:monthName(tripHistoryMonth)+' '+tripHistoryYear)+kpi('Income',money(income),'Selected history period')+kpi('Costs',money(cost),'Selected history period')+kpi('Contribution',money(profit),income?((profit/income)*100).toFixed(1)+'% margin':'No income',profit<0?'negative':'positive')+'</section>'
   }else{
-    const cols=[['Planned',1],['Loading',2],['In transit',3],['Delivered',4],['Invoiced',5],['Closed',6]];
-    summary='<div class="workflow">'+cols.map(([l,n])=>`<div class="stage"><span>Stage ${n}</span><strong>${l}</strong><p>${rows.filter(t=>n===6?tripClosed(t):(!tripClosed(t)&&num(t.stage)===n)).length} journey(s)</p></div>`).join('')+'</div>'
+    const cols=[['Completed',0],['Planned',1],['Loading',2],['In transit',3],['Delivered',4],['Invoiced',5],['Closed',6]];
+    summary='<div class="workflow">'+cols.map(([l,n])=>`<div class="stage"><span>Stage ${n}</span><strong>${l}</strong><p>${rows.filter(t=>n===0?tripOperationsCompleted(t):n===6?tripClosed(t)&&!tripOperationsCompleted(t):(!tripClosed(t)&&!tripOperationsCompleted(t)&&num(t.stage)===n)).length} journey(s)</p></div>`).join('')+'</div>'
   }
   const capture=['admin','manager','dispatcher'].includes(role)?'<div class="dispatch-capture-bar"><span>Trip documents</span><button type="button" class="ghost batch-pod-upload">Batch PODs</button><button type="button" class="ghost" id="dispatchScanSlip">📷 Slip</button><button type="button" class="ghost" id="dispatchScanPod">📄 POD</button></div>':'';
   return `${tripPeriodControls()}${capture}${summary}<div class="cards-list">${cards.length?cards.map(tripCard).join(''):'<div class="panel empty-history">No journeys for this period.</div>'}</div>`;
@@ -614,7 +625,7 @@ function tripCard(t){
   const legs=tripLegs(t),active=activeJourneyLeg(t),closed=tripClosed(t),next={1:'Start loading',2:'Depart',3:'Confirm delivery',4:isShunterTrip(t)?'Shunter recon':(legs.length>1?'Next / invoice':'Create invoice'),5:'Close'}[t.stage]||'Open';
   const routeText=active?route(active.routeId):journeyRouteLabel(t),truckText=truck(t.truckId),driverText=t.driverId?driver(t.driverId):'Driver unassigned';
   const canCapture=['admin','manager','dispatcher'].includes(role);
-  return `<article class="entity-card trip-card-compact clickable-record" data-trip-open="${esc(t.id)}"><div class="panel-head"><div><h3>${esc(t.number)}</h3><small class="trip-card-date">${esc(t.date||'—')}${t.externalTmsId?' · TMS '+esc(t.externalTmsId):''}</small></div><div>${shunterTripBadge(t)}${badge(t.status)}</div></div><p class="trip-summary-route"><b>${esc(routeText||'Route not set')}</b></p><div class="trip-summary-line"><span>${esc(truckText)}</span><span>${esc(driverText)}</span></div>${legs.length>1?'<small class="muted-copy">Leg '+num(active?.sequence)+' of '+legs.length+'</small>':''}${tripRequirementChips(t)}<div class="fleet-card-actions">${closed?'':'<button class="primary small advance-trip" data-id="'+esc(t.id)+'">'+esc(next)+'</button>'}${canCapture?'<button type="button" class="ghost small dispatch-trip-slip" data-trip="'+esc(t.id)+'">📷 Slip</button><button type="button" class="ghost small dispatch-trip-pod" data-trip="'+esc(t.id)+'">📄 POD</button>':''}${canCapture?'<button type="button" class="ghost small edit-load-button" data-id="'+esc(t.id)+'">Edit load</button>':''}<button class="ghost small open-trip" data-id="${esc(t.id)}">Details</button>${tripDeleteButton(t)}</div></article>`
+  return `<article class="entity-card trip-card-compact clickable-record" data-trip-open="${esc(t.id)}"><div class="panel-head"><div><h3>${esc(t.number)}</h3><small class="trip-card-date">${esc(t.date||'—')}${t.externalTmsId?' · TMS '+esc(t.externalTmsId):''}</small></div><div>${shunterTripBadge(t)}${badge(tripOperationsCompleted(t)?'Completed':t.status)}</div></div><p class="trip-summary-route"><b>${esc(routeText||'Route not set')}</b></p><div class="trip-summary-line"><span>${esc(truckText)}</span><span>${esc(driverText)}</span></div>${legs.length>1?'<small class="muted-copy">Leg '+num(active?.sequence)+' of '+legs.length+'</small>':''}${tripRequirementChips(t)}<div class="fleet-card-actions">${closed?'':'<button class="primary small advance-trip" data-id="'+esc(t.id)+'">'+esc(next)+'</button>'}${canCapture?'<button type="button" class="ghost small dispatch-trip-slip" data-trip="'+esc(t.id)+'">📷 Slip</button><button type="button" class="ghost small dispatch-trip-pod" data-trip="'+esc(t.id)+'">📄 POD</button>':''}${canCapture?'<button type="button" class="ghost small edit-load-button" data-id="'+esc(t.id)+'">Edit load</button>':''}<button class="ghost small open-trip" data-id="${esc(t.id)}">Details</button>${tripDeleteButton(t)}</div></article>`
 }
 function trips(){
   const periodRows=selectedTripRows(),rows=periodRows.filter(t=>tripSearchMatches(t,tripSearchTerm));

@@ -9,7 +9,7 @@ vm.createContext(context);
 for(const p of ['payroll-eligibility.js','invoice-charges.js','record-filters.js','page-filters.js','record-manager.js','mobile-documents.js','app.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'../public',p),'utf8'),context,{filename:p});
 vm.runInContext(`
  db=merge({trips:[{id:'a',number:'REAL-ANG12-SEP',date:'2026-09-30',truckId:'t12',income:1000,status:'Closed',stage:6,pod:true},{id:'b',number:'OTHER-OCT',date:'2026-10-01',truckId:'t12',income:2000,status:'Planned',stage:1},{id:'c',number:'OTHER-TRUCK',date:'2026-09-30',truckId:'t4',income:3000}],trucks:[{id:'t12',fleetName:'Ang 12',registration:'REG12'},{id:'t4',fleetName:'Ang 4',registration:'REG4'}],diesel:[{id:'f',date:'2026-09-30',tripId:'a',litres:100,total:300,truckId:'t12'}],expenses:[{id:'e',date:'2026-09-30',tripId:'a',category:'Toll',amount:100}],invoices:[],payments:[],shunterRecons:[],maintenance:[],inspections:[],incidents:[]});
- opsSelection={truckId:'t12',year:'2026',month:'09'};role='admin';
+ opsSelection={truckId:'t12',year:'2026',month:'09'};role='admin';tripCompletionFilter='all';
  globalThis.tripIds=selectedTripRows().map(t=>t.id);
  globalThis.results={};for(const view of ['command','dispatch','trips','carrierOrders','diesel','inspections','workshop','incidents','invoices','roadCharges','reports','monthlyPnl','fleet']){page=view;results[view]=views[view]();}
  globalThis.summary=opsOverview();globalThis.panel=opsFilterPanel();
