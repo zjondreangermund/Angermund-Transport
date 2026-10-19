@@ -1266,3 +1266,8 @@ html.native-app-entry .login-panel:not(.hidden){opacity:1!important;transform:no
 .startup-recovery{padding:12px;border:1px solid #ffbd4a;border-radius:10px;margin:12px 0}.startup-recovery.hidden{display:none}
 
 .pod-batch-row{margin:12px 0;min-width:0}.pod-batch-row>b,.pod-batch-row>small{display:block;overflow-wrap:anywhere;margin-bottom:8px}.pod-batch-row label{display:grid;gap:6px;margin-top:10px}.pod-batch-row select{width:100%;min-width:0}
+
+/* Search results must extend below the header on both desktop and phone. */
+body>header{overflow:visible!important}
+.header-search-host .global-search-results{position:absolute!important;top:calc(100% + 6px)!important;left:0!important;right:0!important;z-index:90;max-height:min(320px,calc(100dvh - var(--app-header-height,180px) - 20px));overflow-y:auto}
+.badge.recon-added{color:#38d996;background:rgba(56,217,150,.12);border:1px solid rgba(56,217,150,.3)}
