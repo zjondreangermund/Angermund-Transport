@@ -1257,3 +1257,6 @@ body>header:has(.header-search-host){height:auto!important;flex-wrap:wrap;gap:10
 body>main#app{padding-top:calc(var(--app-header-height,82px) + 14px)!important}
 
 .invoice-load-details{margin:16px 0;padding:12px;border:1px solid #294056;border-radius:12px;min-width:0}.invoice-load-details summary{cursor:pointer;font-weight:700;padding:8px}.invoice-edit-footer{position:static!important}.invoice-load-details>.form-grid{margin-top:12px}@media(max-width:760px){.document-preview-actions{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* Keep navigation scrolling inside the sidebar, including at its edges. */
+#sidebar,#sidebar nav,.nav-more-items{overscroll-behavior-y:contain;overflow-anchor:none}#sidebar nav{overflow-y:auto}#sidebar nav button:hover{transform:none}

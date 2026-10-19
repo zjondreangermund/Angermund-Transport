@@ -6,8 +6,9 @@ function valid(v,label){const n=Number(v);if(!Number.isFinite(n)||n<0)fail('Inva
 function legKm(state,t,leg){const r=(state.routes||[]).find(x=>x.id===(leg.routeId||t.routeId))||{};if(r.mdcRule==='Not applicable')return 0;const distance=Number(leg.distance)||Number(r.distance)||0;return Math.max(0,r.crossBorder?(Number(leg.namibiaKm)||Number(r.namibiaKm)||0):(Number(leg.namibiaKm)||distance))}
 function calculate(state,inv,options={}){
  const c=(state.clients||[]).find(x=>x.id===inv.clientId)||{};
- if(options.newInvoice){inv.chargesVersion=1;inv.transportSubtotal=Number(inv.amount||0);inv.vatRate=c.vatRate===undefined?15:valid(c.vatRate,'VAT rate');inv.includeMdc=true}
- if(options.vatRate!==undefined){const rate=valid(options.vatRate,'VAT rate');if(![0,15].includes(rate))fail('Choose 15% VAT or no VAT');inv.vatRate=rate;inv.chargesVersion=1}
+ if(options.newInvoice){inv.chargesVersion=1;inv.transportSubtotal=Number(inv.amount||0);inv.vatRate=15;inv.vatMode='route';inv.includeMdc=true}
+ if(options.vatRate==='auto'){inv.vatMode='route';inv.vatRate=15;inv.chargesVersion=1}
+ else if(options.vatRate!==undefined){inv.vatMode='manual';const rate=valid(options.vatRate,'VAT rate');if(![0,15].includes(rate))fail('Choose 15% VAT or no VAT');inv.vatRate=rate;inv.chargesVersion=1}
  if(options.includeMdc!==undefined){if(![true,false,'true','false'].includes(options.includeMdc))fail('Invalid MDC setting');inv.includeMdc=options.includeMdc===true||options.includeMdc==='true';inv.chargesVersion=1}
  if(!inv.chargesVersion)return inv;
  if(inv.vatRate===undefined)inv.vatRate=0;
@@ -15,6 +16,7 @@ function calculate(state,inv,options={}){
  if(options.mdcOverrideKm!==undefined){inv.mdcOverrideKm=options.mdcOverrideKm===''||options.mdcOverrideKm===null?null:valid(options.mdcOverrideKm,'total Namibian kilometres')}
  if(options.mdcRatePer100km!==undefined&&options.mdcRatePer100km!=='')inv.mdcRatePer100km=valid(options.mdcRatePer100km,'MDC rate');
  const seen=new Set(),mdcLines=[],missing=[];
+ const lineBorder=line=>{const t=(state.trips||[]).find(t=>t.id===line.tripId)||{},legs=t.legs?.length?t.legs:[t],selected=line.legId?legs.filter(l=>l.id===line.legId):legs;const picked=selected.length?selected:legs;return picked.some(l=>((state.routes||[]).find(r=>r.id===(l.routeId||t.routeId))||{}).crossBorder===true)};
  const lines=inv.lines?.length?inv.lines:[{tripId:inv.tripId,legId:inv.legId}];
  if(inv.includeMdc&&inv.mdcOverrideKm!==null&&inv.mdcOverrideKm!==undefined){
   const km=valid(inv.mdcOverrideKm,'total Namibian kilometres'),rate=valid(inv.mdcRatePer100km??state.settings?.mdcRatePer100km??73.30,'MDC rate');
@@ -35,13 +37,21 @@ function calculate(state,inv,options={}){
    else if(!km&&unknown.length===1&&recorded>known)km=recorded-known;
    if(!km&&legs.length===1&&!route.crossBorder)km=Number(t.distance)||0;
    if(km<=0){missing.push({tripId:t.id,legId:leg.id||'',tripNumber:t.number||t.id,reason:'Namibian kilometres missing'});continue}
-   mdcLines.push({tripId:t.id,legId:leg===t?'':leg.id||'',tripNumber:t.number||t.id,namibiaKm:km,ratePer100km:rate,amount:round(km/100*rate)});
+   mdcLines.push({crossBorder:route.crossBorder===true,tripId:t.id,legId:leg===t?'':leg.id||'',tripNumber:t.number||t.id,namibiaKm:km,ratePer100km:rate,amount:round(km/100*rate)});
   }
  }
  inv.mdcMissingTrips=missing;inv.mdcReady=!inv.includeMdc||!missing.length;inv.mdcKm=round(mdcLines.reduce((a,l)=>a+l.namibiaKm,0));
  if(options.newInvoice&&!inv.mdcReady)fail('MDC kilometres are missing for '+missing.length+' load(s). Enter total Namibian kilometres or update the linked trips before creating the invoice.');
 
- inv.transportSubtotal=round(base);inv.mdcLines=mdcLines;inv.mdcAmount=round(mdcLines.reduce((a,l)=>a+l.amount,0));inv.subtotal=round(base+inv.mdcAmount);inv.vatAmount=round(inv.subtotal*valid(inv.vatRate,'VAT rate')/100);inv.amount=round(inv.subtotal+inv.vatAmount);return inv;
+ inv.transportSubtotal=round(base);inv.mdcLines=mdcLines;inv.mdcAmount=round(mdcLines.reduce((a,l)=>a+l.amount,0));inv.subtotal=round(base+inv.mdcAmount);
+ const chargeLines=inv.lines?.length?inv.lines:[{tripId:inv.tripId,legId:inv.legId,amount:base}];
+ const localTransport=chargeLines.reduce((a,l)=>a+(lineBorder(l)?0:valid(l.amount||0,'transport amount')),0),hasLocal=chargeLines.some(l=>!lineBorder(l)),hasBorder=chargeLines.some(lineBorder);
+ let localMdc=mdcLines.filter(l=>!l.crossBorder&&!l.manual).reduce((a,l)=>a+l.amount,0);
+ if(mdcLines.some(l=>l.manual)){
+  if(hasLocal&&hasBorder)fail('For a mixed local/cross-border invoice, use kilometres on each linked trip instead of a combined kilometre override so VAT can be allocated correctly.');
+  localMdc=hasBorder?0:inv.mdcAmount;
+ }
+ inv.vatRate=inv.vatMode==='route'?15:valid(inv.vatRate,'VAT rate');inv.vatTaxableSubtotal=round(localTransport+localMdc);inv.vatExcludedSubtotal=round(inv.subtotal-inv.vatTaxableSubtotal);inv.vatAmount=round(inv.vatTaxableSubtotal*inv.vatRate/100);inv.amount=round(inv.subtotal+inv.vatAmount);return inv;
 }
 const api={calculate,legKm};if(typeof module==='object'&&module.exports)module.exports=api;else root.InvoiceCharges=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
