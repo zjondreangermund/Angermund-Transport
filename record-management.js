@@ -20,6 +20,8 @@ function deleteRecord(state,kind,id,actor='Admin'){
  if(kind==='trips'){
   if(row.invoiceId||(row.invoiceIds||[]).length||(row.legs||[]).some(l=>l.invoiceId)||(state.invoices||[]).some(i=>i.tripId===id||(i.tripIds||[]).includes(id)||(i.lines||[]).some(l=>l.tripId===id)))fail('Delete the linked invoice first; its loads will be released.');
   for(const key of ['diesel','expenses','advances','inspections','incidents','tripIssues'])if((state[key]||[]).some(x=>x.tripId===id))fail('Remove linked '+key+' records before deleting this trip.');
+  const refs=[row.externalTmsId,row.sourceTmsId,row.carrierDetails?.tmsId,String(row.number||'').replace(/^NBL[-\s]*/i,'')].filter(Boolean).map(String);
+  if((state.shunterRecons||[]).some(r=>(r.id===row.shunterReconId)||((!r.truckId||r.truckId===row.truckId)&&(r.tmsIds||[]).some(ref=>refs.includes(String(ref))))))fail('Remove this trip reference from Shunter Recon first, so its charges are not left behind.');
   for(const r of state.tasks||[])if(r.linkedType==='trip'&&r.linkedId===id){r.linkedType='';r.linkedId=''}
  }
  if(kind==='shunterRecons'&&(row.invoiceId||(state.invoices||[]).some(i=>(i.lines||[]).some(l=>l.shunterReconId===id))))fail('Delete the linked shunter invoice first.');
