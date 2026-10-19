@@ -1278,3 +1278,18 @@ body>header{overflow:visible!important}
 #sidebar .brand,#sidebar .company-mini,#sidebar .mobile-sidebar-account{flex-shrink:0}
 #sidebar .nav-more-items{position:static!important;inset:auto!important;width:auto!important;max-height:none!important;box-shadow:none;margin-top:6px}
 #sidebar .nav-more-items.open{overflow:visible!important}
+
+/* Keep wide data inside its panel and make its horizontal controls reachable. */
+.grid-2{grid-template-columns:minmax(0,2fr) minmax(0,1fr)}
+.grid-2>.panel{min-width:0;width:100%}
+@media(max-width:900px){.grid-2{grid-template-columns:minmax(0,1fr)}}
+.table-wrap{overscroll-behavior:contain;scrollbar-width:auto;scrollbar-color:#6485a5 #0a1929}
+.table-scroll-tools{display:flex;align-items:center;justify-content:flex-end;gap:8px;margin:8px 0;color:var(--muted);font-size:12px}
+.table-scroll-tools[hidden]{display:none}.table-scroll-tools button{min-width:38px;min-height:34px}
+.payroll-secondary .table-wrap{max-height:460px;overflow-y:auto!important;overflow-x:auto!important}
+.payroll-secondary table{min-width:700px}
+.panel.active-scroll-panel{outline:1px solid #50c8ff;outline-offset:-1px}
+.modal,.modal-card,#entryForm,.notification-list,.document-preview-frame{overscroll-behavior:contain}
+body.modal-open{overflow:hidden!important}
+
+html.modal-open{overflow:hidden!important}@media(max-width:760px){html:has(#sidebar.open),body:has(#sidebar.open){overflow:hidden!important}}
