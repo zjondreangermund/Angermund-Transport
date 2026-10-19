@@ -2916,12 +2916,15 @@ app.post('/api/admin/trips/:tripId/pod',auth,roles('admin','manager','dispatcher
     if(!req.file)return res.status(400).json({error:'POD photo or PDF is required'});
     const snapshot=await readOpsState(),trip=(snapshot.trips||[]).find(x=>x.id===req.params.tripId);if(!trip)return res.status(404).json({error:'Trip not found'});
     const requestedLeg=String(req.body.legId||''),legs=ensureTripLegs(snapshot,trip),leg=legs.find(x=>x.id===requestedLeg)||legs.find(x=>!x.pod)||activeTripLegServer(trip)||legs[legs.length-1];
+    if(requestedLeg&&!legs.some(x=>x.id===requestedLeg))return res.status(400).json({error:'Selected load no longer exists'});
+    const clientUploadId=String(req.body.clientUploadId||'').slice(0,120),reference=clientUploadId?'Batch POD '+clientUploadId:'Admin scanned POD';
+    if(clientUploadId){const existing=pool?(await q('SELECT id,filename,mime_type AS "mimeType" FROM trip_documents WHERE trip_id=$1 AND reference=$2 LIMIT 1',[trip.id,reference]))[0]:(memory.tripDocuments||[]).find(x=>x.tripId===trip.id&&x.reference===reference);if(existing)return res.json({existing:true,document:existing})}
     const archived=archiveStoredFile(req.file),id=crypto.randomUUID(),createdAt=new Date().toISOString();
-    if(pool)await q('INSERT INTO trip_documents(id,user_id,trip_id,leg_id,kind,reference,filename,mime_type,content,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[id,req.user.sub,trip.id,leg?.legacy?null:(leg?.id||null),'POD','Admin scanned POD',archived.filename,archived.mimeType,archived.buffer,createdAt]);
-    else memory.tripDocuments.push({id,userId:req.user.sub,tripId:trip.id,legId:leg?.legacy?'':(leg?.id||''),kind:'POD',reference:'Admin scanned POD',filename:archived.filename,mimeType:archived.mimeType,content:archived.buffer,createdAt});
+    if(pool)await q('INSERT INTO trip_documents(id,user_id,trip_id,leg_id,kind,reference,filename,mime_type,content,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[id,req.user.sub,trip.id,leg?.legacy?null:(leg?.id||null),'POD',reference,archived.filename,archived.mimeType,archived.buffer,createdAt]);
+    else memory.tripDocuments.push({id,userId:req.user.sub,tripId:trip.id,legId:leg?.legacy?'':(leg?.id||''),kind:'POD',reference,filename:archived.filename,mimeType:archived.mimeType,content:archived.buffer,createdAt});
     const changed=await mutateOpsState(state=>{
       const t=(state.trips||[]).find(x=>x.id===req.params.tripId);if(!t)return null;const ls=ensureTripLegs(state,t),target=ls.find(x=>x.id===requestedLeg)||ls.find(x=>!x.pod)||activeTripLegServer(t)||ls[ls.length-1];
-      if(target&&!target.legacy){target.pod=true;target.podDocumentId=id;target.podAt=createdAt;target.status='Delivered'}else{t.pod=true;t.podDocumentId=id;t.podAt=createdAt}
+      if(target&&!target.legacy){target.pod=true;target.podDocumentId=id;target.podAt=createdAt;if(!['Invoiced','Closed'].includes(target.status))target.status='Delivered'}else{t.pod=true;t.podDocumentId=id;t.podAt=createdAt}
       t.pod=ls.every(x=>x.legacy?Boolean(t.pod):Boolean(x.pod));if(t.pod&&num(t.stage)<4){t.stage=4;t.status='Delivered'}
       (state.tasks||[]).filter(x=>x.linkedId===t.id&&/POD/i.test(String(x.title||''))&&(!target||!x.legId||x.legId===target.id)).forEach(x=>{x.status='Completed';x.completedAt=createdAt;x.completedBy=req.user.sub});
       state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:createdAt,actor:req.user.name||req.user.email||req.user.role,action:'POD scanned and attached to '+t.number,linkedType:'trip',linkedId:t.id});state.audit=state.audit.slice(0,100);return{id:t.id,number:t.number,pod:t.pod,stage:t.stage,status:t.status,legId:target?.id||''}
