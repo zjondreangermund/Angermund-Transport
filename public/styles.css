@@ -1260,3 +1260,7 @@ body>main#app{padding-top:calc(var(--app-header-height,82px) + 14px)!important}
 
 /* Keep navigation scrolling inside the sidebar, including at its edges. */
 #sidebar,#sidebar nav,.nav-more-items{overscroll-behavior-y:contain;overflow-anchor:none}#sidebar nav{overflow-y:auto}#sidebar nav button:hover{transform:none}
+
+/* Native sign-in is visible without waiting for animation frames or app startup. */
+html.native-app-entry .login-panel:not(.hidden){opacity:1!important;transform:none!important;transition:none!important;overflow-y:auto;align-items:safe center}
+.startup-recovery{padding:12px;border:1px solid #ffbd4a;border-radius:10px;margin:12px 0}.startup-recovery.hidden{display:none}
