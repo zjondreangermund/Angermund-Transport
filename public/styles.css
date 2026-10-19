@@ -1264,3 +1264,5 @@ body>main#app{padding-top:calc(var(--app-header-height,82px) + 14px)!important}
 /* Native sign-in is visible without waiting for animation frames or app startup. */
 html.native-app-entry .login-panel:not(.hidden){opacity:1!important;transform:none!important;transition:none!important;overflow-y:auto;align-items:safe center}
 .startup-recovery{padding:12px;border:1px solid #ffbd4a;border-radius:10px;margin:12px 0}.startup-recovery.hidden{display:none}
+
+.pod-batch-row{margin:12px 0;min-width:0}.pod-batch-row>b,.pod-batch-row>small{display:block;overflow-wrap:anywhere;margin-bottom:8px}.pod-batch-row label{display:grid;gap:6px;margin-top:10px}.pod-batch-row select{width:100%;min-width:0}
