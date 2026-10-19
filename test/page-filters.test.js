@@ -6,7 +6,7 @@ const els=new Map(),doc={getElementById(id){if(!els.has(id))els.set(id,el());ret
 const storage={getItem(){return null},setItem(){},removeItem(){}};
 const context={document:doc,localStorage:storage,sessionStorage:storage,console,structuredClone,URLSearchParams,URL,Intl,crypto:require('node:crypto').webcrypto,navigator:{userAgent:'Test'},location:{pathname:'/',search:'',origin:'http://localhost'},history:{replaceState(){}},setTimeout(){},setInterval(){},clearTimeout(){},window:{addEventListener(){},matchMedia(){return{matches:true}},innerHeight:800},MutationObserver:class{observe(){}},requestAnimationFrame(){},fetch:async()=>{throw Error('No network in fixture')}};
 vm.createContext(context);
-for(const p of ['invoice-charges.js','record-filters.js','page-filters.js','app.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'../public',p),'utf8'),context,{filename:p});
+for(const p of ['invoice-charges.js','record-filters.js','page-filters.js','record-manager.js','app.js'])vm.runInContext(fs.readFileSync(path.join(__dirname,'../public',p),'utf8'),context,{filename:p});
 vm.runInContext(`
  db=merge({trips:[{id:'a',number:'REAL-ANG12-SEP',date:'2026-09-30',truckId:'t12',income:1000,status:'Closed',stage:6,pod:true},{id:'b',number:'OTHER-OCT',date:'2026-10-01',truckId:'t12',income:2000,status:'Planned',stage:1},{id:'c',number:'OTHER-TRUCK',date:'2026-09-30',truckId:'t4',income:3000}],trucks:[{id:'t12',fleetName:'Ang 12',registration:'REG12'},{id:'t4',fleetName:'Ang 4',registration:'REG4'}],diesel:[{id:'f',date:'2026-09-30',tripId:'a',litres:100,total:300,truckId:'t12'}],expenses:[{id:'e',date:'2026-09-30',tripId:'a',category:'Toll',amount:100}],invoices:[],payments:[],shunterRecons:[],maintenance:[],inspections:[],incidents:[]});
  opsSelection={truckId:'t12',year:'2026',month:'09'};role='admin';
@@ -29,5 +29,11 @@ vm.runInContext(`
 assert.ok(context.printed.includes('VAT 15%'));assert.ok(context.printed.includes('Transport excl. VAT'));assert.ok(context.editHtml.includes('editInvoiceVatRate'));
 vm.runInContext(`openForm('invoice');globalThis.manualControls=$('entryForm').prepended.innerHTML;`,context);
 assert.ok(context.manualControls.includes('newInvoiceVatRate'));
+
+vm.runInContext(`page='invoices';globalThis.managementHtml=recordManagementPanel();globalThis.invoiceActions=invoices();openInvoice('taxed');globalThis.invoiceModalHtml=$('entryForm').innerHTML;`,context);
+assert.ok(context.managementHtml.includes('Manage records'));
+assert.ok(context.managementHtml.includes('data-manage-delete="invoices"'));
+assert.ok(context.invoiceActions.includes('data-manage-edit="invoices"'));
+assert.ok(context.invoiceModalHtml.includes('Delete invoice'));
 
 });
