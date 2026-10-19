@@ -44,14 +44,11 @@ vm.runInContext(`$('globalSearchHost').parentElement={getBoundingClientRect:()=>
 assert.equal(context.headerOffset.key,'--app-header-height');
 assert.equal(context.headerOffset.value,'228px');
 
-vm.runInContext(`
- $('nav').scrollTop=40;globalThis.prevented=0;
- $('sidebar').onwheel({target:{closest:()=>null},deltaY:60,deltaMode:0,preventDefault(){globalThis.prevented++}});
- globalThis.navScroll=$('nav').scrollTop;
- globalThis.morePanel={scrollTop:20,clientHeight:100};
- $('sidebar').onwheel({target:{closest:()=>globalThis.morePanel},deltaY:-1,deltaMode:1,preventDefault(){globalThis.prevented++}});
-`,context);
-assert.equal(context.navScroll,100);assert.equal(context.morePanel.scrollTop,0);assert.equal(context.prevented,2);
+// Wheel scrolling must use the native nav scroll area rather than be cancelled.
+assert.equal(els.get('sidebar').onwheel,null);
+const css=fs.readFileSync(path.join(__dirname,'../public/styles.css'),'utf8');
+assert.ok(css.includes('flex:1 1 auto!important;min-height:0!important;overflow-y:auto!important'));
+assert.ok(css.includes('#sidebar .nav-more-items{position:static!important'));
 
 vm.runInContext(`openTrip('a');globalThis.tripDeleteHtml=$('entryForm').innerHTML;globalThis.tripListDelete=tripTable(db.trips);role='driver';globalThis.driverDelete=tripDeleteButton(db.trips[0]);role='admin';`,context);
 assert.ok(context.tripDeleteHtml.includes('data-manage-delete="trips"'));
