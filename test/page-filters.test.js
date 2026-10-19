@@ -53,4 +53,9 @@ vm.runInContext(`
 `,context);
 assert.equal(context.navScroll,100);assert.equal(context.morePanel.scrollTop,0);assert.equal(context.prevented,2);
 
+vm.runInContext(`openTrip('a');globalThis.tripDeleteHtml=$('entryForm').innerHTML;globalThis.tripListDelete=tripTable(db.trips);role='driver';globalThis.driverDelete=tripDeleteButton(db.trips[0]);role='admin';`,context);
+assert.ok(context.tripDeleteHtml.includes('data-manage-delete="trips"'));
+assert.ok(context.tripListDelete.includes('Delete trip'));
+assert.equal(context.driverDelete,'');
+
 });
