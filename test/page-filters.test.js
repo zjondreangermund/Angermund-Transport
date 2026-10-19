@@ -36,4 +36,12 @@ assert.ok(context.managementHtml.includes('data-manage-delete="invoices"'));
 assert.ok(context.invoiceActions.includes('data-manage-edit="invoices"'));
 assert.ok(context.invoiceModalHtml.includes('Delete invoice'));
 
+vm.runInContext(`page='command';render();globalThis.headerSearch=$('globalSearchHost').innerHTML;globalThis.pageHtml=$('app').innerHTML;`,context);
+assert.ok(context.headerSearch.includes('globalDataSearch'));
+assert.equal(context.pageHtml.includes('id="globalDataSearch"'),false);
+
+vm.runInContext(`$('globalSearchHost').parentElement={getBoundingClientRect:()=>({height:228})};document.documentElement.style.setProperty=(key,value)=>{globalThis.headerOffset={key,value}};syncHeaderSearchLayout();`,context);
+assert.equal(context.headerOffset.key,'--app-header-height');
+assert.equal(context.headerOffset.value,'228px');
+
 });

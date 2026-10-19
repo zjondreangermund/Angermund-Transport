@@ -1245,3 +1245,13 @@ html.mobile-lite-entry .login-panel .login-card{backdrop-filter:none!important}
 }
 
 @media(max-width:760px){.invoice-edit-actions{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* Search belongs to the sticky app header, below the action buttons. */
+body>header:has(.header-search-host){height:auto!important;flex-wrap:wrap;gap:10px}
+.header-search-host{flex:1 0 100%;min-width:0;max-width:100%;width:100%;position:relative}
+.header-search-host:empty{display:none}
+.header-search-host .global-find{position:relative!important;inset:auto!important;width:100%;max-width:none;margin:0!important;transform:none!important}
+.header-search-host .global-search-results{max-height:min(50dvh,320px);overflow-y:auto;overscroll-behavior:contain}
+@media(max-width:760px){body header .header-search-host{grid-column:1/-1;min-width:0;width:100%}body header .header-search-host .global-find-box{min-height:42px}body header .header-search-host input{font-size:14px!important}}
+
+body>main#app{padding-top:calc(var(--app-header-height,82px) + 14px)!important}
