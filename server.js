@@ -1,3 +1,4 @@
+const {allowed:canManageRecord,deleteRecord,editRecord}=require('./record-management');
 const {calculate:calculateInvoiceCharges}=require('./public/invoice-charges');
 const {VERSION:WORKBOOK_TEST_CLEANUP_VERSION,removeWorkbookTests}=require('./workbook-test-cleanup');
 const {collectOperationalAlerts,groupAlerts,expandOfficeRecipients}=require('./operational-alerts');
@@ -1331,7 +1332,16 @@ app.post('/api/approvals/:id/decision',auth,roles('admin','manager','finance'),u
 });
 
 app.get('/api/state',auth,async(req,res)=>{const row=pool?(await q('SELECT payload,revision,updated_at FROM app_state WHERE id=1'))[0]:{payload:memory.state||{},revision:0};res.json(row)});
-app.put('/api/state',auth,roles('admin','manager','dispatcher','workshop','finance'),async(req,res)=>{if(!req.body||typeof req.body!=='object'||Array.isArray(req.body))return res.status(400).json({error:'Invalid state'});const incoming=req.body;removeWorkbookTests(incoming);if(pool){const row=(await q("UPDATE app_state SET payload=COALESCE(payload,'{}'::jsonb) || $1::jsonb,revision=revision+1,updated_at=now() WHERE id=1 AND (COALESCE(payload->>'operationalResetVersion','')='' OR payload->>'operationalResetVersion'=$2) RETURNING revision,updated_at",[incoming,String(incoming.operationalResetVersion||'')]))[0];if(!row)return res.status(409).json({error:'Workspace was reset. Refresh before saving.'});emit('state',{revision:row.revision,updatedAt:row.updated_at});res.json(row)}else{memory.state={...(memory.state||{}),...incoming};emit('state',{revision:Date.now()});res.json({revision:Date.now()})}});
+app.put('/api/state',auth,roles('admin','manager','dispatcher','workshop','finance'),async(req,res)=>{if(!req.body||typeof req.body!=='object'||Array.isArray(req.body))return res.status(400).json({error:'Invalid state'});const incoming=req.body;removeWorkbookTests(incoming);if(pool){const row=(await q("UPDATE app_state SET payload=COALESCE(payload,'{}'::jsonb) || $1::jsonb,revision=revision+1,updated_at=now() WHERE id=1 AND (COALESCE(payload->>'operationalResetVersion','')='' OR payload->>'operationalResetVersion'=$2) AND COALESCE(payload->>'recordDeletionVersion','')=$3 RETURNING revision,updated_at",[incoming,String(incoming.operationalResetVersion||''),String(incoming.recordDeletionVersion||'')]))[0];if(!row)return res.status(409).json({error:'Records changed or workspace was reset. Refresh before saving.'});emit('state',{revision:row.revision,updatedAt:row.updated_at});res.json(row)}else{if(String(memory.state?.recordDeletionVersion||'')!==String(incoming.recordDeletionVersion||''))return res.status(409).json({error:'Records changed. Refresh before saving.'});memory.state={...(memory.state||{}),...incoming};emit('state',{revision:Date.now()});res.json({revision:Date.now()})}});
+
+app.delete('/api/records/:kind/:id',auth,async(req,res)=>{
+ if(!canManageRecord(req.params.kind,req.user.role))return res.status(403).json({error:'You do not have permission to delete this record'});
+ try{const changed=await mutateOpsState(state=>{const result=deleteRecord(state,req.params.kind,req.params.id,req.user.name||req.user.email||req.user.role);if(result.tripId){const trip=(state.trips||[]).find(t=>t.id===result.tripId);if(trip)recalcTripCosts(state,trip)}return{deleted:result.deleted,kind:result.kind,id:result.id}});res.json(changed.result)}catch(e){res.status(e.status||500).json({error:e.message})}
+});
+app.patch('/api/records/:kind/:id',auth,async(req,res)=>{
+ if(!canManageRecord(req.params.kind,req.user.role))return res.status(403).json({error:'You do not have permission to edit this record'});
+ try{const changed=await mutateOpsState(state=>{const result=editRecord(state,req.params.kind,req.params.id,req.body||{},req.user.name||req.user.email||req.user.role);for(const id of result.tripIds){const trip=(state.trips||[]).find(t=>t.id===id);if(trip)recalcTripCosts(state,trip)}return{record:result.record}});res.json(changed.result)}catch(e){res.status(e.status||500).json({error:e.message})}
+});
 
 
 function legPricingMethod(v){
@@ -1466,6 +1476,7 @@ function generatePayrollPeriod(state,period,auto=false){
   state.payroll??=[];
   const rows=[],employees=workforceEmployees(state).filter(x=>x.active!==false&&x.status!=='Inactive');
   for(const employee of employees){
+    if(auto&&(state.deletedPayrollPeriods||[]).includes(period+':'+employee.id))continue;
     const p=payrollProfile(state,employee.id);if(auto&&p.autoGenerate===false)continue;
     const existing=state.payroll.find(x=>x.period===period&&x.employeeId===employee.id);
     if(existing&&['Approved','Paid'].includes(existing.status)){rows.push(existing);continue}
@@ -2759,7 +2770,7 @@ function buildNblConsolidatedInvoice(state,cycleMonth,custom={}){
   if(existing)return{invoice:existing,existing:true,lines:existing.lines||[],excluded:[]};
   const found=collectNblInvoiceLines(state,nbl,start,end),lines=found.lines,excluded=found.excluded;
   if(!lines.length){const e=Error('No uninvoiced NBL trips are ready in the '+start+' to '+end+' cycle');e.status=400;throw e}
-  const highest=state.invoices.reduce((m,x)=>{const n=Number(String(x.number||'').split('-').pop())||0;return Math.max(m,n)},999);
+  const highest=[...state.invoices,...(state.recordHistory||[]).filter(h=>h.kind==='invoices'&&h.action==='Deleted').map(h=>h.record)].reduce((m,x)=>{const n=Number(String(x.number||'').split('-').pop())||0;return Math.max(m,n)},999);
   const terms=num(nbl.terms)||30,endDate=new Date(end+'T00:00:00Z'),dueDate=new Date(endDate.getTime()+terms*86400000),amount=Number(lines.reduce((a,x)=>a+num(x.amount),0).toFixed(2));
   const inv={id:'inv_'+crypto.randomUUID(),number:'INV-'+(highest+1),date:end,clientId:nbl.id,tripId:'',amount,due:dueDate.toISOString().slice(0,10),status:'Unpaid',consolidated:true,billingCycle:'Custom billing dates',periodStart:start,periodEnd:end,cutoffDay:null,lines,tripIds:Array.from(new Set(lines.map(x=>x.tripId))),lineCount:lines.length};
   calculateInvoiceCharges(state,inv,{newInvoice:true,vatRate:custom.vatRate,includeMdc:custom.includeMdc});state.invoices.unshift(inv);linkNblInvoiceLines(state,inv,lines);
@@ -2784,7 +2795,7 @@ function buildNblShunterInvoice(state,period){
   const existing=state.invoices.find(x=>x.shunterRecon===true&&x.clientId===nbl.id&&x.shunterPeriod===period);if(existing)return{invoice:existing,existing:true,lines:existing.lines||[]};
   const rows=state.shunterRecons.filter(x=>String(x.period||x.date||'').slice(0,7)===period&&num(x.charge)>0);if(!rows.length){const e=Error('No shunter recon charges found for '+period);e.status=400;throw e}
   const lines=rows.slice().sort((a,b)=>String(a.date).localeCompare(String(b.date))||String(a.truckId).localeCompare(String(b.truckId))).map(r=>{const tr=(state.trucks||[]).find(x=>x.id===r.truckId);return{shunterReconId:r.id,date:r.date,tripNumber:'Shunter',route:'NBL Windhoek shunting',truck:(tr&&(tr.fleetName||tr.registration))||r.truckId,registration:(tr&&tr.registration)||'',load:'TMS: '+(r.tmsIds||[]).join(', '),amount:Number(num(r.charge).toFixed(2))}});
-  const highest=state.invoices.reduce((m,x)=>{const n=Number(String(x.number||'').split('-').pop())||0;return Math.max(m,n)},999),terms=num(nbl.terms)||30,endDate=new Date(bounds.end+'T00:00:00Z'),dueDate=new Date(endDate.getTime()+terms*86400000),amount=Number(lines.reduce((a,x)=>a+num(x.amount),0).toFixed(2));
+  const highest=[...state.invoices,...(state.recordHistory||[]).filter(h=>h.kind==='invoices'&&h.action==='Deleted').map(h=>h.record)].reduce((m,x)=>{const n=Number(String(x.number||'').split('-').pop())||0;return Math.max(m,n)},999),terms=num(nbl.terms)||30,endDate=new Date(bounds.end+'T00:00:00Z'),dueDate=new Date(endDate.getTime()+terms*86400000),amount=Number(lines.reduce((a,x)=>a+num(x.amount),0).toFixed(2));
   const inv={id:'inv_'+crypto.randomUUID(),number:'INV-'+(highest+1),date:bounds.end,clientId:nbl.id,tripId:'',amount,due:dueDate.toISOString().slice(0,10),status:'Unpaid',shunterRecon:true,shunterPeriod:period,billingCycle:'Calendar month shunter recon',periodStart:bounds.start,periodEnd:bounds.end,lines,lineCount:lines.length,source:'Shunter Recon'};
   calculateInvoiceCharges(state,inv,{newInvoice:true});state.invoices.unshift(inv);for(const r of rows)r.invoiceId=inv.id;return{invoice:inv,existing:false,lines}
 }
@@ -2801,7 +2812,7 @@ app.post('/api/admin/trips/:tripId/legs/:legId/invoice',auth,roles('admin','mana
       const legClient=(state.clients||[]).find(x=>x.id===leg.clientId);
       if(isNblClient(legClient)){const e=Error('NBL uses consolidated invoices for the selected billing dates. Generate it from Invoices & Payments.');e.status=409;throw e}
       if(leg.invoiceId){const existing=state.invoices.find(x=>x.id===leg.invoiceId);if(existing)return{invoice:existing,trip:t,leg,existing:true}}
-      const highest=state.invoices.reduce((m,x)=>Math.max(m,Number(String(x.number||'').match(/INV-(\d+)/)?.[1]||0)),999);
+      const highest=[...state.invoices,...(state.recordHistory||[]).filter(h=>h.kind==='invoices'&&h.action==='Deleted').map(h=>h.record)].reduce((m,x)=>Math.max(m,Number(String(x.number||'').match(/INV-(\d+)/)?.[1]||0)),999);
       const client=(state.clients||[]).find(x=>x.id===leg.clientId),terms=num(client?.terms)||30,date=new Date(),due=new Date(date.getTime()+terms*86400000).toISOString().slice(0,10);
       const inv={id:'inv_'+crypto.randomUUID(),number:'INV-'+(highest+1),date:date.toISOString().slice(0,10),clientId:leg.clientId,tripId:t.id,legId:leg.id,amount:num(leg.income),due,status:'Unpaid',journeyLeg:true};
       calculateInvoiceCharges(state,inv,{newInvoice:true});state.invoices.unshift(inv);leg.invoiceId=inv.id;leg.invoiceStatus='Unpaid';
