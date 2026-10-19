@@ -48,7 +48,18 @@ const gpsVehicleLabel=id=>String(id||'').startsWith('phone-test:')?'📱 '+Strin
 const SHUNTER_TRUCK_IDS=new Set(['trk_ang4','trk_ang5']);
 const isShunterTruckId=id=>SHUNTER_TRUCK_IDS.has(String(id||''));
 const isShunterTrip=t=>Boolean(t&&isShunterTruckId(t.truckId));
-const shunterTripBadge=t=>isShunterTrip(t)?'<span class="badge">SHUNTER</span>':'';
+function shunterReconLinks(t){
+  if(!isShunterTrip(t))return[];
+  const refs=[t.externalTmsId,t.sourceTmsId,t.carrierDetails?.tmsId,String(t.number||'').replace(/^NBL[-\s]*/i,'')].filter(Boolean).map(x=>String(x).trim());
+  return (db.shunterRecons||[]).filter(r=>{if(r.truckId&&r.truckId!==t.truckId)return false;if(r.date&&t.date&&String(r.date).slice(0,10)!==String(t.date).slice(0,10))return false;const saved=(r.tmsIds||[]).map(x=>String(x).trim());return saved.length?refs.some(x=>saved.includes(x)):r.id===t.shunterReconId});
+}
+function shunterTripBadge(t){
+  if(!isShunterTrip(t))return'';const links=shunterReconLinks(t),invoiced=links.some(r=>r.invoiceId),label=links.length>1?'Duplicate recon':links.length?(invoiced?'Recon invoiced':'Recon added'):'Not in recon';
+  return '<span class="badge">SHUNTER</span><span class="badge '+(!links.length||links.length>1?'warn':'recon-added')+'" title="'+esc(links.map(r=>r.date||r.period||'').join(', '))+'">'+label+'</span>';
+}
+function shunterReconDetail(t){
+  if(!isShunterTrip(t))return'';const links=shunterReconLinks(t);return '<div class="notice">'+shunterTripBadge(t)+(links.length?' · '+esc(links.map(r=>r.date||r.period||'').join(', '))+(canView('shunterRecon')?' <button type="button" class="link-button" data-shunter-trip="'+esc(t.id)+'">Open Shunter Recon</button>':''):' · This trip reference has not been added to the recon for this truck and date.')+'</div>';
+}
 
 const employeeRecord=id=>(db.employees||[]).find(x=>x.id===id)||get('drivers',id),employeeName=id=>employeeRecord(id).name||'—',workforce=()=>((db.employees||[]).length?db.employees:db.drivers.map(d=>({id:d.id,name:d.name,jobTitle:d.role||'Driver',category:'Driver',status:d.status||'Active'}))),maskAccount=v=>{const s=String(v||'').replace(/\s+/g,'');return s?s.length>4?'•••• '+s.slice(-4):'••••':'—'};
 const employeeAppUser=e=>appUsers.find(u=>(u.role==='driver'&&u.driverId===e.id)||(u.role!=='driver'&&u.staffId===e.id))||null;
@@ -237,14 +248,16 @@ function syncHeaderSearchLayout(){
   if(!headerLayoutObserver){if(typeof ResizeObserver!=='undefined'){headerLayoutObserver=new ResizeObserver(update);headerLayoutObserver.observe(header)}else{window.addEventListener('resize',update);headerLayoutObserver={fallback:true}}}
   update();
 }
+let globalFindQuery='';
+function searchMatches(text,query){const norm=v=>String(v||'').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,' ').trim();const h=norm(text),q=norm(query);return !q||q.split(/\s+/).every(t=>h.includes(t)||h.replace(/\s/g,'').includes(t))||h.replace(/\s/g,'').includes(q.replace(/\s/g,''))}
 function globalFindBar(){
-  return '<div class="global-find"><div class="global-find-box"><span>⌕</span><input id="globalDataSearch" autocomplete="off" placeholder="Quick search trips, workers, trucks, clients, invoices…"><button type="button" id="clearGlobalSearch" class="global-find-clear hidden">×</button></div><div id="globalSearchResults" class="global-search-results hidden"></div></div>'
+  return '<div class="global-find"><div class="global-find-box"><span>⌕</span><input id="globalDataSearch" value="'+esc(globalFindQuery)+'" autocomplete="off" placeholder="Quick search trips, workers, trucks, clients, invoices…"><button type="button" id="clearGlobalSearch" class="global-find-clear hidden">×</button></div><div id="globalSearchResults" class="global-search-results hidden"></div></div>'
 }
 function globalSearchEntries(){
   const rows=[];
   for(const e of workforce())rows.push({kind:'employee',id:e.id,label:e.name||'Worker',detail:[e.jobTitle||e.category||'Worker','Employee'].filter(Boolean).join(' · ')});
   for(const t of db.trucks||[])rows.push({kind:'truck',id:t.id,label:[t.fleetName,t.registration].filter(Boolean).join(' · '),detail:[t.make,t.status,'Truck'].filter(Boolean).join(' · ')});
-  for(const t of db.trips||[])rows.push({kind:'trip',id:t.id,label:t.number||t.id,detail:[t.sourceOrderRef?'Order '+t.sourceOrderRef:'',t.carrierPro||'',journeyRouteLabel(t),truck(t.truckId),journeyLoadLabel(t),t.carrierStatus||''].filter(Boolean).join(' · ')});
+  for(const t of db.trips||[])rows.push({kind:'trip',id:t.id,label:t.number||t.id,detail:[t.externalTmsId||t.sourceTmsId||t.carrierDetails?.tmsId||'',t.driverId?driver(t.driverId):'',t.sourceOrderRef?'Order '+t.sourceOrderRef:'',t.carrierPro||'',journeyRouteLabel(t),truck(t.truckId),journeyLoadLabel(t),t.carrierStatus||''].filter(Boolean).join(' · ')});
   for(const x of db.clients||[])rows.push({kind:'client',id:x.id,label:x.name,detail:['Client',x.contact].filter(Boolean).join(' · ')});
   for(const x of db.routes||[])rows.push({kind:'route',id:x.id,label:x.name,detail:['Route',num(x.distance)?num(x.distance).toLocaleString()+' km':''].filter(Boolean).join(' · ')});
   for(const x of db.invoices||[])rows.push({kind:'invoice',id:x.id,label:x.number||x.id,detail:[client(x.clientId),money(x.amount),x.status].filter(Boolean).join(' · ')});
@@ -253,14 +266,14 @@ function globalSearchEntries(){
   for(const x of db.expenses||[])if(x.supplier||x.category)rows.push({kind:'expense',id:x.id,label:x.supplier||x.category,detail:[x.category,money(x.amount)].filter(Boolean).join(' · ')});
   for(const x of db.companyAssets||[])rows.push({kind:'insurance',id:x.id,label:x.description||'Company asset',detail:[x.category,x.insurancePolicy,x.insuredValue?money(x.insuredValue):''].filter(Boolean).join(' · ')});
   for(const x of db.insurancePolicies||[])if(x.current)rows.push({kind:'insurance',id:x.id,label:(x.provider||'Insurance')+' policy '+(x.policyNumber||''),detail:[x.effectiveDate,x.monthlyPremium?money(x.monthlyPremium):''].filter(Boolean).join(' · ')});
-  return rows
+  return rows.map(x=>({...x,label:String(x.label||''),detail:String(x.detail||'')}))
 }
 function openGlobalFindResult(kind,id){
   if(kind==='trip')return openTrip(id);
   if(kind==='invoice'){go('invoices');return setTimeout(()=>openInvoice(id),60)}
   if(kind==='loan'){go('loans');return setTimeout(()=>openEmployeeLoan(id),60)}
   if(kind==='employee'){if(canView('driverAccounts')){go('driverAccounts');return setTimeout(()=>openEmployeeForm(id),70)}return go('payroll')}
-  if(kind==='truck')return go(canView('fleet')?'fleet':'trips');
+  if(kind==='truck'){if(!canView('fleet'))return go('trips');go('fleet');return openFleetDetails(id)}
   if(kind==='client'||kind==='route')return go('clients');
   if(kind==='diesel')return go('diesel');
   if(kind==='expense')return go(canView('reports')?'reports':'trips');
@@ -270,13 +283,15 @@ function wireGlobalFind(){
   const input=$('globalDataSearch'),box=$('globalSearchResults'),clear=$('clearGlobalSearch');if(!input||!box)return;
   const close=()=>{box.classList.add('hidden');box.innerHTML=''};
   const run=()=>{
-    const q=String(input.value||'').trim().toLowerCase();if(clear)clear.classList.toggle('hidden',!q);if(!q)return close();
-    const hits=globalSearchEntries().map(x=>({...x,hay:(x.label+' '+x.detail).toLowerCase()})).filter(x=>x.hay.includes(q)).sort((a,b)=>(a.label.toLowerCase().startsWith(q)?-1:0)-(b.label.toLowerCase().startsWith(q)?-1:0)||a.label.localeCompare(b.label)).slice(0,10);
+    const q=String(input.value||'').trim().toLowerCase();globalFindQuery=input.value||'';if(clear)clear.classList.toggle('hidden',!q);if(!q)return close();
+    const hits=globalSearchEntries().map(x=>({...x,hay:(x.label+' '+x.detail).toLowerCase()})).filter(x=>searchMatches(x.hay,q)).sort((a,b)=>(a.label.toLowerCase().startsWith(q)?-1:0)-(b.label.toLowerCase().startsWith(q)?-1:0)||a.label.localeCompare(b.label)).slice(0,10);
     box.innerHTML=hits.length?hits.map(x=>'<button type="button" class="global-find-result" data-kind="'+esc(x.kind)+'" data-id="'+esc(x.id)+'"><b>'+esc(x.label)+'</b><small>'+esc(x.detail)+'</small></button>').join(''):'<div class="global-find-empty">No matching information</div>';
-    box.classList.remove('hidden');box.querySelectorAll('.global-find-result').forEach(b=>b.onclick=()=>{close();input.value='';if(clear)clear.classList.add('hidden');openGlobalFindResult(b.dataset.kind,b.dataset.id)})
+    box.classList.remove('hidden');box.querySelectorAll('.global-find-result').forEach(b=>b.onclick=()=>{close();input.value='';globalFindQuery='';if(clear)clear.classList.add('hidden');openGlobalFindResult(b.dataset.kind,b.dataset.id)})
   };
-  input.oninput=run;input.onfocus=()=>{if(input.value)run()};if(clear)clear.onclick=()=>{input.value='';close();clear.classList.add('hidden');input.focus()};
-  document.addEventListener('pointerdown',e=>{if(!e.target.closest('.global-find'))close()},{once:true})
+  input.oninput=run;input.onfocus=()=>{if(input.value)run()};if(clear)clear.onclick=()=>{input.value='';globalFindQuery='';close();clear.classList.add('hidden');input.focus()};
+  input.onkeydown=e=>{if(e.key==='Escape'){close();return}if(e.key==='Enter'){e.preventDefault();run();box.querySelector('.global-find-result')?.click()}if(e.key==='ArrowDown'){e.preventDefault();box.querySelector('.global-find-result')?.focus()}};
+  if(!window.__globalFindOutsideBound){document.addEventListener('pointerdown',e=>{if(!e.target.closest('.global-find'))$('globalSearchResults')?.classList.add('hidden')});window.__globalFindOutsideBound=true}
+  if(input.value)run();
 }
 
 const kpi=(l,v,s='',tone='')=>`<div class="kpi"><span>${l}</span><strong class="${tone}">${v}</strong><small>${s}</small></div>`;
@@ -454,7 +469,7 @@ function selectedTripRows(){if(opsFiltering())return sortTripsByDate(opsRows('tr
 function tripSearchMatches(t,q){
   q=String(q||'').trim().toLowerCase();if(!q)return true;
   const legs=tripLegs(t),legText=legs.map(l=>[route(l.routeId),client(l.clientId),l.load,l.label].join(' ')).join(' ');
-  return[t.number,t.date,t.status,legText,truck(t.truckId),driver(t.driverId),journeyLoadLabel(t)].join(' ').toLowerCase().includes(q)
+  return searchMatches([t.number,t.externalTmsId,t.sourceTmsId,t.sourceOrderRef,t.carrierDetails?.orderRef,t.date,t.status,legText,truck(t.truckId),driver(t.driverId),journeyLoadLabel(t)].join(' '),q)
 }
 function monthName(m,short=false){const n=Math.max(1,Math.min(12,Number(m)||1));return new Intl.DateTimeFormat('en',{month:short?'short':'long'}).format(new Date(2020,n-1,1))}
 function tripPeriodLabel(rows=selectedTripRows()){if(opsFiltering())return opsLabel()+' · '+rows.length+' journey(s)';
@@ -3040,7 +3055,7 @@ function openTrip(id){
   const t=get('trips',id),legs=tripLegs(t),fuel=linked('diesel','tripId',id),expenses=linked('expenses','tripId',id),issues=linked('tripIssues','tripId',id),settlement=tripSettlement(t),m=settlement.fuel;
   const dieselSpend=tripDieselSpend(t),expenseSpend=tripRouteExpenseSpend(t),totalCost=tripCost(t),contribution=tripProfit(t);
   $('modalTitle').textContent=`${t.number} · ${legs.length} leg${legs.length===1?'':'s'} · ${truck(t.truckId)}`;
-  $('entryForm').innerHTML=
+  $('entryForm').innerHTML=shunterReconDetail(t)+
     `<div class="trip-live-summary">
       <div><span>Journey income</span><b>${money(journeyIncome(t))}</b></div>
       <div><span>Distance</span><b>${journeyDistance(t).toLocaleString()} km</b></div>
@@ -3690,3 +3705,5 @@ setTimeout(dismissLoadingScreen,2500);
 document.addEventListener('click',e=>{const b=e.target.closest('.edit-load-button');if(b){e.preventDefault();e.stopPropagation();openLoadEdit(b.dataset.id)}},true);
 
 document.addEventListener('click',e=>{const b=e.target.closest('.open-alert-record');if(b){e.preventDefault();openAlertRecord(b.dataset.type,b.dataset.id)}});
+
+document.addEventListener('click',e=>{const b=e.target.closest('[data-shunter-trip]');if(!b)return;e.preventDefault();const t=get('trips',b.dataset.shunterTrip),r=shunterReconLinks(t)[0];if(r&&canView('shunterRecon')){shunterReconPeriod=String(r.period||r.date||'').slice(0,7);$('modal').classList.add('hidden');go('shunterRecon')}});
