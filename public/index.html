@@ -14,7 +14,7 @@
   window.addEventListener('error',function(e){if(e.filename&&/app\.js|page-filters\.js|record-filters\.js|mobile-documents\.js|record-manager\.js/.test(e.filename))setTimeout(recover,0)});
   window.addEventListener('unhandledrejection',function(){if(!window.__angermundInitialized)setTimeout(recover,0)});
 })();
-</script><style>html.native-app-entry #loginScreen:not(.hidden){position:fixed;inset:0;z-index:100;background:#071524;overflow:auto}html.native-app-entry #loginPanel:not(.hidden){display:grid;min-height:100%;place-items:center;padding:18px;opacity:1;transform:none}html.native-app-entry #siteEntry{display:none}#startupRecovery.hidden{display:none}</style><link rel="manifest" href="manifest.json?v=57"><link rel="icon" href="/angermund-app-logo-hq.webp?v=38" type="image/webp"><link rel="preconnect" href="https://thumb.wikimedia.org" crossorigin><link rel="stylesheet" href="styles.css?v=105">
+</script><style>html.native-app-entry #loginScreen:not(.hidden){position:fixed;inset:0;z-index:100;background:#071524;overflow:auto}html.native-app-entry #loginPanel:not(.hidden){display:grid;min-height:100%;place-items:center;padding:18px;opacity:1;transform:none}html.native-app-entry #siteEntry{display:none}#startupRecovery.hidden{display:none}</style><link rel="manifest" href="manifest.json?v=57"><link rel="icon" href="/angermund-app-logo-hq.webp?v=38" type="image/webp"><link rel="preconnect" href="https://thumb.wikimedia.org" crossorigin><link rel="stylesheet" href="styles.css?v=108">
 <link rel="stylesheet" href="ledger.css?v=1"></head>
 <body>
 <aside id="sidebar"><div class="brand"><img src="angermund-logo.webp" alt="Angermund Transport"></div><nav id="nav"></nav><div class="mobile-sidebar-account"><small>Signed in as</small><b id="mobileSidebarRole">Operations</b><button type="button" class="danger" id="mobileSidebarLogout">↪ Log out</button></div><div class="company-mini">CC/2006/0146<br>VAT 4118289-015</div></aside>
@@ -109,7 +109,7 @@
 <div id="appInstallPrompt" class="app-install-prompt hidden" role="dialog" aria-modal="true" aria-labelledby="appInstallTitle"><div class="app-install-card"><img src="/angermund-app-logo-hq.webp?v=38" alt="Angermund Transport"><div class="app-install-icon">🚛</div><h2 id="appInstallTitle">Install Angermund App</h2><p>Download the latest Android app <b>v1.3.5</b> for background GPS, geofencing and the full mobile experience.</p><div id="appInstallStatus" class="app-install-status">Already installed? Tap <b>Open app</b> and we’ll remember this phone.</div><button type="button" class="primary app-install-main" id="downloadAndroidApp">Download v1.3.5 APK</button><button type="button" class="ghost" id="openAndroidApp">Open installed app</button><button type="button" class="link-button app-install-later" id="dismissAndroidApp">Not now</button></div></div>
 <div id="toast" class="toast"></div><input type="file" id="fileInput" accept=".json,.csv" hidden><input type="file" id="scanInput" accept="image/*,application/pdf" multiple hidden>
 <script src="payroll-eligibility.js"></script>
-<script src="scroll-regions.js"></script>
+<script src="scroll-regions.js?v=108"></script>
 <script src="invoice-charges.js"></script>
 <script src="record-filters.js"></script>
 <script src="page-filters.js"></script>
