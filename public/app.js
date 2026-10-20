@@ -233,7 +233,7 @@ function renderNav(){
     if(more.classList.contains('open'))requestAnimationFrame(placeMore)
   }
 }
-function render(){document.body.classList.toggle('ops-filtered',opsFiltering()&&opsFilterPages.has(page));document.body.classList.toggle('driver-mode',role==='driver');document.body.classList.toggle('staff-mode',!['admin','manager','driver'].includes(role));document.body.dataset.role=role;if($('mobileSidebarRole'))$('mobileSidebarRole').textContent=roleLabel();if(!canView(page))page=defaultPageForRole();renderNav();$('pageTitle').textContent={command:'Command Centre',driverPortal:'Driver Workspace',automation:'Smart Document Inbox',knowledge:'Roles & Requirements',driverAccounts:'Drivers & Staff'}[page]||navGroups.flatMap(x=>x[1]).find(x=>x[0]===page)?.[2]||'Operations';$('pageHint').textContent=hints[page]||'';$('roleSelect').value=role;$('quickTripBtn').style.display=['driver','workshop'].includes(role)?'none':'';if($('globalRecordSlipsBtn'))$('globalRecordSlipsBtn').style.display=role==='admin'?'':'none';if($('backupBtn'))$('backupBtn').style.display=role==='admin'?'':'none';const driverBar=role==='driver'&&page!=='driverPortal'?'<nav class="driver-bottom"><button class="nav-to" data-page="driverPortal">🚛<span>Trip</span></button><button class="nav-to '+(page==='tasks'?'active':'')+'" data-page="tasks">✓<span>Tasks</span></button><button class="nav-to '+(page==='notifications'?'active':'')+'" data-page="notifications">🔔<span>Alerts</span></button><button type="button" id="driverHelpBtn">👤<span>Help</span></button></nav>':'';const searchBar=!['driver','site_worker'].includes(role)&&!['knowledge','driverPortal'].includes(page)?globalFindBar():'';$('globalSearchHost').innerHTML=searchBar;$('app').innerHTML=opsFilterPanel()+(views[page]||views.command)()+recordManagementPanel()+driverBar;syncHeaderSearchLayout();wire()}
+function render(){document.body.classList.toggle('ledger-dispatch',page==='dispatch');document.body.dataset.page=page;document.body.classList.toggle('ops-filtered',opsFiltering()&&opsFilterPages.has(page));document.body.classList.toggle('driver-mode',role==='driver');document.body.classList.toggle('staff-mode',!['admin','manager','driver'].includes(role));document.body.dataset.role=role;if($('mobileSidebarRole'))$('mobileSidebarRole').textContent=roleLabel();if(!canView(page))page=defaultPageForRole();renderNav();$('pageTitle').textContent={command:'Command Centre',driverPortal:'Driver Workspace',automation:'Smart Document Inbox',knowledge:'Roles & Requirements',driverAccounts:'Drivers & Staff'}[page]||navGroups.flatMap(x=>x[1]).find(x=>x[0]===page)?.[2]||'Operations';$('pageHint').textContent=hints[page]||'';$('roleSelect').value=role;$('quickTripBtn').style.display=['driver','workshop'].includes(role)?'none':'';if($('globalRecordSlipsBtn'))$('globalRecordSlipsBtn').style.display=role==='admin'?'':'none';if($('backupBtn'))$('backupBtn').style.display=role==='admin'?'':'none';const driverBar=role==='driver'&&page!=='driverPortal'?'<nav class="driver-bottom"><button class="nav-to" data-page="driverPortal">🚛<span>Trip</span></button><button class="nav-to '+(page==='tasks'?'active':'')+'" data-page="tasks">✓<span>Tasks</span></button><button class="nav-to '+(page==='notifications'?'active':'')+'" data-page="notifications">🔔<span>Alerts</span></button><button type="button" id="driverHelpBtn">👤<span>Help</span></button></nav>':'';const searchBar=!['driver','site_worker'].includes(role)&&!['knowledge','driverPortal'].includes(page)?globalFindBar():'';$('globalSearchHost').innerHTML=searchBar;$('app').innerHTML=(opsFilterPanel()?'<details class="ledger-filters"><summary>Truck and date filters · '+esc(opsLabel())+'</summary>'+opsFilterPanel()+'</details>':'')+(views[page]||views.command)()+recordManagementPanel()+driverBar;syncHeaderSearchLayout();wire()}
 
 let headerLayoutObserver=null;
 function syncHeaderSearchLayout(){
@@ -441,22 +441,16 @@ function sortTripsByDate(rows,ascending=false){
   return rows.slice().sort((a,b)=>(ascending?1:-1)*(tripDateStamp(a)-tripDateStamp(b))||String(b.number||'').localeCompare(String(a.number||''),undefined,{numeric:true}))
 }
 function tripClosed(t){return String(t?.status||'').toLowerCase()==='closed'||num(t?.stage)>=6}
-function tripOperationsCompleted(t){
-  const attached=x=>Boolean(x&&(x.podDocumentId||x.podUploadId));
-  const legs=(t.legs||[]).filter(l=>!l.cancelled&&String(l.status||'').toLowerCase()!=='cancelled');
-  const pod=legs.length>1?legs.every(attached):(attached(t)||legs.some(attached));
-  const diesel=(db.diesel||[]).some(x=>x.tripId===t.id&&(x.receiptUploadId||(x.receiptUploadIds||[]).some(Boolean)));
-  return pod&&diesel
-}
-function tripCompletionMatches(t){return tripCompletionFilter==='all'||(tripCompletionFilter==='completed'?tripOperationsCompleted(t)||tripClosed(t):!tripOperationsCompleted(t)&&!tripClosed(t))}
+function tripOperationsCompleted(t){return TripLifecycle.completed(t)}
+function tripCompletionMatches(t){return tripCompletionFilter==='all'||(tripCompletionFilter==='completed'?tripOperationsCompleted(t):!tripOperationsCompleted(t))}
 function tripCompletionControls(){
-  return '<section class="trip-period-panel"><label>Trip progress <select id="tripCompletionFilter">'+[['process','In process'],['completed','Completed'],['all','All trips']].map(([v,label])=>'<option value="'+v+'" '+(tripCompletionFilter===v?'selected':'')+'>'+label+'</option>').join('')+'</select></label><small>Completed: POD for every leg and a linked diesel slip uploaded. Closed trips are also included.</small></section>'
+  return '<section class="trip-period-panel"><label>Trip progress <select id="tripCompletionFilter">'+[['process','In process'],['completed','Completed'],['all','All trips']].map(([v,label])=>'<option value="'+v+'" '+(tripCompletionFilter===v?'selected':'')+'>'+label+'</option>').join('')+'</select></label><small>Completed only after confirmed arrival at Angermund depot. POD and diesel can be added separately.</small></section>'
 }
 function liveTripRows(){
   const current=currentTripMonthKey();return sortTripsByDate((db.trips||[]).filter(t=>!tripClosed(t)||tripMonthKeyFromDate(t.date)===current))
 }
 function historicalTripRows(){
-  const current=currentTripMonthKey();return sortTripsByDate((db.trips||[]).filter(t=>tripClosed(t)&&tripMonthKeyFromDate(t.date)!==current))
+  const current=currentTripMonthKey();return sortTripsByDate((db.trips||[]).filter(t=>tripOperationsCompleted(t)&&tripMonthKeyFromDate(t.date)!==current))
 }
 function availableTripHistoryYears(){
   const years=[...new Set(historicalTripRows().map(t=>String(t.date||'').slice(0,4)).filter(x=>/^\d{4}$/.test(x)))].sort((a,b)=>Number(b)-Number(a));
@@ -619,7 +613,7 @@ function dispatch(){
     summary='<div class="workflow">'+cols.map(([l,n])=>`<div class="stage"><span>Stage ${n}</span><strong>${l}</strong><p>${rows.filter(t=>n===0?tripOperationsCompleted(t):n===6?tripClosed(t)&&!tripOperationsCompleted(t):(!tripClosed(t)&&!tripOperationsCompleted(t)&&num(t.stage)===n)).length} journey(s)</p></div>`).join('')+'</div>'
   }
   const capture=['admin','manager','dispatcher'].includes(role)?'<div class="dispatch-capture-bar"><span>Trip documents</span><button type="button" class="ghost batch-pod-upload">Batch PODs</button><button type="button" class="ghost" id="dispatchScanSlip">📷 Slip</button><button type="button" class="ghost" id="dispatchScanPod">📄 POD</button></div>':'';
-  return `${tripPeriodControls()}${capture}${summary}<div class="cards-list">${cards.length?cards.map(tripCard).join(''):'<div class="panel empty-history">No journeys for this period.</div>'}</div>`;
+  return ledgerOverview()+tripPeriodControls()+capture+'<details class="ledger-filters"><summary>Workflow totals</summary>'+summary+'</details><div class="cards-list ledger-list">'+(cards.length?cards.map(ledgerTripCard).join(''):'<div class="panel empty-history">No journeys for this period.</div>')+'</div>'+ledgerAvailablePanel();
 }
 function tripCard(t){
   const legs=tripLegs(t),active=activeJourneyLeg(t),closed=tripClosed(t),next={1:'Start loading',2:'Depart',3:'Confirm delivery',4:isShunterTrip(t)?'Shunter recon':(legs.length>1?'Next / invoice':'Create invoice'),5:'Close'}[t.stage]||'Open';
@@ -836,6 +830,9 @@ async function flushDriverJobs(){
 function driverCapture(kind,callback){openSlipScanSourceChooser({multiple:false,onFiles:files=>{const file=files&&files[0];if(file)callback(file)}})}
 function driverPassedInspection(tripId){return db.inspections.some(x=>x.tripId===tripId&&x.type==='Pre-trip'&&x.status==='Passed')}
 function driverNextStep(t){
+ if(TripLifecycle.completed(t))return{key:'complete',icon:'✓',label:'BACK AT ANGERMUND DEPOT',sub:'Journey complete · documents can still be added'};
+ if(TripLifecycle.returning(t))return{key:'geo',icon:'↩',label:'RETURNING TO ANGERMUND DEPOT',sub:'Trip completes on confirmed arrival at the depot'};
+ if(TripLifecycle.delivered(t))return{key:'return',icon:'↩',label:'START RETURN TO DEPOT',sub:'Delivery recorded · journey stays in process until you are back'};
   if(!t.driverAcceptedAt)return{key:'accept',icon:'✓',label:'ACCEPT TRIP',sub:'I have received this assignment'};
   if(!driverPassedInspection(t.id))return{key:'inspection',icon:'🚛',label:'DO VEHICLE CHECK',sub:'Tyres · lights · brakes · fluids · documents · load'};
   const legs=tripLegs(t),leg=activeJourneyLeg(t),r=get('routes',leg?.routeId||t.routeId),auto=routeAutoGpsReady(r),g=leg?.geo||t.geo||{};
@@ -862,7 +859,7 @@ function driverNextStep(t){
   if(t.pod&&!t.driverComplete)return{key:'finish',icon:'✓',label:'FINISH JOURNEY',sub:'All journey legs are complete — send to office'};
   return{key:'complete',icon:'✓',label:'JOURNEY COMPLETE',sub:'Office has your trip information'};
 }
-async function driverMainStep(t){const n=driverNextStep(t);if(n.key==='accept')return sendDriverAction(t.id,'accept',{},'Trip accepted');if(n.key==='inspection')return openDriverInspection(t);if(n.key==='start'){gpsCheckIn();return sendDriverAction(t.id,'start',{},'Trip started')}if(n.key==='arrive'){gpsCheckIn();return sendDriverAction(t.id,'arrive',{},'Arrival recorded')}if(n.key==='pod')return driverCapture('pod',file=>sendDriverPhotoAction(t.id,'pod',file,'pod',{},'POD received'));if(n.key==='finish')return sendDriverAction(t.id,'finish',{},'✅ Trip finished')}
+async function driverMainStep(t){const n=driverNextStep(t);if(n.key==='return')return sendDriverAction(t.id,'return',{},'Returning to Angermund depot');if(n.key==='accept')return sendDriverAction(t.id,'accept',{},'Trip accepted');if(n.key==='inspection')return openDriverInspection(t);if(n.key==='start'){gpsCheckIn();return sendDriverAction(t.id,'start',{},'Trip started')}if(n.key==='arrive'){gpsCheckIn();return sendDriverAction(t.id,'arrive',{},'Arrival recorded')}if(n.key==='pod')return driverCapture('pod',file=>sendDriverPhotoAction(t.id,'pod',file,'pod',{},'POD received'));if(n.key==='finish')return sendDriverAction(t.id,'finish',{},'✅ Trip finished')}
 function openDriverInspection(t){$('modalTitle').textContent='Quick vehicle check';$('entryForm').innerHTML='<div class="driver-check"><div class="driver-check-icon">🚛</div><h2>Is the truck safe to drive?</h2><p>Check tyres, lights, brakes, fluids, documents and the load.</p><button type="button" class="driver-good" id="driverAllGood">✓ ALL GOOD</button><button type="button" class="driver-found" id="driverFoundProblem">⚠ I FOUND A PROBLEM</button><button type="button" class="ghost" id="cancelForm">Cancel</button><div id="driverDefectBox" class="hidden"><label>Tell the office what is wrong</label><textarea id="driverDefectText" rows="4" placeholder="Type it or use the microphone…"></textarea><div class="driver-inline"><button type="button" class="ghost" id="driverSpeak">🎤 SPEAK</button><button type="button" class="danger" id="driverSendDefect">SEND PROBLEM</button></div></div></div>';$('modal').classList.remove('hidden');$('cancelForm').onclick=()=>$('modal').classList.add('hidden');$('driverAllGood').onclick=async()=>{$('modal').classList.add('hidden');await sendDriverAction(t.id,'inspection',{defects:''},'Vehicle check passed')};$('driverFoundProblem').onclick=()=>{$('driverDefectBox').classList.remove('hidden');$('driverFoundProblem').classList.add('hidden')};$('driverSpeak').onclick=()=>driverSpeechTo($('driverDefectText'));$('driverSendDefect').onclick=async()=>{const defects=$('driverDefectText').value.trim();if(!defects)return notify('Tell the office what is wrong');$('modal').classList.add('hidden');await sendDriverAction(t.id,'inspection',{defects},'Problem sent to office');await sendDriverAction(t.id,'problem',{type:'Vehicle defect',description:defects},'Problem sent to office')}}
 async function prepareReceiptForOcr(file){
   try{
@@ -1410,7 +1407,7 @@ function openDriverProblem(t){const types=['🛞 Tyre','🔧 Breakdown','⏱ Del
 function openDriverHelp(){const d=get('drivers',currentDriver()),nativeTest=nativePhoneGpsTestAvailable(),testActive=phoneGpsTestActive();$('modalTitle').textContent='Driver account';$('entryForm').innerHTML='<div class="driver-help"><div class="driver-avatar">👤</div><h2>'+esc(d.name||sessionUser?.name||'Driver')+'</h2><p>Signed in as <b>'+esc(accountUsername(sessionUser)||sessionUser?.email||'')+'</b>. Your assigned trip and values load automatically when you sign in.</p><button type="button" class="primary" id="driverQuickPin">🔐 SET / CHANGE 4-DIGIT PIN</button>'+'<button type="button" class="ghost" id="driverPhoneGpsTest">📱 '+(testActive?'STOP':'START')+' PHONE GPS TEST</button>'+'<a class="driver-call-big" href="tel:+264811299942">📞 CALL OFFICE</a><button type="button" class="driver-switch-account" id="driverSwitchAccount">↪ LOG OUT / SWITCH DRIVER</button><button type="button" class="ghost" id="cancelForm">Close</button></div>';$('modal').classList.remove('hidden');$('cancelForm').onclick=()=>$('modal').classList.add('hidden');$('driverQuickPin').onclick=()=>openQuickPinSetup(true);if($('driverPhoneGpsTest'))$('driverPhoneGpsTest').onclick=()=>{if(testActive)stopPhoneGpsTest();else startPhoneGpsTest('School geofence test');$('modal').classList.add('hidden')};$('driverSwitchAccount').onclick=()=>{$('modal').classList.add('hidden');logout()}}
 function driverTripPriority(t){
   const status=String(t.status||'').toLowerCase();
-  if(/loading|in transit|at offloading|return journey/.test(status))return 500;
+  if(/loading|in transit|at offloading|return journey|returning/.test(status))return 500;
   if(/planned|assigned|booked/.test(status))return 400;
   if(/delivered/.test(status)&&!t.pod)return 250;
   if(/delivered/.test(status)&&!t.driverComplete)return 200;
@@ -1426,7 +1423,7 @@ function driverPortal(){
   const preview=role!=='driver';
   const did=preview?(driverPreviewId||currentDriver()):currentDriver();
   const d=get('drivers',did);
-  const mine=db.trips.filter(t=>t.driverId===did&&!t.driverComplete&&!['Closed','Invoiced'].includes(t.status)).sort(driverTripSort);
+  const mine=db.trips.filter(t=>t.driverId===did&&!TripLifecycle.completed(t)).sort(driverTripSort);
   const t=mine[0],legs=t?tripLegs(t):[],leg=t?activeJourneyLeg(t):null;
   const next=t?driverNextStep(t):null;
   const pending=t?db.tasks.filter(x=>x.status==='Open'&&x.linkedType==='trip'&&x.linkedId===t.id&&(x.assignedDriverId===did||x.ownerRole==='Driver'||x.ownerRole==='driver')).length:0;
@@ -1631,7 +1628,7 @@ function fleet(){
   const linkedFleetCost=sum(opsTrucks(),t=>opsFleetSummary(t).total);
   return `<section class="kpis">${kpi('Available',opsTrucks().filter(t=>t.status==='Available').length,'Ready for dispatch')}${kpi('On work',opsTrucks().filter(t=>/trip|duty/i.test(t.status)).length,'Currently allocated')}${kpi('Tracker linked',opsTrucks().filter(t=>t.trackerId).length,`${opsTrucks().length} trucks`)}${kpi('Service due',serviceDue().filter(t=>!opsSelection.truckId||t.id===opsSelection.truckId).length,'Within 5,000 km')}${kpi('Linked fleet costs',money(linkedFleetCost),(opsSelection.year||opsSelection.from?opsLabel():pnlPeriodLabel(period)))}</section>
   <section class="panel"><div class="toolbar"><div><h2>Fleet & vehicles</h2><p class="muted-copy">Summary cards stay simple. Open Details for insurance, compliance, tracker, chassis, service history and linked costs.</p></div>${canEdit?'<button class="primary" id="addFleetVehicle">+ Add vehicle</button>':''}</div>
-  <div class="cards-list">${opsTrucks().map(t=>{const c=opsFleetSummary(t);return `<article class="entity-card fleet-card-compact clickable-record" data-fleet-open="${t.id}"><div class="panel-head"><h3>${esc(t.fleetName||t.registration)}</h3>${badge(t.status)}</div><p><b>${esc(t.registration)}</b>${t.make?' · '+esc(t.make):''}</p><div class="metric-line"><span>Odometer</span><b>${num(t.odometer).toLocaleString()} km</b></div><div class="metric-line"><span>Next service</span><b>${num(t.serviceDue)>0?num(t.serviceDue).toLocaleString()+' km':'—'}</b></div><div class="metric-line"><span>Insurance / month</span><b>${money(fleetInsuranceMonthly(t))}</b></div><div class="metric-line"><span>Linked cost · selected period</span><b>${money(c.total)}</b></div><div class="metric-line"><span>Trips</span><b>${opsRows('trips').filter(x=>x.truckId===t.id).length}</b></div><div class="fleet-card-actions"><button type="button" class="ghost small fleet-details" data-truck="${t.id}">Details</button>${canTracker?`<button type="button" class="ghost small tracker-config" data-truck="${t.id}">Tracker</button>`:''}${canEdit?`<button type="button" class="ghost small edit-fleet-vehicle" data-truck="${t.id}">Edit</button>`:''}</div></article>`}).join('')}</div></section><section class="panel"><h2>Trailers</h2><div class="cards-list">${(db.trailers||[]).map(t=>`<article class="entity-card"><h3>${esc(t.name||t.type||'Trailer')}</h3><p>${esc(t.registration)}</p><p>Licence expiry: ${esc(t.licenseExpiry||'Not recorded')}</p>${t.whiteboardSourceReceiptId?`<button type="button" class="ghost" data-whiteboard-receipt="${esc(t.whiteboardSourceReceiptId)}">View whiteboard source</button>`:''}</article>`).join('')}</div></section>${whiteboardSourceLinks()}`
+  <div class="cards-list">${opsTrucks().map(t=>{const c=opsFleetSummary(t);return `<article class="entity-card fleet-card-compact clickable-record" data-fleet-open="${t.id}"><img class="fleet-cutout" src="/angermund-truck-cutout.webp" alt="Angermund fleet"><div class="panel-head"><h3>${esc(t.fleetName||t.registration)}</h3>${badge(t.status)}</div><p><b>${esc(t.registration)}</b>${t.make?' · '+esc(t.make):''}</p><div class="metric-line"><span>Odometer</span><b>${num(t.odometer).toLocaleString()} km</b></div><div class="metric-line"><span>Next service</span><b>${num(t.serviceDue)>0?num(t.serviceDue).toLocaleString()+' km':'—'}</b></div><div class="metric-line"><span>Insurance / month</span><b>${money(fleetInsuranceMonthly(t))}</b></div><div class="metric-line"><span>Linked cost · selected period</span><b>${money(c.total)}</b></div><div class="metric-line"><span>Trips</span><b>${opsRows('trips').filter(x=>x.truckId===t.id).length}</b></div><div class="fleet-card-actions"><button type="button" class="ghost small fleet-details" data-truck="${t.id}">Details</button>${canTracker?`<button type="button" class="ghost small tracker-config" data-truck="${t.id}">Tracker</button>`:''}${canEdit?`<button type="button" class="ghost small edit-fleet-vehicle" data-truck="${t.id}">Edit</button>`:''}</div></article>`}).join('')}</div></section><section class="panel"><h2>Trailers</h2><div class="cards-list">${(db.trailers||[]).map(t=>`<article class="entity-card"><h3>${esc(t.name||t.type||'Trailer')}</h3><p>${esc(t.registration)}</p><p>Licence expiry: ${esc(t.licenseExpiry||'Not recorded')}</p>${t.whiteboardSourceReceiptId?`<button type="button" class="ghost" data-whiteboard-receipt="${esc(t.whiteboardSourceReceiptId)}">View whiteboard source</button>`:''}</article>`).join('')}</div></section>${whiteboardSourceLinks()}`
 }
 function openFleetDetails(truckId){
   const t=get('trucks',truckId);if(!t.id)return;const period=today().slice(0,7),c=fleetCostSummary(t,period),lic=fleetLicenceExpiry(t),rw=fleetRoadworthyExpiry(t),ins=fleetInsuranceAsset(t);
@@ -2835,6 +2832,7 @@ async function advanceTrip(id){
     await refreshCentralState(false);return
   }
   if(num(t.stage)>=5){
+    if(!tripOperationsCompleted(t))return notify('Confirm arrival at Angermund depot before closing this journey');
     t=get('trips',id);t.status='Closed';t.stage=6;
     get('trucks',t.truckId).status='Available';get('drivers',t.driverId).status='Available';
     commit(t.number+' journey closed','trip',t.id);return
@@ -3061,7 +3059,7 @@ function openTrip(id){
   const t=get('trips',id),legs=tripLegs(t),fuel=linked('diesel','tripId',id),expenses=linked('expenses','tripId',id),issues=linked('tripIssues','tripId',id),settlement=tripSettlement(t),m=settlement.fuel;
   const dieselSpend=tripDieselSpend(t),expenseSpend=tripRouteExpenseSpend(t),totalCost=tripCost(t),contribution=tripProfit(t);
   $('modalTitle').textContent=`${t.number} · ${legs.length} leg${legs.length===1?'':'s'} · ${truck(t.truckId)}`;
-  $('entryForm').innerHTML=shunterReconDetail(t)+
+  $('entryForm').innerHTML='<section class="panel status-'+TripLifecycle.phase(t).key+'"><span class="ledger-status">'+esc(TripLifecycle.phase(t).label)+'</span>'+ledgerProgress(t)+'</section>'+shunterReconDetail(t)+
     `<div class="trip-live-summary">
       <div><span>Journey income</span><b>${money(journeyIncome(t))}</b></div>
       <div><span>Distance</span><b>${journeyDistance(t).toLocaleString()} km</b></div>
@@ -3213,7 +3211,7 @@ function clientGeoDistanceM(a,b){
   return 2*R*Math.atan2(Math.sqrt(q),Math.sqrt(1-q));
 }
 async function postDriverGpsPosition(position){
-  const t=db.trips.filter(x=>x.driverId===currentDriver()&&!x.driverComplete&&!['Closed','Invoiced'].includes(x.status)).sort(driverTripSort)[0];
+  const t=db.trips.filter(x=>x.driverId===currentDriver()&&!TripLifecycle.completed(x)).sort(driverTripSort)[0];
   if(!t?.id)return;
   const now=Date.now(),pt={latitude:position.coords.latitude,longitude:position.coords.longitude};
   const moved=lastDriverGpsPoint?clientGeoDistanceM(lastDriverGpsPoint,pt):Infinity;

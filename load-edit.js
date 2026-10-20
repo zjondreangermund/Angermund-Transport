@@ -39,7 +39,7 @@ function syncJourneyWorkflow(t){
   const previous=Number(t.stage||0);t.status=status;t.stage=workflowStages[status];
   if(t.stage<previous){
     if(t.stage<3){delete t.startedAt;for(const l of legs.filter(l=>['Planned','Loading'].includes(l.status))){delete l.startedAt;l.geo={}}t.geo={}}
-    if(t.stage<4){delete t.arrivedAt;delete t.deliveredDate;delete t.completedDate;delete t.closedDate;t.driverComplete=false;delete t.driverCompletedAt;if(active)delete active.arrivedAt}
+    if(t.stage<4){delete t.depotArrival;delete t.operationalCompletedAt;delete t.returnJourney;delete t.arrivedAt;delete t.deliveredDate;delete t.completedDate;delete t.closedDate;t.driverComplete=false;delete t.driverCompletedAt;if(active)delete active.arrivedAt}
   }
 }
 function editLoad(state,t,body,helpers){
