@@ -1,0 +1,1 @@
+(()=>{const b=document.createElement('div');b.className='preview-ribbon';b.textContent='DESIGN PREVIEW · Sample data only · Live site unchanged';document.body.append(b);const timer=setInterval(()=>{if(!window.__angermundAppReady)return;clearInterval(timer);connectEvents=()=>{};maybeOfferAndroidApp=()=>{};go('dispatch')},200)})();
