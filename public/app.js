@@ -1881,8 +1881,8 @@ function authorizationLetterHtml(t){
   const d=get('drivers',t.driverId),tr=truckRecord(t.truckId),trl=get('trailers',t.trailerId),legs=tripLegs(t);
   return `<h1>COMPANY AUTHORIZATION LETTER</h1><p><b>Date:</b> ${today()}</p><p>To whom it may concern,</p><p>${esc(db.company.name)} hereby authorizes <b>${esc(d.name)}</b>, holder of the company-recorded driver credentials, to operate the company vehicle <b>${esc(tr.registration||truck(t.truckId))}</b>${t.trailerId?` with trailer <b>${esc(trl.registration||trailer(t.trailerId))}</b>`:''} for the cross-border journey <b>${esc(t.number)}</b>.</p><p>The journey currently includes:</p><ul>${legs.map(l=>`<li><b>${esc(route(l.routeId))}</b> — ${esc(l.load||'cargo')} — ${esc(client(l.clientId))}</li>`).join('')}</ul><p>The driver is authorized to carry the vehicle and the above consignments on behalf of ${esc(db.company.name)}, subject to the applicable customs, transport, immigration and client requirements.</p><p>This letter does not replace any financier/title-holder permission, customs declaration, cross-border road transport permit or commodity-specific permit required for the journey.</p><div class="signature"><p>______________________________<br><b>Authorized signatory</b><br>${esc(db.company.name)}</p><p>Tel: ${esc(db.company.phone||'')}<br>Email: ${esc(db.company.email||'')}</p></div>`
 }
-function openPrintWindow(title,body){
-  const w=createPrintSurface({title});if(!w)return notify('Allow pop-ups to prepare the pack');
+function openPrintWindow(title,body,options={}){
+  const w=createPrintSurface({title,...options});if(!w)return notify('Allow pop-ups to prepare the pack');
   w.document.write(`<!doctype html><html><head><title>${esc(title)}</title><style>*{box-sizing:border-box}:root{--brand:#0b2e6b;--brand2:#174f9c;--ink:#172033;--muted:#667085;--line:#d8e1ec;--soft:#f4f7fb}html{background:#e9eef5}body{font-family:Inter,Segoe UI,Arial,sans-serif;color:var(--ink);margin:28px auto;padding:38px 42px;max-width:980px;background:#fff;line-height:1.5;box-shadow:0 18px 55px rgba(17,35,70,.14);border-radius:18px}h1{font-size:27px;line-height:1.15;color:var(--brand);margin:0 0 18px;letter-spacing:-.02em}h2{font-size:16px;color:var(--brand);margin-top:30px;border-bottom:2px solid #dce6f3;padding-bottom:8px;text-transform:uppercase;letter-spacing:.05em}table{width:100%;border-collapse:separate;border-spacing:0;margin:14px 0;border:1px solid var(--line);border-radius:10px;overflow:hidden}th,td{padding:9px 10px;border:0;border-bottom:1px solid #e8edf3;text-align:left;font-size:11.5px;vertical-align:top}th{background:var(--brand);color:#fff;font-size:10px;text-transform:uppercase;letter-spacing:.05em}tbody tr:nth-child(even) td{background:#f8fafc}tbody tr:last-child td{border-bottom:0}.good{font-weight:800;color:#147a53}.bad{font-weight:800;color:#a33b3b}.meta{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin:16px 0}.box{border:1px solid var(--line);background:linear-gradient(180deg,#fff,#f8fbff);padding:14px 16px;border-radius:12px}.signature{display:flex;justify-content:space-between;gap:32px;margin-top:56px}.signature>div{flex:1;border-top:1px solid #8792a2;padding-top:7px}.page-break{page-break-before:always}.small{font-size:10.5px;color:var(--muted)}.print-brand{display:flex;align-items:center;justify-content:space-between;gap:25px;border-bottom:4px solid var(--brand);padding-bottom:15px;margin-bottom:28px}.print-brand img{width:250px;max-width:55%;height:auto}.print-brand small{color:var(--brand);text-align:right;font-weight:800;line-height:1.55;letter-spacing:.035em}button{border:0;border-radius:9px;background:var(--brand);color:#fff;padding:10px 15px;font-weight:700;cursor:pointer}@media(max-width:650px){body{margin:0;padding:22px 16px;border-radius:0}.meta{grid-template-columns:1fr}.print-brand{align-items:flex-start}.print-brand img{max-width:58%}.print-brand small{font-size:9px}}@page{margin:11mm}@media print{html{background:#fff}body{margin:0;max-width:none;padding:0;box-shadow:none;border-radius:0}button{display:none}.box{break-inside:avoid}tr{break-inside:avoid}}</style></head><body><div class="print-brand"><img src="${location.origin}/angermund-logo.webp" alt="Angermund Transport"><small>LOCAL &amp; CROSS BORDER TRANSPORT<br>${esc(db.company.registration||'')} · ${esc(db.company.vat||'')}</small></div>${body}<p><button onclick="window.print()">Print / Save PDF</button></p></body></html>`);w.document.close();w.focus()
 }
 function printAuthorizationLetter(t){openPrintWindow('Authorization '+t.number,authorizationLetterHtml(t))}
@@ -2356,10 +2356,17 @@ function quoteCustomerBody(q){
 }
 function quoteCostBody(q){
   const x=q.costing;
-  return '<h1>'+esc(q.number)+' — INTERNAL COSTING</h1><p>Actual km: '+x.distance+' · Namibian km: '+x.namibiaKm+' · Diesel: '+x.litres.toFixed(2)+' L</p><table><thead><tr><th>Cost item</th><th>Calculation</th><th>N$</th></tr></thead><tbody>'+
-    x.rows.map(r=>'<tr><td>'+esc(r.label)+'</td><td>'+esc(r.calculation)+'</td><td>'+money(r.amount)+'</td></tr>').join('')+
-    '</tbody></table><p>Total cost: '+money(x.totalCost)+'</p><p>Recommendation excl. VAT: '+money(x.recommended)+'</p><p>Entered quote excl. VAT: '+money(x.quotedIncome)+'</p><h2>Expected profit: '+money(x.profit)+' ('+x.actualMargin.toFixed(2)+'%)</h2>';
+  if(!x)return '<h1>'+esc(q.number)+' — Cost breakdown</h1><p>This quotation was saved before detailed costing was recorded. Its original cost rates cannot be recovered from the total. Choose Revise, check the assumptions and save a new quotation to generate the breakdown.</p><p>Saved quoted amount: <b>'+money(q.quotedIncome)+'</b></p>';
+  const km=num(x.distance),perKm=value=>km>0?money(num(value)/km):'—';
+  return '<h1>'+esc(q.number)+' — INTERNAL COST BREAKDOWN</h1><p>'+esc((q.legs||[]).map(l=>l.routeName||route(l.routeId)).join(' / '))+'</p><div class="meta"><div class="box"><b>Actual truck distance</b><br>'+km.toLocaleString()+' km<br>Namibian distance: '+num(x.namibiaKm).toLocaleString()+' km</div><div class="box"><b>Diesel required</b><br>'+num(x.litres).toFixed(2)+' L<br>Fuel economy: '+num(q.costInputs?.kml)+' km/L</div></div><table><thead><tr><th>Cost item</th><th>Calculation</th><th>Cost / actual km</th><th>Total N$</th></tr></thead><tbody>'+
+    x.rows.map(r=>'<tr><td>'+esc(r.label)+'</td><td>'+esc(r.calculation)+'</td><td>'+perKm(r.amount)+'</td><td>'+money(r.amount)+'</td></tr>').join('')+
+    '</tbody></table><div class="box"><p>Operating cost: <b>'+money(x.totalCost)+'</b> · '+perKm(x.totalCost)+'/actual km</p><p>Recommended quote excl. VAT: <b>'+money(x.recommended)+'</b></p><p>Entered quote excl. VAT: <b>'+money(x.quotedIncome)+'</b> · '+perKm(x.quotedIncome)+'/actual km</p><h2>Expected profit: '+money(x.profit)+' ('+num(x.actualMargin).toFixed(2)+'%)</h2><p>VAT ('+num(x.vatRate)+'%): '+money(x.vat)+'<br>Total incl. VAT: <b>'+money(x.total)+'</b></p></div><p class="small">Internal estimate. Per-kilometre values use total actual truck kilometres, including empty travel. Daily allowances and fixed costs are shown as equivalent cost per kilometre.</p>';
 }
+function printSavedQuotation(id,mode='costing'){
+  const q=(db.quotes||[]).find(x=>x.id===id);if(!q)return notify('Quotation not found');
+  openPrintWindow(q.number+(mode==='costing'?' · Internal costing':' · Customer quotation'),mode==='costing'?quoteCostBody(q):quoteCustomerBody(q),{quoteId:id,quoteMode:mode});
+}
+
 async function quoteExportExcel(q){
   if(!q.costing)return notify('Detailed costing was not stored on this older quotation');
   const x=q.costing,columns=(defs)=>defs.map(([key,label,type])=>({key,label,type}));
@@ -2463,22 +2470,26 @@ function savedQuotationsPanel(){
   const rows=(db.quotes||[]).slice().sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
   return '<section class="panel" style="margin-top:18px"><div class="toolbar"><h2>Saved quotations</h2><button class="ghost" id="quoteRateSchedule">Export rate schedule Excel</button></div><div class="table-wrap"><table><thead><tr><th>Quotation</th><th>Date</th><th>Loads</th><th>Quoted amount</th><th>Status</th><th></th></tr></thead><tbody>'+(rows.length?rows.map(q=>'<tr><td>'+esc(q.number||q.id)+'</td><td>'+esc(q.date||'')+'</td><td>'+esc((q.legs||[]).map(l=>client(l.clientId)+' · '+route(l.routeId)).join(' / '))+'</td><td>'+money(q.quotedIncome)+'</td><td>'+badge(q.status||'Draft')+'</td><td><button type="button" class="link-button open-saved-quote" data-id="'+esc(q.id)+'">Open / print</button> '+managedButtons('quotes',q.id)+'</td></tr>').join(''):'<tr><td colspan="6">No saved quotations yet.</td></tr>')+'</tbody></table></div></section>';
 }
+function reviseSavedQuotation(id){
+  const q=(db.quotes||[]).find(x=>x.id===id);if(!q)return;
+  journeyQuoteLegs=structuredClone(q.legs||[]);journeyQuoteLegs.forEach(quoteInitLeg);
+  quoteCostDraft=q.costInputs?structuredClone(q.costInputs):null;
+  quoteRevisionOf=q.id;$('modal').classList.add('hidden');render();
+  if(!q.costInputs)notify('Previous cost assumptions were not saved. Review the starting rates before saving.');
+}
 function openSavedQuotation(id){
   const q=(db.quotes||[]).find(x=>x.id===id);if(!q)return notify('Quotation not found');
-  $('modalTitle').textContent='Quotation '+(q.number||'');
-  const body=quoteCustomerBody(q);
-  $('entryForm').innerHTML=body+'<div class="form-actions"><button type="button" class="ghost" id="cancelForm">Close</button><button type="button" class="ghost" id="quoteEdit">Revise</button><button type="button" class="ghost" id="quoteCostPrint">Internal costing PDF</button><button type="button" class="ghost" id="quoteExcel">Excel costing</button><button type="button" class="primary" id="printSavedQuote">Customer PDF</button></div>';
-  $('entryForm').onsubmit=e=>e.preventDefault();$('modal').classList.remove('hidden');
+  $('modalTitle').textContent='Quotation '+(q.number||'')+' · Internal breakdown';
+  const actions='<div class="form-actions"><button type="button" class="ghost" id="cancelForm">Close</button><button type="button" class="ghost" id="quoteEdit">Revise</button><button type="button" class="primary" id="quoteCostPrint">Cost breakdown PDF</button><button type="button" class="ghost" id="quoteExcel">Excel costing</button><button type="button" class="ghost" id="printSavedQuote">Customer PDF</button></div>';
+  $('entryForm').innerHTML=actions+quoteCostBody(q);
+  $('entryForm').onsubmit=e=>e.preventDefault();$('modal').classList.remove('hidden');$('entryForm').scrollTop=0;
   $('cancelForm').onclick=()=>$('modal').classList.add('hidden');
-  $('printSavedQuote').onclick=()=>openPrintWindow(q.number||'Quotation',body);
-  $('quoteCostPrint').onclick=()=>q.costing?openPrintWindow(q.number+' internal costing',quoteCostBody(q)):notify('Detailed costing was not stored on this older quotation');
+  $('printSavedQuote').onclick=()=>printSavedQuotation(id,'customer');
+  $('quoteCostPrint').onclick=()=>printSavedQuotation(id,'costing');
   $('quoteExcel').onclick=()=>quoteExportExcel(q);
-  $('quoteEdit').onclick=()=>{
-    journeyQuoteLegs=structuredClone(q.legs||[]);journeyQuoteLegs.forEach(quoteInitLeg);
-    quoteCostDraft=q.costInputs?structuredClone(q.costInputs):null;
-    quoteRevisionOf=q.id;$('modal').classList.add('hidden');render();
-  };
+  $('quoteEdit').onclick=()=>reviseSavedQuotation(id);
 }
+
 function wireRates(){
   if($('quoteRateSchedule'))$('quoteRateSchedule').onclick=quoteExportSchedule;
   document.querySelectorAll('.open-saved-quote').forEach(b=>b.onclick=()=>openSavedQuotation(b.dataset.id));
