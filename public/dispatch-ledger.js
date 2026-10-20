@@ -26,3 +26,10 @@ document.addEventListener('click',async e=>{
  const id=returning?.dataset.ledgerReturn||depot.dataset.ledgerDepot;if(depot&&!confirm('Has this truck physically arrived at Angermund depot? Confirm only when the truck is back in the yard.'))return;
  const button=returning||depot;button.disabled=true;try{await api((depot?'/api/admin/trips/':'/api/trips/')+encodeURIComponent(id)+(depot?'/depot-arrival':'/return'),{method:'POST',body:JSON.stringify(depot?{confirmAtDepot:true}:{})});await refreshCentralState(false);notify(depot?'Arrival at Angermund depot confirmed':'Returning to Angermund depot')}catch(err){notify(err.message)}finally{button.disabled=false}
 });
+function ledgerVehiclePhase(vehicle){
+ const assigned=(db.trips||[]).filter(t=>t.truckId===vehicle.id&&!TripLifecycle.completed(t)&&!/cancelled/i.test(t.status||'')).sort((a,b)=>Number(Boolean(b.returnJourney?.startedAt))-Number(Boolean(a.returnJourney?.startedAt))||num(b.stage)-num(a.stage));
+ if(assigned.length)return TripLifecycle.phase(assigned[0]);
+ if(/workshop|maintenance|repair|out of service|inactive/i.test(vehicle.status||''))return{key:'loading',label:vehicle.status};
+ return{key:'available',label:'Available'};
+}
+function ledgerVehicleBadge(vehicle){const p=ledgerVehiclePhase(vehicle);return '<span class="ledger-status status-'+p.key+'">'+esc(p.label)+'</span>'}
