@@ -2707,7 +2707,7 @@ app.post('/api/admin/trips/:tripId/legs',auth,roles('admin','manager','dispatche
         load:String(body.load||''),tons:num(body.tons),pallets:num(body.pallets),distance:num(body.distance)||num(route.distance),namibiaKm:num(body.namibiaKm)||num(route.namibiaKm),
         pricingMethod:legPricingMethod(body.pricingMethod),unitRate:num(body.unitRate),agreedAmount:num(body.agreedAmount||body.income),
         income:0,status:String(body.status||'Planned'),pod:false,invoiceId:'',createdAt:new Date().toISOString()};
-      leg.income=Number(calculateLegIncome(leg).toFixed(2));legs.push(leg);syncTripFromLegs(state,t);recalcTripCosts(state,t);
+      leg.income=Number(calculateLegIncome(leg).toFixed(2));legs.push(leg);syncJourneyWorkflow(t);syncTripFromLegs(state,t);recalcTripCosts(state,t);
       state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:req.user.name||req.user.email||req.user.role,action:'Added '+leg.label+' to '+t.number+' · '+leg.load+' · N$'+leg.income.toFixed(2),linkedType:'trip',linkedId:t.id});state.audit=state.audit.slice(0,100);
       return{trip:t,leg}
     });
