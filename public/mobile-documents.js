@@ -1,7 +1,7 @@
 function useInAppDocumentPreview(){return runningInsideAndroidApp()||window.matchMedia('(max-width:760px)').matches||/Android|iPhone|iPad|Mobile/i.test(navigator.userAgent||'')}
-function createPrintSurface({title='Document',invoiceId='',detailed=false}={}){
+function createPrintSurface({title='Document',invoiceId='',detailed=false,quoteId='',quoteMode='costing'}={}){
   if(!useInAppDocumentPreview())return window.open('','_blank','width=980,height=950');
-  let html='';return{document:{write(value){html+=value},close(){openDocumentPreview(html,{title,invoiceId,detailed})}},focus(){}};
+  let html='';return{document:{write(value){html+=value},close(){openDocumentPreview(html,{title,invoiceId,detailed,quoteId,quoteMode})}},focus(){}};
 }
 function prepareDocumentPreview(html){
   const style='<style>@media screen and (max-width:760px){html,body{box-sizing:border-box!important;width:100%!important;max-width:100%!important;min-width:0!important;margin:0!important;padding:12px!important;overflow-wrap:anywhere}body>p:has(button),body>button{display:none!important}.head,.print-brand,.meta{display:grid!important;grid-template-columns:minmax(0,1fr)!important;gap:12px!important}.head img,.print-brand img{max-width:100%!important}.right{text-align:left!important}.table-scroll,.table-wrap{width:100%!important;max-width:100%!important;overflow:visible!important}table{width:100%!important;min-width:0!important}table thead{display:none!important}table tbody,table tr{display:block!important;width:100%!important}table tr{padding:10px!important;margin-bottom:12px;border:1px solid #d8e1ec;border-radius:10px}table td{display:block!important;min-width:0!important;width:100%!important;padding:7px 4px!important;text-align:left!important;white-space:normal!important;overflow-wrap:anywhere;border:0!important}table td:before{content:attr(data-label);display:block;color:#667085;font-size:10px;font-weight:700;text-transform:uppercase;margin-bottom:3px}.invoice-summary{width:100%!important;max-width:100%!important}.sum-row{flex-wrap:wrap;gap:8px!important}}</style>';
@@ -13,12 +13,14 @@ function prepareDocumentPreview(html){
   }
   return html.replace('</head>',style+'</head>');
 }
-function openDocumentPreview(html,{title='Document',invoiceId='',detailed=false}={}){
+function openDocumentPreview(html,{title='Document',invoiceId='',detailed=false,quoteId='',quoteMode='costing'}={}){
   $('modalTitle').textContent=title+' · Preview';
   $('entryForm').onsubmit=e=>e.preventDefault();
-  $('entryForm').innerHTML='<div class="document-preview"><div class="document-preview-actions"><button type="button" class="ghost" id="documentPreviewBack">← Back</button>'+(invoiceId&&['admin','manager','finance'].includes(role)?'<button type="button" class="primary" id="documentPreviewEdit">Edit invoice</button>':'')+(invoiceId?'<button type="button" class="ghost" id="documentPreviewMode">'+(detailed?'Summary':'Detailed loads')+'</button>':'')+'<button type="button" class="ghost" id="documentPreviewPrint">Print / PDF</button></div><iframe id="documentPreviewFrame" class="document-preview-frame" title="'+esc(title)+'" sandbox="allow-same-origin allow-modals"></iframe></div>';
+  $('entryForm').innerHTML='<div class="document-preview"><div class="document-preview-actions"><button type="button" class="ghost" id="documentPreviewBack">← Back</button>'+(quoteId?'<button type="button" class="ghost" id="documentQuoteMode">'+(quoteMode==='costing'?'Customer quotation':'Internal cost breakdown')+'</button><button type="button" class="ghost" id="documentQuoteRevise">Revise quotation</button>':'')+(invoiceId&&['admin','manager','finance'].includes(role)?'<button type="button" class="primary" id="documentPreviewEdit">Edit invoice</button>':'')+(invoiceId?'<button type="button" class="ghost" id="documentPreviewMode">'+(detailed?'Summary':'Detailed loads')+'</button>':'')+'<button type="button" class="ghost" id="documentPreviewPrint">Print / PDF</button></div><iframe id="documentPreviewFrame" class="document-preview-frame" title="'+esc(title)+'" sandbox="allow-same-origin allow-modals"></iframe></div>';
   $('documentPreviewFrame').srcdoc=prepareDocumentPreview(html);
-  $('documentPreviewBack').onclick=()=>{if(invoiceId)openInvoice(invoiceId);else $('modal').classList.add('hidden')};
+  $('documentPreviewBack').onclick=()=>{if(quoteId)openSavedQuotation(quoteId);else if(invoiceId)openInvoice(invoiceId);else $('modal').classList.add('hidden')};
+  if($('documentQuoteMode'))$('documentQuoteMode').onclick=()=>printSavedQuotation(quoteId,quoteMode==='costing'?'customer':'costing');
+  if($('documentQuoteRevise'))$('documentQuoteRevise').onclick=()=>reviseSavedQuotation(quoteId);
   if($('documentPreviewEdit'))$('documentPreviewEdit').onclick=()=>openInvoiceEdit(invoiceId);
   if($('documentPreviewMode'))$('documentPreviewMode').onclick=()=>printInvoice(invoiceId,!detailed);
   $('documentPreviewPrint').onclick=()=>{try{const frame=$('documentPreviewFrame');frame.contentWindow.focus();frame.contentWindow.print()}catch{notify('Printing is unavailable on this device. Your document remains open.')}};
