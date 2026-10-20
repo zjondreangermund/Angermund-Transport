@@ -2317,26 +2317,89 @@ async function openApprovalDecision(id,status){
   }
 }
 async function deleteTask(id){const t=(db.tasks||[]).find(x=>x.id===id);if(!t||!confirm('Delete task “'+t.title+'”?'))return;try{await api('/api/tasks/'+encodeURIComponent(id),{method:'DELETE'});await refreshCentralState(false);notify('Task deleted')}catch(e){notify(e.message)}}
+async function quoteExportSchedule(){
+  const rows=(db.quotes||[]).map(q=>({number:q.number,date:q.date,routes:(q.legs||[]).map(l=>l.routeName||route(l.routeId)).join(' / '),tenderKm:sum(q.legs||[],l=>l.tenderKm),actualKm:q.distance,namibiaKm:q.namibiaKm,margin:q.costInputs?.margin??'',rate:q.quotedIncome,cost:q.estimatedCost,profit:q.expectedProfit,review:q.costing?'Draft estimate; verify distances, return and border fees':'Legacy quote; detailed assumptions unavailable',status:q.status}));
+  if(!rows.length)return notify('Save quotations before exporting a rate schedule');
+  const columns=[['number','Quotation'],['date','Date'],['routes','Route / journey'],['tenderKm','Tender km','number'],['actualKm','Actual truck km','number'],['namibiaKm','Namibian km','number'],['margin','Target margin %','number'],['rate','Rate excl VAT','currency'],['cost','Operating cost','currency'],['profit','Expected profit','currency'],['review','Review / limitations'],['status','Status']].map(([key,label,type])=>({key,label,type}));
+  try{
+    const res=await fetch('/api/export/page',{method:'POST',headers:{Authorization:'Bearer '+authToken,'Content-Type':'application/json'},body:JSON.stringify({title:'Transport rate schedule (includes quote revisions)',filename:'transport-rate-schedule',sections:[{title:'Rate Review',columns,rows}]})});
+    if(!res.ok)throw Error('Rate schedule export failed');
+    const url=URL.createObjectURL(await res.blob()),a=document.createElement('a');a.href=url;a.download='transport-rate-schedule.xlsx';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }catch(e){notify(e.message)}
+}
+let quoteCostDraft=null,quoteRevisionOf=null;
+function quoteInputs(){
+  if(!quoteCostDraft)quoteCostDraft={kml:2,dieselNA:28.75,dieselForeign:26.76,driverRate:.5,mdcRate:73.3,maintenanceRate:2.5,tyreRate:1.5,insuranceRate:1,ownershipRate:3,days:2,foodRate:200,tolls:0,waitingDays:0,standingRate:num(db.settings.standingFee),other:0,margin:10,minimum:0,rounding:1000,vatRate:num(db.settings.vat),terms:'Rate excludes VAT. Subject to confirmed cargo, route, loading and delivery arrangements. Additional standing and border costs by agreement.',...(db.settings.quoteCostDefaults||{})};
+  return quoteCostDraft;
+}
+function quoteReadInputs(){
+  const d=quoteInputs();
+  document.querySelectorAll('[data-qcost]').forEach(el=>d[el.dataset.qcost]=Number(el.value));
+  if($('quoteTerms'))d.terms=$('quoteTerms').value;
+  return d;
+}
+function quoteInitLeg(q){
+  const r=get('routes',q.routeId);
+  q.tenderKm??=num(r.distance);q.actualKm??=num(r.distance);
+  if(q.namibiaKm===undefined)q.namibiaKm=r.crossBorder?(r.namibiaKm==null?null:num(r.namibiaKm)):q.actualKm;
+  q.distanceBasis??=(r.roundTrip||String(r.name||'').includes('↔'))?'Round trip':'One way';
+  q.empty=Boolean(q.empty);
+}
+function quoteCustomerBody(q){
+  const c=q.companySnapshot||db.company;
+  const subtotal=num(q.quotedIncome),vat=q.vatAmount==null?null:num(q.vatAmount);
+  return '<h2>'+esc(c.name)+'</h2><p>'+esc(c.address)+'<br>'+esc(c.email)+' · '+esc(c.phone)+'<br>Registration: '+esc(c.registration)+' · VAT: '+esc(c.vat)+'</p><h1>QUOTATION '+esc(q.number)+'</h1><p>'+esc(q.date)+' · '+esc(q.status||'Draft')+'</p><table><thead><tr><th>Client</th><th>Route / cargo</th><th>Rate excl. VAT</th></tr></thead><tbody>'+
+    (q.legs||[]).filter(l=>!l.empty).map(l=>'<tr><td>'+esc(l.clientName||client(l.clientId))+'</td><td>'+esc(l.routeName||route(l.routeId))+'<br>'+esc(l.load||'')+'</td><td>'+money(l.quotedAmount??quoteLegIncome(l))+'</td></tr>').join('')+
+    '</tbody></table><p>Subtotal excl. VAT: <b>'+money(subtotal)+'</b></p>'+
+    (vat===null?'<p>VAT was not recorded on this older quotation.</p>':'<p>VAT ('+num(q.vatRate)+'%): '+money(vat)+'</p><h2>Total incl. VAT: '+money(subtotal+vat)+'</h2>')+
+    '<p>'+esc(q.terms||'')+'</p>';
+}
+function quoteCostBody(q){
+  const x=q.costing;
+  return '<h1>'+esc(q.number)+' — INTERNAL COSTING</h1><p>Actual km: '+x.distance+' · Namibian km: '+x.namibiaKm+' · Diesel: '+x.litres.toFixed(2)+' L</p><table><thead><tr><th>Cost item</th><th>Calculation</th><th>N$</th></tr></thead><tbody>'+
+    x.rows.map(r=>'<tr><td>'+esc(r.label)+'</td><td>'+esc(r.calculation)+'</td><td>'+money(r.amount)+'</td></tr>').join('')+
+    '</tbody></table><p>Total cost: '+money(x.totalCost)+'</p><p>Recommendation excl. VAT: '+money(x.recommended)+'</p><p>Entered quote excl. VAT: '+money(x.quotedIncome)+'</p><h2>Expected profit: '+money(x.profit)+' ('+x.actualMargin.toFixed(2)+'%)</h2>';
+}
+async function quoteExportExcel(q){
+  if(!q.costing)return notify('Detailed costing was not stored on this older quotation');
+  const x=q.costing,columns=(defs)=>defs.map(([key,label,type])=>({key,label,type}));
+  const sections=[
+    {title:'Route Rate Review',columns:columns([['route','Route'],['basis','Route type'],['tenderKm','Tender km','number'],['actualKm','Actual truck km','number'],['namibiaKm','Namibian km','number'],['empty','Empty leg'],['amount','Rate excl VAT','currency']]),rows:q.legs.map(l=>({route:l.routeName||route(l.routeId),basis:l.distanceBasis,tenderKm:l.tenderKm,actualKm:l.actualKm,namibiaKm:l.namibiaKm,empty:l.empty?'Yes':'No',amount:l.quotedAmount}))},
+    {title:'Cost Assumptions',columns:columns([['item','Input'],['value','Value']]),rows:Object.entries(q.costInputs).map(([item,value])=>({item,value}))},
+    {title:'Internal Costing',columns:columns([['label','Cost item'],['calculation','Calculation'],['amount','NAD','currency']]),rows:x.rows.concat([{label:'TOTAL COST',amount:x.totalCost},{label:'RECOMMENDED EXCL VAT',amount:x.recommended},{label:'QUOTED EXCL VAT',amount:x.quotedIncome},{label:'PROFIT',amount:x.profit},{label:'VAT',amount:x.vat},{label:'TOTAL INCL VAT',amount:x.total}])}
+  ];
+  try{
+    const res=await fetch('/api/export/page',{method:'POST',headers:{Authorization:'Bearer '+authToken,'Content-Type':'application/json'},body:JSON.stringify({title:q.number+' transport costing',filename:q.number+'-costing',sections})});
+    if(!res.ok)throw Error((await res.json().catch(()=>({}))).error||'Excel export failed');
+    const url=URL.createObjectURL(await res.blob()),a=document.createElement('a');a.href=url;a.download=q.number+'-costing.xlsx';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
+  }catch(e){notify(e.message)}
+}
 function ensureJourneyQuoteLegs(){
   if(journeyQuoteLegs.length)return;
   const r=db.routes[0]||{};
   journeyQuoteLegs=[{id:uid('ql'),label:'Outbound / Load 1',routeId:r.id||'',clientId:'',load:'',tons:0,pallets:0,pricingMethod:'Manual negotiated',unitRate:0,manualAmount:0}]
 }
 function quoteLegIncome(q){
+  if(q.empty)return 0;
   const r=get('routes',q.routeId),method=q.pricingMethod||'Manual negotiated',rate=num(q.unitRate),manual=num(q.manualAmount);
-  if(method==='Per km')return rate*num(r.distance);
+  if(method==='Per km')return rate*num(q.tenderKm??r.distance);
   if(method==='Per ton')return rate*num(q.tons);
   if(method==='Per pallet')return rate*num(q.pallets);
   if(method==='Flat trip')return rate||manual;
   return manual
 }
 function quoteLegRow(q,i){
-  const r=get('routes',q.routeId);
+  const r=get('routes',q.routeId);quoteInitLeg(q);
   return `<article class="quote-leg" data-qleg="${q.id}">
     <div class="quote-leg-head"><b>LEG ${i+1}</b><input class="qleg-label" value="${esc(q.label||('Leg '+(i+1)))}">${journeyQuoteLegs.length>1?`<button type="button" class="danger small qleg-remove" data-id="${q.id}">Remove</button>`:''}</div>
     <div class="form-grid">
       <div class="field full"><label>Route</label><select class="qleg-route">${db.routes.map(x=>`<option value="${x.id}" ${x.id===q.routeId?'selected':''}>${esc(x.name)} · ${num(x.distance).toLocaleString()} km</option>`).join('')}</select></div>
       <div class="field full"><label>Client</label><select class="qleg-client"><option value="">Prospective / select later</option>${db.clients.map(x=>`<option value="${x.id}" ${x.id===q.clientId?'selected':''}>${esc(x.name)}</option>`).join('')}</select></div>
+      <div class="field full"><label>Distance basis (kilometres below are totals, never doubled)</label><select class="qleg-basis">${['One way','Round trip','Custom journey'].map(x=>'<option '+(q.distanceBasis===x?'selected':'')+'>'+x+'</option>').join('')}</select></div>
+      <div class="field"><label>Tender / billable km</label><input class="qleg-tender" type="number" min="0" step="any" value="${q.tenderKm}"></div>
+      <div class="field"><label>Actual truck km, including return</label><input class="qleg-actual" type="number" min="0" step="any" value="${q.actualKm}"></div>
+      <div class="field"><label>Namibian km within actual km</label><input class="qleg-na" type="number" min="0" step="any" value="${q.namibiaKm??''}" placeholder="Required for cross-border"></div>
+      <div class="field"><label><input class="qleg-empty" type="checkbox" ${q.empty?'checked':''}> Empty / repositioning leg (no income)</label></div>
       <div class="field full"><label>Cargo</label><input class="qleg-load" value="${esc(q.load||'')}" placeholder="Charcoal, furniture, beer, salt…"></div>
       <div class="field"><label>Tons</label><input class="qleg-tons" type="number" step="0.01" value="${num(q.tons)}"></div>
       <div class="field"><label>Pallets</label><input class="qleg-pallets" type="number" step="1" value="${num(q.pallets)}"></div>
@@ -2350,25 +2413,30 @@ function quoteLegRow(q,i){
 function readQuoteLegRows(){
   document.querySelectorAll('.quote-leg').forEach(el=>{
     const q=journeyQuoteLegs.find(x=>x.id===el.dataset.qleg);if(!q)return;
+    q.distanceBasis=el.querySelector('.qleg-basis').value;q.tenderKm=num(el.querySelector('.qleg-tender').value);q.actualKm=num(el.querySelector('.qleg-actual').value);q.namibiaKm=el.querySelector('.qleg-na').value===''?null:num(el.querySelector('.qleg-na').value);q.empty=el.querySelector('.qleg-empty').checked;
     q.label=el.querySelector('.qleg-label').value.trim();q.routeId=el.querySelector('.qleg-route').value;q.clientId=el.querySelector('.qleg-client').value;q.load=el.querySelector('.qleg-load').value.trim();
     q.tons=num(el.querySelector('.qleg-tons').value);q.pallets=num(el.querySelector('.qleg-pallets').value);q.pricingMethod=el.querySelector('.qleg-method').value;q.unitRate=num(el.querySelector('.qleg-rate').value);q.manualAmount=num(el.querySelector('.qleg-manual').value)
   })
 }
 function quoteJourneyFinancials(){
   readQuoteLegRows();
-  const distance=sum(journeyQuoteLegs,q=>get('routes',q.routeId).distance),namibiaKm=sum(journeyQuoteLegs,q=>{const r=get('routes',q.routeId);return r.crossBorder?num(r.namibiaKm):num(r.distance)}),quotedIncome=sum(journeyQuoteLegs,quoteLegIncome);
-  const kml=Math.max(.1,num($('jqKml')?.value)||2),dieselPrice=num($('jqDiesel')?.value)||num(db.settings.dieselPrice),diesel=distance/kml*dieselPrice,mdc=namibiaKm/100*(num($('jqMdc')?.value)||num(db.settings.mdcRatePer100km)||73.30),standing=num($('jqWaiting')?.value)*num(db.settings.standingFee);
-  const other=num($('jqDriver')?.value)+num($('jqTolls')?.value)+num($('jqWear')?.value)+num($('jqOther')?.value)+standing,totalCost=diesel+mdc+other,margin=Math.min(90,num($('jqMargin')?.value))/100,recommended=totalCost/(1-margin),profit=quotedIncome-totalCost;
-  return{distance,namibiaKm,quotedIncome,diesel,mdc,standing,totalCost,recommended,profit,margin}
+  journeyQuoteLegs.forEach(q=>{if(q.namibiaKm===null)throw Error('Enter Namibian kilometres for each cross-border leg');});
+  return AngermundQuoteCosting.calculate(journeyQuoteLegs.map(q=>({...q,amount:quoteLegIncome(q)})),quoteReadInputs());
 }
 function updateJourneyQuoteResult(){
-  readQuoteLegRows();
+  readQuoteLegRows();quoteReadInputs();
   document.querySelectorAll('.quote-leg').forEach(el=>{
-    const q=journeyQuoteLegs.find(x=>x.id===el.dataset.qleg),result=el.querySelector('.quote-leg-result');if(!q||!result)return;
-    const r=get('routes',q.routeId);result.innerHTML='<span>'+esc(route(q.routeId))+' · '+num(r.distance).toLocaleString()+' km</span><b>'+money(quoteLegIncome(q))+'</b>'
+    const q=journeyQuoteLegs.find(x=>x.id===el.dataset.qleg),result=el.querySelector('.quote-leg-result');
+    if(q&&result)result.innerHTML='<span>'+esc(route(q.routeId))+' · '+q.actualKm+' actual km</span><b>'+money(quoteLegIncome(q))+'</b>';
   });
-  const x=quoteJourneyFinancials();
-  if($('journeyQuoteResult'))$('journeyQuoteResult').innerHTML=`<div class="metric-line"><span>Total journey distance</span><b>${x.distance.toLocaleString()} km</b></div><div class="metric-line"><span>Namibian road km</span><b>${x.namibiaKm.toLocaleString()} km</b></div><div class="metric-line"><span>Estimated diesel</span><b>${money(x.diesel)}</b></div><div class="metric-line"><span>MDC</span><b>${money(x.mdc)}</b></div><div class="metric-line"><span>Standing</span><b>${money(x.standing)}</b></div><div class="metric-line"><span>Journey operating cost</span><b>${money(x.totalCost)}</b></div><div class="metric-line"><span>Recommended minimum income</span><b>${money(x.recommended)}</b></div><div class="metric-line"><span>Quoted leg income</span><b>${money(x.quotedIncome)}</b></div><div class="metric-line"><span>Expected journey contribution</span><b class="${x.profit>=0?'positive':'negative'}">${money(x.profit)}</b></div>`
+  try{
+    const x=quoteJourneyFinancials(),line=(label,value)=>'<div class="metric-line"><span>'+label+'</span><b>'+value+'</b></div>';
+    $('journeyQuoteResult').innerHTML=line('Actual journey / Namibian km',x.distance+' / '+x.namibiaKm)+line('Diesel required',x.litres.toFixed(1)+' L')+
+    x.rows.map(r=>line(esc(r.label),money(r.amount))).join('')+line('Total operating cost',money(x.totalCost))+line('Break-even rate',money(x.totalCost))+
+    line('Recommended quote excl. VAT',money(x.recommended))+line('Entered quote excl. VAT',money(x.quotedIncome))+line('VAT ('+x.vatRate+'%)',money(x.vat))+
+    line('Total incl. VAT',money(x.total))+line('Expected profit / margin',money(x.profit)+' / '+x.actualMargin.toFixed(2)+'%')+
+    (x.quotedIncome<x.recommended?'<p role="status">Entered income is below the target recommendation.</p>':'');
+  }catch(e){$('journeyQuoteResult').innerHTML='<p role="alert">'+esc(e.message)+'</p>'}
 }
 function renderJourneyQuote(){
   if(!$('journeyQuoteLegs'))return;
@@ -2377,45 +2445,71 @@ function renderJourneyQuote(){
 }
 function wireQuoteLegRows(){
   document.querySelectorAll('.quote-leg input,.quote-leg select').forEach(x=>x.oninput=updateJourneyQuoteResult);
-  document.querySelectorAll('.qleg-route').forEach(x=>x.onchange=updateJourneyQuoteResult);
+  document.querySelectorAll('.qleg-route').forEach(el=>el.onchange=()=>{
+    readQuoteLegRows();const q=journeyQuoteLegs.find(x=>x.id===el.closest('.quote-leg').dataset.qleg);
+    delete q.tenderKm;delete q.actualKm;delete q.namibiaKm;delete q.distanceBasis;quoteInitLeg(q);renderJourneyQuote();
+  });
   document.querySelectorAll('.qleg-remove').forEach(b=>b.onclick=()=>{readQuoteLegRows();journeyQuoteLegs=journeyQuoteLegs.filter(x=>x.id!==b.dataset.id);renderJourneyQuote()})
 }
 function rates(){
   ensureJourneyQuoteLegs();
-  return `<section class="panel"><div class="toolbar"><div><h2>Multi-leg journey quotation</h2><p class="muted-copy">Price each client/load separately, then test the full truck journey including backloads.</p></div><div><button class="ghost" id="addQuoteLeg">+ Add leg</button><button class="primary" id="addQuoteReturn">↩ Add return / backload</button></div></div>
-    <div class="journey-quote-layout"><div><div id="journeyQuoteLegs">${journeyQuoteLegs.map(quoteLegRow).join('')}</div></div>
-    <div class="panel quote-cost-panel"><h3>Whole journey costs</h3><div class="form-grid">
-      <div class="field"><label>Expected km/L</label><input id="jqKml" type="number" step="0.1" value="2"></div>
-      <div class="field"><label>Diesel price/L</label><input id="jqDiesel" type="number" step="0.01" value="${num(db.settings.dieselPrice)}"></div>
-      <div class="field"><label>MDC / 100 km</label><input id="jqMdc" type="number" step="0.01" value="${num(db.settings.mdcRatePer100km)||73.30}"></div>
-      <div class="field"><label>Driver / allowances</label><input id="jqDriver" type="number" value="600"></div>
-      <div class="field"><label>Tolls / borders / permits</label><input id="jqTolls" type="number" value="0"></div>
-      <div class="field"><label>Tyres & maintenance provision</label><input id="jqWear" type="number" value="3500"></div>
-      <div class="field"><label>Other / overhead</label><input id="jqOther" type="number" value="1500"></div>
-      <div class="field"><label>Waiting days</label><input id="jqWaiting" type="number" value="0"></div>
-      <div class="field full"><label>Target profit margin (%)</label><input id="jqMargin" type="number" value="${num(db.settings.defaultMargin)}"></div>
-    </div><div id="journeyQuoteResult"></div><button class="primary" id="saveJourneyQuote">Save journey quotation</button></div></div></section>
-    ${savedQuotationsPanel()}<section class="panel" style="margin-top:18px"><h2>Standing / detention</h2><p>${db.settings.freeStandingHours} free offloading hours, then <b>${money(db.settings.standingFee)}</b> per commenced 24 hours excluding VAT. Weekend/public holiday guide: <b>${money(db.settings.weekendStandingFee)}</b>.</p></section>`;
+  const d=quoteInputs(),field=(key,label)=>'<div class="field"><label>'+label+'</label><input data-qcost="'+key+'" type="number" min="0" step="any" value="'+esc(d[key])+'"></div>';
+  return '<section class="panel"><div class="toolbar"><div><h2>Transport costing & quotations</h2><p>Enter all truck kilometres once. A round-trip route already includes its return. Add a separate empty return only when it is missing.</p></div><div><button class="ghost" id="addQuoteLeg">+ Add load</button> <button class="ghost" id="addQuoteReturn">+ Return / backload</button></div></div>'+
+    '<div class="journey-quote-layout"><div id="journeyQuoteLegs">'+journeyQuoteLegs.map(quoteLegRow).join('')+'</div><div class="panel quote-cost-panel"><h3>Cost assumptions</h3><p>Starting provisions from your PDF; edit for the truck and route. Fuel is budgeted by country kilometres. Select the applicable VAT rate.</p><div class="form-grid">'+
+    [['kml','Fuel economy km/L'],['dieselNA','Namibia diesel / L'],['dieselForeign','Outside Namibia diesel / L (NAD equivalent)'],['driverRate','Driver payment / km'],['mdcRate','MDC / 100 Namibian km'],['maintenanceRate','Maintenance / km'],['tyreRate','Tyres / km'],['insuranceRate','Insurance / km'],['ownershipRate','Ownership & overhead / km'],['days','Trip days'],['foodRate','Food allowance / day'],['tolls','Tolls, borders & permits total'],['waitingDays','Chargeable standing days'],['standingRate','Standing cost / day'],['other','Other costs total'],['margin','Target margin % (10 tender / 18 PDF)'],['minimum','Minimum quotation excl. VAT'],['rounding','Round up to nearest N$ (0 = exact)'],['vatRate','VAT %']].map(([k,l])=>field(k,l)).join('')+
+    '<div class="field full"><label>Quotation terms</label><textarea id="quoteTerms">'+esc(d.terms)+'</textarea></div></div><p>Margin uses cost ÷ (1 − margin). Return income must be confirmed before relying on it.</p><div id="journeyQuoteResult"></div><div class="form-actions"><button class="ghost" id="applyQuoteRecommendation">Use recommended price</button><button class="ghost" id="saveQuoteDefaults">Save rate defaults</button><button class="primary" id="saveJourneyQuote">Save quotation</button></div></div></div></section>'+savedQuotationsPanel();
 }
 function savedQuotationsPanel(){
   const rows=(db.quotes||[]).slice().sort((a,b)=>String(b.date||'').localeCompare(String(a.date||'')));
-  return '<section class="panel" style="margin-top:18px"><h2>Saved quotations</h2><div class="table-wrap"><table><thead><tr><th>Quotation</th><th>Date</th><th>Loads</th><th>Quoted amount</th><th>Status</th><th></th></tr></thead><tbody>'+(rows.length?rows.map(q=>'<tr><td>'+esc(q.number||q.id)+'</td><td>'+esc(q.date||'')+'</td><td>'+esc((q.legs||[]).map(l=>client(l.clientId)+' · '+route(l.routeId)).join(' / '))+'</td><td>'+money(q.quotedIncome)+'</td><td>'+badge(q.status||'Draft')+'</td><td><button type="button" class="link-button open-saved-quote" data-id="'+esc(q.id)+'">Open / print</button> '+managedButtons('quotes',q.id)+'</td></tr>').join(''):'<tr><td colspan="6">No saved quotations yet.</td></tr>')+'</tbody></table></div></section>';
+  return '<section class="panel" style="margin-top:18px"><div class="toolbar"><h2>Saved quotations</h2><button class="ghost" id="quoteRateSchedule">Export rate schedule Excel</button></div><div class="table-wrap"><table><thead><tr><th>Quotation</th><th>Date</th><th>Loads</th><th>Quoted amount</th><th>Status</th><th></th></tr></thead><tbody>'+(rows.length?rows.map(q=>'<tr><td>'+esc(q.number||q.id)+'</td><td>'+esc(q.date||'')+'</td><td>'+esc((q.legs||[]).map(l=>client(l.clientId)+' · '+route(l.routeId)).join(' / '))+'</td><td>'+money(q.quotedIncome)+'</td><td>'+badge(q.status||'Draft')+'</td><td><button type="button" class="link-button open-saved-quote" data-id="'+esc(q.id)+'">Open / print</button> '+managedButtons('quotes',q.id)+'</td></tr>').join(''):'<tr><td colspan="6">No saved quotations yet.</td></tr>')+'</tbody></table></div></section>';
 }
 function openSavedQuotation(id){
   const q=(db.quotes||[]).find(x=>x.id===id);if(!q)return notify('Quotation not found');
   $('modalTitle').textContent='Quotation '+(q.number||'');
-  const body='<h2>Angermund Transport CC</h2><h3>'+esc(q.number||'Quotation')+'</h3><p>'+esc(q.date||'')+' · '+esc(q.status||'Draft')+'</p><div class="table-wrap"><table><thead><tr><th>Client</th><th>Route</th><th>Cargo</th><th>Amount</th></tr></thead><tbody>'+(q.legs||[]).map(l=>'<tr><td>'+esc(client(l.clientId))+'</td><td>'+esc(route(l.routeId))+'</td><td>'+esc(l.load||'')+'</td><td>'+money(quoteLegIncome(l))+'</td></tr>').join('')+'</tbody></table></div><h3>Total quoted: '+money(q.quotedIncome)+'</h3>';
-  $('entryForm').innerHTML=body+managedButtons('quotes',id)+'<div class="form-actions"><button type="button" class="ghost" id="cancelForm">Close</button><button type="button" class="primary" id="printSavedQuote">Print / PDF</button></div>';
-  $('entryForm').onsubmit=e=>e.preventDefault();$('modal').classList.remove('hidden');$('cancelForm').onclick=()=>$('modal').classList.add('hidden');$('printSavedQuote').onclick=()=>openPrintWindow(q.number||'Quotation',body);
+  const body=quoteCustomerBody(q);
+  $('entryForm').innerHTML=body+'<div class="form-actions"><button type="button" class="ghost" id="cancelForm">Close</button><button type="button" class="ghost" id="quoteEdit">Revise</button><button type="button" class="ghost" id="quoteCostPrint">Internal costing PDF</button><button type="button" class="ghost" id="quoteExcel">Excel costing</button><button type="button" class="primary" id="printSavedQuote">Customer PDF</button></div>';
+  $('entryForm').onsubmit=e=>e.preventDefault();$('modal').classList.remove('hidden');
+  $('cancelForm').onclick=()=>$('modal').classList.add('hidden');
+  $('printSavedQuote').onclick=()=>openPrintWindow(q.number||'Quotation',body);
+  $('quoteCostPrint').onclick=()=>q.costing?openPrintWindow(q.number+' internal costing',quoteCostBody(q)):notify('Detailed costing was not stored on this older quotation');
+  $('quoteExcel').onclick=()=>quoteExportExcel(q);
+  $('quoteEdit').onclick=()=>{
+    journeyQuoteLegs=structuredClone(q.legs||[]);journeyQuoteLegs.forEach(quoteInitLeg);
+    quoteCostDraft=q.costInputs?structuredClone(q.costInputs):null;
+    quoteRevisionOf=q.id;$('modal').classList.add('hidden');render();
+  };
 }
 function wireRates(){
+  if($('quoteRateSchedule'))$('quoteRateSchedule').onclick=quoteExportSchedule;
   document.querySelectorAll('.open-saved-quote').forEach(b=>b.onclick=()=>openSavedQuotation(b.dataset.id));
   wireQuoteLegRows();
-  ['jqKml','jqDiesel','jqMdc','jqDriver','jqTolls','jqWear','jqOther','jqWaiting','jqMargin'].forEach(id=>{if($(id))$(id).oninput=renderJourneyQuote});
-  if($('addQuoteLeg'))$('addQuoteLeg').onclick=()=>{readQuoteLegRows();const r=db.routes[0]||{};journeyQuoteLegs.push({id:uid('ql'),label:'Additional load',routeId:r.id||'',clientId:'',load:'',tons:0,pallets:0,pricingMethod:'Manual negotiated',unitRate:0,manualAmount:0});renderJourneyQuote()};
-  if($('addQuoteReturn'))$('addQuoteReturn').onclick=()=>{readQuoteLegRows();const last=journeyQuoteLegs[journeyQuoteLegs.length-1],r=get('routes',reverseRouteId(last?.routeId))||db.routes[0]||{};journeyQuoteLegs.push({id:uid('ql'),label:'Return / Backload',routeId:r.id||'',clientId:'',load:'',tons:0,pallets:0,pricingMethod:'Manual negotiated',unitRate:0,manualAmount:0});renderJourneyQuote()};
-  if($('saveJourneyQuote'))$('saveJourneyQuote').onclick=()=>{readQuoteLegRows();const x=quoteJourneyFinancials();db.quotes??=[];const q={id:uid('quote'),number:'Q-'+(1000+db.quotes.length+1),date:today(),legs:structuredClone(journeyQuoteLegs),distance:x.distance,namibiaKm:x.namibiaKm,quotedIncome:x.quotedIncome,estimatedCost:x.totalCost,recommendedIncome:x.recommended,expectedProfit:x.profit,status:'Draft'};db.quotes.unshift(q);commit('Journey quotation '+q.number+' saved','quote',q.id);notify(q.number+' saved')};
-  renderJourneyQuote()
+  document.querySelectorAll('[data-qcost],#quoteTerms').forEach(el=>el.oninput=updateJourneyQuoteResult);
+  $('addQuoteLeg').onclick=()=>{readQuoteLegRows();journeyQuoteLegs.push({id:uid('ql'),label:'Additional load',routeId:db.routes[0]?.id||'',pricingMethod:'Manual negotiated'});renderJourneyQuote()};
+  $('addQuoteReturn').onclick=()=>{
+    readQuoteLegRows();const last=journeyQuoteLegs.at(-1);quoteInitLeg(last);
+    if(last.distanceBasis==='Round trip')return notify('This leg already includes its return. Adjust actual km before adding another return.');
+    const reverse=reverseRouteId(last.routeId);
+    journeyQuoteLegs.push({id:uid('ql'),label:'Return / backload (verify route)',routeId:reverse,actualKm:last.actualKm,tenderKm:last.tenderKm,namibiaKm:last.namibiaKm,distanceBasis:'One way',empty:true,pricingMethod:'Manual negotiated'});
+    renderJourneyQuote();
+  };
+  $('applyQuoteRecommendation').onclick=()=>{
+    try{const x=quoteJourneyFinancials(),paying=journeyQuoteLegs.filter(q=>!q.empty);if(!paying.length)return notify('Add a loaded leg first');
+      const weight=sum(paying,q=>q.tenderKm)||paying.length;let assigned=0;
+      paying.forEach((q,i)=>{const amount=i===paying.length-1?Math.round((x.recommended-assigned)*100)/100:Math.round(x.recommended*(sum(paying,l=>l.tenderKm)?q.tenderKm:1)/weight*100)/100;q.pricingMethod='Manual negotiated';q.manualAmount=amount;q.unitRate=0;assigned+=amount;});
+      renderJourneyQuote();
+    }catch(e){notify(e.message)}
+  };
+  $('saveQuoteDefaults').onclick=()=>{try{quoteJourneyFinancials();db.settings.quoteCostDefaults=structuredClone(quoteReadInputs());commit('Quotation costing defaults saved')}catch(e){notify(e.message)}};
+  $('saveJourneyQuote').onclick=()=>{
+    try{
+      const x=quoteJourneyFinancials();if(x.quotedIncome<=0)return notify('Enter a selling price or use the recommendation');
+      const inputs=structuredClone(quoteReadInputs()),snapshot=journeyQuoteLegs.map(l=>({...l,routeName:route(l.routeId),clientName:client(l.clientId),quotedAmount:quoteLegIncome(l)}));
+      db.quotes??=[];
+      const q={id:uid('quote'),number:'Q-'+(Math.max(1000,...db.quotes.map(q=>Number(String(q.number||'').replace(/^Q-/,''))||0))+1),date:today(),legs:snapshot,distance:x.distance,namibiaKm:x.namibiaKm,quotedIncome:x.quotedIncome,estimatedCost:x.totalCost,recommendedIncome:x.recommended,expectedProfit:x.profit,costInputs:inputs,costing:structuredClone(x),companySnapshot:structuredClone(db.company),terms:inputs.terms,vatRate:x.vatRate,vatAmount:x.vat,totalInclVat:x.total,revisionOf:quoteRevisionOf||null,status:'Draft'};
+      db.quotes.unshift(q);quoteRevisionOf=null;commit('Quotation '+q.number+' saved','quote',q.id);
+    }catch(e){notify(e.message)}
+  };
+  renderJourneyQuote();
 }
 
 function pnlPeriodRows(){
