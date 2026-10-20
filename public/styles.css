@@ -1319,3 +1319,12 @@ html.modal-open{overflow:hidden!important}@media(max-width:760px){html:has(#side
   .split-3{grid-template-columns:minmax(0,1fr)}
   .toolbar input,.toolbar select{min-width:0;max-width:100%}
 }
+
+/* Section controls stay above a bounded record viewport on every data page. */
+@media screen{
+ .table-wrap.data-scroll-region,.credential-table.data-scroll-region,.payroll-secondary .table-wrap.data-scroll-region{max-height:var(--table-region-height,55dvh)!important;overflow:auto!important;overscroll-behavior:contain;isolation:isolate;scroll-padding-top:46px}
+ .data-scroll-region table{border-collapse:separate;border-spacing:0}
+ .data-scroll-region thead{position:sticky;top:0;z-index:4;background:var(--panel2,#11243a)}
+ .data-scroll-region thead th{position:static!important;background:var(--panel2,#11243a)!important;box-shadow:0 1px 0 var(--line,#22364e)}
+ .data-scroll-region:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
+}
