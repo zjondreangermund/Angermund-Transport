@@ -1293,3 +1293,29 @@ body>header{overflow:visible!important}
 body.modal-open{overflow:hidden!important}
 
 html.modal-open{overflow:hidden!important}@media(max-width:760px){html:has(#sidebar.open),body:has(#sidebar.open){overflow:hidden!important}}
+
+/* Cards must fit their panel; only actual data tables scroll sideways. */
+@media(max-width:820px){
+  #app>*,.panel,.kpi,.entity-card,.trip-summary-list,.cards-list,
+  .grid-2>*,.split-3>*,.settings-grid>*,.quick-grid>*{min-width:0;max-width:100%}
+  .cards-list{grid-template-columns:repeat(auto-fill,minmax(min(245px,100%),1fr))}
+  .settings-grid{grid-template-columns:repeat(auto-fit,minmax(min(230px,100%),1fr))}
+  .quick-grid{grid-template-columns:repeat(auto-fit,minmax(min(180px,100%),1fr))}
+  .panel-head{flex-wrap:wrap;align-items:flex-start}
+  .panel-head>*,.panel-head h3{min-width:0;max-width:100%;overflow-wrap:anywhere}
+  .panel-head>div,.fleet-card-actions{flex-wrap:wrap}
+  .entity-card h3,.entity-card p,.notice{overflow-wrap:anywhere}
+  .trip-summary-row{width:100%;min-width:0;grid-template-columns:minmax(0,1fr);gap:10px;padding:12px}
+  .trip-summary-id,.trip-summary-route-cell,.trip-summary-vehicle,.trip-summary-status{grid-column:1;grid-row:auto;min-width:0;max-width:100%}
+  .trip-summary-row b,.trip-summary-row small{white-space:normal;overflow:visible;text-overflow:clip;overflow-wrap:anywhere}
+  .trip-summary-vehicle{display:grid;gap:4px}
+  .trip-summary-status{display:flex;flex-wrap:wrap;justify-content:flex-start;align-items:center;gap:8px;white-space:normal}
+  .trip-summary-status>*{min-width:0;max-width:100%;white-space:normal;overflow-wrap:anywhere}
+  .trip-summary-status button{min-height:40px;flex:0 1 auto}
+  .entity-card .panel-head>div{display:flex;gap:6px;flex-wrap:wrap}
+  .fleet-card-actions button{max-width:100%;white-space:normal}
+}
+@media(max-width:620px){
+  .split-3{grid-template-columns:minmax(0,1fr)}
+  .toolbar input,.toolbar select{min-width:0;max-width:100%}
+}
