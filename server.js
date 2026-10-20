@@ -1,3 +1,4 @@
+const {removeWorker}=require('./workforce-delete');
 const TripLifecycle=require('./public/trip-lifecycle');
 const {isCompanyDepot,canConfirmGps,releaseVehicle,protectServerArrival}=require('./depot-arrival');
 const {applyOperationalCutoff:applyOperationalCutoffDb}=require('./operational-cutoff-db');
@@ -1190,6 +1191,9 @@ app.delete('/api/users/:id',auth,roles('admin'),async(req,res)=>{
   const i=memory.users.findIndex(x=>x.id===id);if(i<0)return res.status(404).json({error:'User not found'});memory.users.splice(i,1);memory.subscriptions=memory.subscriptions.filter(x=>x.userId!==id);memory.mobileDevices=memory.mobileDevices.filter(x=>x.userId!==id);res.json({success:true,id})
 });
 
+app.delete('/api/admin/workers/:id',auth,roles('admin'),async(req,res)=>{
+ try{const changed=await mutateOpsState(async state=>{const users=pool?await q('SELECT staff_id AS "staffId",driver_id AS "driverId" FROM users WHERE staff_id=$1 OR driver_id=$1',[req.params.id]):memory.users;return removeWorker(state,req.params.id,{users,actor:req.user.name||req.user.email||req.user.role})});res.json({...changed.result,success:true,revision:changed.revision})}catch(e){res.status(e.status||500).json({error:e.message})}
+});
 function taskNotificationTarget(task){
   if(task.assignedUserId)return{userId:task.assignedUserId};
   if(task.assignedDriverId)return{driverId:task.assignedDriverId,role:'driver'};

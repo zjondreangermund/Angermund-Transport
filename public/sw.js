@@ -1,4 +1,4 @@
-const CACHE='angermund-ops-v106-depot-ledger';
+const CACHE='angermund-ops-v107-staff-delete';
 const ASSETS=['/ledger.css','/dispatch-ledger.js','/trip-lifecycle.js','/angermund-truck-cutout.webp','/','/index.html','/styles.css','/app.js','/payroll-eligibility.js','/scroll-regions.js','/pod-batch.js','/mobile-documents.js','/record-manager.js','/invoice-charges.js','/record-filters.js','/page-filters.js','/manifest.json','/angermund-logo.webp','/angermund-truck.webp','/angermund-app-logo-hq.webp'];
 self.addEventListener('install',e=>e.waitUntil((async()=>{const c=await caches.open(CACHE);await c.addAll(ASSETS);await self.skipWaiting()})()));
 self.addEventListener('activate',e=>e.waitUntil((async()=>{const keys=await caches.keys();await Promise.all(keys.filter(k=>k!==CACHE).map(k=>caches.delete(k)));await self.clients.claim()})()));
