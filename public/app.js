@@ -446,11 +446,11 @@ function tripOperationsCompleted(t){
   const legs=(t.legs||[]).filter(l=>!l.cancelled&&String(l.status||'').toLowerCase()!=='cancelled');
   const pod=legs.length>1?legs.every(attached):(attached(t)||legs.some(attached));
   const diesel=(db.diesel||[]).some(x=>x.tripId===t.id&&(x.receiptUploadId||(x.receiptUploadIds||[]).some(Boolean)));
-  return pod&&diesel
+  return pod&&(isShunterTrip(t)||diesel)
 }
 function tripCompletionMatches(t){return tripCompletionFilter==='all'||(tripCompletionFilter==='completed'?tripOperationsCompleted(t)||tripClosed(t):!tripOperationsCompleted(t)&&!tripClosed(t))}
 function tripCompletionControls(){
-  return '<section class="trip-period-panel"><label>Trip progress <select id="tripCompletionFilter">'+[['process','In process'],['completed','Completed'],['all','All trips']].map(([v,label])=>'<option value="'+v+'" '+(tripCompletionFilter===v?'selected':'')+'>'+label+'</option>').join('')+'</select></label><small>Completed: POD for every leg and a linked diesel slip uploaded. Closed trips are also included.</small></section>'
+  return '<section class="trip-period-panel"><label>Trip progress <select id="tripCompletionFilter">'+[['process','In process'],['completed','Completed'],['all','All trips']].map(([v,label])=>'<option value="'+v+'" '+(tripCompletionFilter===v?'selected':'')+'>'+label+'</option>').join('')+'</select></label><small>Completed: POD for every leg plus a diesel slip for line-haul trips. Local shunters need POD only; refuelling is recorded separately. Closed trips are also included.</small></section>'
 }
 function liveTripRows(){
   const current=currentTripMonthKey();return sortTripsByDate((db.trips||[]).filter(t=>!tripClosed(t)||tripMonthKeyFromDate(t.date)===current))
@@ -618,7 +618,7 @@ function dispatch(){
     const cols=[['Completed',0],['Planned',1],['Loading',2],['In transit',3],['Delivered',4],['Invoiced',5],['Closed',6]];
     summary='<div class="workflow">'+cols.map(([l,n])=>`<div class="stage"><span>Stage ${n}</span><strong>${l}</strong><p>${rows.filter(t=>n===0?tripOperationsCompleted(t):n===6?tripClosed(t)&&!tripOperationsCompleted(t):(!tripClosed(t)&&!tripOperationsCompleted(t)&&num(t.stage)===n)).length} journey(s)</p></div>`).join('')+'</div>'
   }
-  const capture=['admin','manager','dispatcher'].includes(role)?'<div class="dispatch-capture-bar"><span>Trip documents</span><button type="button" class="ghost batch-pod-upload">Batch PODs</button><button type="button" class="ghost" id="dispatchScanSlip">📷 Slip</button><button type="button" class="ghost" id="dispatchScanPod">📄 POD</button></div>':'';
+  const capture=['admin','manager','dispatcher'].includes(role)?'<div class="dispatch-capture-bar"><span>Trip documents</span><button type="button" class="ghost batch-pod-upload">Batch PODs</button><button type="button" class="ghost" id="dispatchScanSlip">📷 Batch slips</button><button type="button" class="ghost" id="dispatchScanPod">📄 POD</button></div>':'';
   return `${tripPeriodControls()}${capture}${summary}<div class="cards-list">${cards.length?cards.map(tripCard).join(''):'<div class="panel empty-history">No journeys for this period.</div>'}</div>`;
 }
 function tripCard(t){
@@ -947,7 +947,7 @@ async function prepareReceiptThresholdForOcr(file){
   }catch{return file}
 }
 function weakReceiptResult(x){
-  return !x||x.category==='Other'||num(x.categoryConfidence)<75||(!num(x.suggestedAmount)&&!num(x.litres));
+  return !x||x.category==='Other'||num(x.categoryConfidence)<75||!x.date||(!num(x.suggestedAmount)&&!num(x.litres))||(x.category==='Diesel'&&(!num(x.litres)||!num(x.pricePerLitre)||!num(x.odometer)));
 }
 function mergeClientReceiptResults(...items){
   const valid=items.filter(Boolean).sort((a,b)=>receiptClientScore(b)-receiptClientScore(a));
@@ -955,7 +955,7 @@ function mergeClientReceiptResults(...items){
   const out=JSON.parse(JSON.stringify(valid[0]));
   for(const c of valid.slice(1)){
     for(const key of ['supplier','documentNumber','date','registration','odometer','printedTotal','suggestedAmount','litres','pricePerLitre']){
-      if((out[key]===null||out[key]===undefined||out[key]===''||num(out[key])===0)&&(c[key]!==null&&c[key]!==undefined&&c[key]!==''))out[key]=c[key];
+      if((out[key]===null||out[key]===undefined||out[key]===''||(typeof out[key]==='number'&&out[key]===0))&&(c[key]!==null&&c[key]!==undefined&&c[key]!==''))out[key]=c[key];
     }
     if((!out.category||out.category==='Other')&&c.category&&c.category!=='Other'){
       out.category=c.category;out.categoryConfidence=c.categoryConfidence;out.categoryReason=c.categoryReason;out.categorySource=c.categorySource;
@@ -993,10 +993,11 @@ function mergeSupportingReceipt(primary,supporting){
 }
 
 async function scanDriverReceipt(file){
-  const enhanced=await prepareReceiptForOcr(file);
   if(providerConfig.receiptAI&&providerConfig.receiptAI.enabled){
-    return await scanReceiptFile(enhanced)
+    const image=await prepareArchiveImage(file,2400,.94);
+    return await scanReceiptFile(image)
   }
+  const enhanced=await prepareReceiptForOcr(file);
   const enhancedResult=await scanReceiptFile(enhanced);
   if(!weakReceiptResult(enhancedResult))return enhancedResult;
   const originalResult=enhanced===file?{}:await scanReceiptFile(file);
@@ -1035,7 +1036,8 @@ function adminScanDetectedCategory(x={}){
   return fuelStructure&&(!x.category||x.category==='Other')?'Diesel':(SMART_SLIP_CATEGORIES.includes(x.category)?x.category:'Other')
 }
 function adminScanDraft(x={}){
-  const matchedTruck=suggestedSlipTruck(x),matchedTrip=suggestedSlipTrip(x),category=adminScanDetectedCategory(x);
+  const matchedTruck=suggestedSlipTruck(x),suggestedTrip=suggestedSlipTrip(x),category=adminScanDetectedCategory(x);
+  const matchedTrip=category==='Diesel'&&suggestedTrip&&isShunterTrip(suggestedTrip)?null:suggestedTrip;
   return{
     category,
     detectedCategory:category,
@@ -1113,17 +1115,28 @@ async function openAdminMultiPageSlip(files){
   renderAdminSmartSlip(files[0],merged,{files,multiPage:true})
 }
 async function openAdminBatchSlips(files){
-  adminSlipBatch={items:[],createdAt:Date.now()};
+  adminSlipBatch={items:[],createdAt:Date.now(),returnPage:page};
+  $('modal').classList.remove('hidden');
   $('modalTitle').textContent='✨ Batch AI scan';
-  for(let i=0;i<files.length;i++){
-    $('entryForm').innerHTML='<div class="driver-scan-loading"><div class="driver-scan-camera">🧾</div><h2>Scanning slip '+(i+1)+' of '+files.length+'…</h2><p>Nothing will be posted until the batch review.</p><div class="batch-progress"><span style="width:'+Math.round((i/files.length)*100)+'%"></span></div></div>';
-    try{
-      const scan=await scanDriverReceipt(files[i]);
-      adminSlipBatch.items.push({file:files[i],files:[files[i]],scan,draft:adminScanDraft(scan),include:true,status:'ready'})
-    }catch(e){
-      adminSlipBatch.items.push({file:files[i],files:[files[i]],scan:{},draft:adminScanDraft({}),include:false,status:'error',error:e.message||'Scan failed'})
+  let next=0,completed=0;
+  const batch=adminSlipBatch;
+  const scanNext=async()=>{
+    while(next<files.length){
+      const i=next++;
+      try{
+        const scan=await scanDriverReceipt(files[i]);
+        batch.items[i]={file:files[i],files:[files[i]],scan,draft:adminScanDraft(scan),include:true,status:'ready'};
+      }catch(e){
+        batch.items[i]={file:files[i],files:[files[i]],scan:{},draft:adminScanDraft({}),include:false,status:'error',error:e.message||'Scan failed'};
+      }
+      completed++;
+      if(adminSlipBatch!==batch)return;
+      $('entryForm').innerHTML='<div class="driver-scan-loading"><h2>Scanned '+completed+' of '+files.length+' slips…</h2><p>Nothing is posted until you review and confirm.</p></div>';
     }
-  }
+  };
+  $('entryForm').innerHTML='<div class="driver-scan-loading"><h2>Scanning '+files.length+' slips…</h2><p>Nothing is posted until you review and confirm.</p></div>';
+  await Promise.all(Array.from({length:Math.min(2,files.length)},scanNext));
+  if(adminSlipBatch!==batch)return;
   renderAdminBatchReview()
 }
 function batchTripOptions(selected=''){
@@ -1180,21 +1193,26 @@ function editAdminBatchItem(i){
 async function retryAdminBatchItem(i){
   const item=adminSlipBatch?.items[i];if(!item)return;
   $('entryForm').innerHTML='<div class="driver-scan-loading"><div class="driver-scan-camera">🔎</div><h2>Retrying slip '+(i+1)+'…</h2></div>';
+  if(item.scan&&Object.keys(item.scan).length){item.status='ready';item.include=true;delete item.error;renderAdminBatchReview();return}
   try{const scan=await scanDriverReceipt(item.file);item.scan=scan;item.draft=adminScanDraft(scan);item.status='ready';item.include=true;delete item.error}catch(e){item.error=e.message||'Scan failed'}
   renderAdminBatchReview()
 }
 async function confirmAdminBatch(){
+  const returnPage=adminSlipBatch?.returnPage||page;
   const items=(adminSlipBatch?.items||[]).filter(x=>x.include&&x.status==='ready');
   if(!items.length)return notify('Select at least one scanned slip');
+  if(items.some(x=>!x.draft.date))return notify('Confirm the date on every checked slip using Edit details');
   if(!confirm('Post '+items.length+' checked slip'+(items.length===1?'':'s')+' now?'))return;
   let posted=0,failed=0;
   for(let i=0;i<items.length;i++){
     $('entryForm').innerHTML='<div class="driver-scan-loading"><div class="driver-scan-camera">✓</div><h2>Posting '+(i+1)+' of '+items.length+'…</h2><p>Saving the expense and archiving its PDF.</p><div class="batch-progress"><span style="width:'+Math.round((i/items.length)*100)+'%"></span></div></div>';
-    try{await postAdminSlipDraft(items[i]);posted++}catch(e){items[i].status='error';items[i].error=e.message||'Posting failed';failed++}
+    try{await postAdminSlipDraft(items[i]);items[i].status='posted';posted++}catch(e){items[i].status='error';items[i].error=e.message||'Posting failed';failed++}
   }
   await refreshCentralState(false);driverUploadsLoaded=false;
   const message='✓ '+posted+' slip'+(posted===1?'':'s')+' posted and archived as PDF'+(failed?' · '+failed+' failed':'');
-  adminSlipBatch=null;$('modal').classList.add('hidden');notify(message);go('driverUploads')
+  const remaining=adminSlipBatch.items.filter(x=>x.status!=='posted');
+  if(remaining.length){adminSlipBatch.items=remaining;renderAdminBatchReview();notify(message);return}
+  adminSlipBatch=null;$('modal').classList.add('hidden');notify(message);if(page===returnPage)render();else go(returnPage)
 }
 async function openAdminSmartSlip(file,opts={}){
   $('modalTitle').textContent='✨ AI slip scanner';
@@ -1212,8 +1230,10 @@ async function openAdminSmartSlip(file,opts={}){
   }
 }
 function renderAdminSmartSlip(file,x,opts={}){
+  const returnPage=opts.returnPage||page;
   const sourceFiles=Array.isArray(opts.files)&&opts.files.length?opts.files:[file];
-  const preferredTrip=opts.tripId?get('trips',opts.tripId):null,matchedTrip=preferredTrip?.id?preferredTrip:suggestedSlipTrip(x),matchedTruck=matchedTrip?.id?get('trucks',matchedTrip.truckId):suggestedSlipTruck(x);
+  const preferredTrip=opts.tripId?get('trips',opts.tripId):null,suggestedTrip=suggestedSlipTrip(x);
+  const matchedTrip=preferredTrip?.id?preferredTrip:(adminScanDetectedCategory(x)==='Diesel'&&suggestedTrip&&isShunterTrip(suggestedTrip)?null:suggestedTrip),matchedTruck=matchedTrip?.id?get('trucks',matchedTrip.truckId):suggestedSlipTruck(x);
   const fuelStructure=num(x.litres)>0||num(x.pricePerLitre)>0||(Array.isArray(x.fuelTransactions)&&x.fuelTransactions.length>0);
   const detected=opts.forceCategory||(fuelStructure&&(!x.category||x.category==='Other')?'Diesel':(SMART_SLIP_CATEGORIES.includes(x.category)?x.category:'Other'));
   const confidence=Math.max(0,Math.min(100,num(x.categoryConfidence)||num(x.extractionConfidence)));
@@ -1276,8 +1296,9 @@ function renderAdminSmartSlip(file,x,opts={}){
     try{
       const result=await api('/api/admin/slips/post',{method:'POST',body:fd});
       $('modal').classList.add('hidden');await refreshCentralState(false);driverUploadsLoaded=false;
-      if(result.destination==='diesel'){go('diesel');notify('✓ Slip posted to Diesel Control · original archived as PDF in Uploads'+(tripId?' · '+(get('trips',tripId).number||'trip'):' · company fleet'))}
-      else if(tripId){notify('✓ '+category+' posted to '+(get('trips',tripId).number||'trip')+' · PDF archived in Uploads');setTimeout(()=>openTrip(tripId),80)}
+      render();
+      if(result.destination==='diesel'){notify('✓ Slip posted to Diesel Control · original archived as PDF in Uploads'+(tripId?' · '+(get('trips',tripId).number||'trip'):' · company fleet'))}
+      else if(tripId){notify('✓ '+category+' posted to '+(get('trips',tripId).number||'trip')+' · PDF archived in Uploads');if(returnPage!=='dispatch')setTimeout(()=>openTrip(tripId),80)}
       else notify('✓ '+category+' posted as a company expense · PDF archived in Uploads')
     }catch(err){notify(err.message)}
   }
@@ -3657,7 +3678,7 @@ if($('siteEntry')){
   }
 }
 
-function wire(){if(typeof wireScrollRegions==='function')wireScrollRegions();document.querySelectorAll('.batch-pod-upload').forEach(b=>b.onclick=chooseBatchPods);wireRecordManager();wireOpsFilters();wireGlobalFind();if(page==='command')wireCommandPeriod();if(page==='dispatch'||page==='trips')wireTripPeriodControls();if(page==='dispatch'){if($('dispatchScanSlip'))$('dispatchScanSlip').onclick=()=>openSlipScanSourceChooser({multiple:false});if($('dispatchScanPod'))$('dispatchScanPod').onclick=chooseTripForPod;document.querySelectorAll('.dispatch-trip-slip').forEach(b=>b.onclick=e=>{e.stopPropagation();openAdminTripSlip(b.dataset.trip)});document.querySelectorAll('.dispatch-trip-pod').forEach(b=>b.onclick=e=>{e.stopPropagation();openTripPod(b.dataset.trip)})}if(page==='carrierOrders')wireCarrierOrders();if(page==='shunterRecon')wireShunterRecon();if(page==='loans')wireWorkerLoans();if(page==='imports')wireExcelImports();if(page==='insurance')wireInsuranceAssets();if(page==='monthlyPnl')wireMonthlyPnl();
+function wire(){if(typeof wireScrollRegions==='function')wireScrollRegions();document.querySelectorAll('.batch-pod-upload').forEach(b=>b.onclick=chooseBatchPods);wireRecordManager();wireOpsFilters();wireGlobalFind();if(page==='command')wireCommandPeriod();if(page==='dispatch'||page==='trips')wireTripPeriodControls();if(page==='dispatch'){if($('dispatchScanSlip'))$('dispatchScanSlip').onclick=()=>openSlipScanSourceChooser({multiple:true});if($('dispatchScanPod'))$('dispatchScanPod').onclick=chooseTripForPod;document.querySelectorAll('.dispatch-trip-slip').forEach(b=>b.onclick=e=>{e.stopPropagation();openAdminTripSlip(b.dataset.trip)});document.querySelectorAll('.dispatch-trip-pod').forEach(b=>b.onclick=e=>{e.stopPropagation();openTripPod(b.dataset.trip)})}if(page==='carrierOrders')wireCarrierOrders();if(page==='shunterRecon')wireShunterRecon();if(page==='loans')wireWorkerLoans();if(page==='imports')wireExcelImports();if(page==='insurance')wireInsuranceAssets();if(page==='monthlyPnl')wireMonthlyPnl();
 $('globalLogoutBtn').onclick=logout;if($('globalRecordSlipsBtn'))$('globalRecordSlipsBtn').onclick=()=>openSlipScanSourceChooser({multiple:true});if($('adminQuickScanSlip'))$('adminQuickScanSlip').onclick=()=>openSlipScanSourceChooser({multiple:true});if($('adminScanSlip'))$('adminScanSlip').onclick=()=>openSlipScanSourceChooser({multiple:true});if(page==='documents')wireDocuments();if(page==='roadCharges')wireRoadCharges();if(page==='payroll')wirePayroll();if($('refreshLiveData'))$('refreshLiveData').onclick=()=>refreshCentralState(true);document.querySelectorAll('.command-target').forEach(b=>b.onclick=()=>commandTarget(b.dataset.target,b.dataset.id||''));document.querySelectorAll('.command-trip-item').forEach(b=>b.onclick=()=>openTrip(b.dataset.commandTrip));if($('driverLogoutTop'))$('driverLogoutTop').onclick=logout;if($('driverLogoutBottom'))$('driverLogoutBottom').onclick=logout;document.querySelectorAll('.route-zones').forEach(b=>b.onclick=()=>openRouteZones(b.dataset.id));if($('driverPreviewSelect'))$('driverPreviewSelect').onchange=e=>{driverPreviewId=e.target.value;render()};if(page==='driverAccounts'&&['admin','manager'].includes(role))wireDriverAccounts();if((page==='tasks'||page==='command')&&['admin','manager'].includes(role)&&!usersLoaded)setTimeout(()=>loadDriverAccounts(),0);if(page==='tasks'){if($('addTask'))$('addTask').onclick=()=>openTaskForm();document.querySelectorAll('.edit-task').forEach(b=>b.onclick=()=>openTaskForm(b.dataset.id));document.querySelectorAll('.delete-task').forEach(b=>b.onclick=()=>deleteTask(b.dataset.id));document.querySelectorAll('.complete-task').forEach(b=>b.onclick=()=>completeTask(b.dataset.id));document.querySelectorAll('.task-related').forEach(b=>b.onclick=()=>{if(b.dataset.type==='trip')commandTarget('trip',b.dataset.id);else if(b.dataset.type==='invoice')commandTarget('invoice',b.dataset.id);else if(b.dataset.type==='permit')commandTarget('documents',b.dataset.id);else commandTarget(b.dataset.type,b.dataset.id)});document.querySelectorAll('.view-company-receipt').forEach(b=>b.onclick=()=>openCompanyReceiptFile(b.dataset.id))}if(page==='diesel'){if($('recordCompanyFuel'))$('recordCompanyFuel').onclick=openCompanyFuelForm;document.querySelectorAll('.review-diesel-record').forEach(b=>b.onclick=()=>openDieselReview(b.dataset.id));document.querySelectorAll('.view-company-receipt').forEach(b=>b.onclick=()=>openCompanyReceiptFile(b.dataset.id))}if(page==='fleet'){if($('addFleetVehicle'))$('addFleetVehicle').onclick=()=>openFleetVehicleForm();document.querySelectorAll('.fleet-details').forEach(b=>b.onclick=()=>openFleetDetails(b.dataset.truck));document.querySelectorAll('[data-fleet-open]').forEach(c=>c.onclick=e=>{if(e.target.closest('button'))return;openFleetDetails(c.dataset.fleetOpen)});document.querySelectorAll('.tracker-config').forEach(b=>b.onclick=()=>openTruckTracker(b.dataset.truck));document.querySelectorAll('.edit-fleet-vehicle').forEach(b=>b.onclick=()=>openFleetVehicleForm(b.dataset.truck));document.querySelectorAll('.delete-fleet-vehicle').forEach(b=>b.onclick=()=>deleteFleetVehicle(b.dataset.truck))}if(page==='invoices'){if($('generateNblInvoice'))$('generateNblInvoice').onclick=generateNblConsolidatedInvoice;if($('nblCycleMonth'))$('nblCycleMonth').onchange=e=>{const b=nblCycleBoundsClient(e.target.value);if($('nblPeriodStart'))$('nblPeriodStart').value=b.start;if($('nblPeriodEnd'))$('nblPeriodEnd').value=b.end}}if(page==='driverUploads')wireDriverUploads();document.querySelectorAll('.driver-next').forEach(b=>b.onclick=()=>{const t=get('trips',b.dataset.trip);if(t.id)driverMainStep(t)});document.querySelectorAll('[data-driver-quick]').forEach(b=>b.onclick=()=>{const t=get('trips',b.dataset.trip);if(!t.id)return;if(b.dataset.driverQuick==='scan')driverCapture('receipt',file=>openDriverSmartSlip(t,file));else if(b.dataset.driverQuick==='diesel')driverCapture('diesel',file=>openDriverDiesel(t,file));else if(b.dataset.driverQuick==='expense')driverCapture('expense',file=>openDriverExpense(t,file));else if(b.dataset.driverQuick==='problem')openDriverProblem(t)});if($('driverHelpBtn'))$('driverHelpBtn').onclick=openDriverHelp;if(role==='driver'&&page==='driverPortal'){startDriverGpsWatch();setTimeout(flushDriverJobs,800)}document.querySelectorAll('.nav-to').forEach(b=>b.onclick=()=>go(b.dataset.page));document.querySelectorAll('.action').forEach(b=>b.onclick=()=>{const a=b.dataset.action,id=b.dataset.trip,t=get('trips',id);if(a==='newTrip')openForm('trip');else if(a==='inspection')openForm('inspection',{tripId:id,truckId:t.truckId,driverId:t.driverId});else if(a==='diesel')openForm('diesel',{tripId:id,truckId:t.truckId,driverId:t.driverId});else if(a==='incident')openForm('incident',{tripId:id});else if(a==='pod'){t.pod=true;db.tasks.filter(x=>x.linkedId===id&&/POD/.test(x.title)).forEach(x=>x.status='Completed');commit(`POD linked to ${t.number}`,'trip',id)}else if(a==='checkIn')gpsCheckIn();else if(a==='scan')openSlipScanSourceChooser({multiple:true})});document.querySelectorAll('.add-record').forEach(b=>b.onclick=()=>openForm(b.dataset.type));document.querySelectorAll('.advance-trip').forEach(b=>b.onclick=()=>advanceTrip(b.dataset.id));document.querySelectorAll('.open-trip').forEach(b=>b.onclick=()=>openTrip(b.dataset.id));document.querySelectorAll('[data-trip-open]').forEach(c=>c.onclick=e=>{if(e.target.closest('button'))return;openTrip(c.dataset.tripOpen)});document.querySelectorAll('.approval-action').forEach(b=>b.onclick=()=>openApprovalDecision(b.dataset.id,b.dataset.status));document.querySelectorAll('.export').forEach(b=>b.onclick=()=>exportCsv(b.dataset.kind));const s=$('tripSearch');if(s)s.oninput=()=>{tripSearchTerm=s.value;const baseRows=selectedTripRows(),rows=baseRows.filter(t=>tripSearchMatches(t,tripSearchTerm));if($('tripResults'))$('tripResults').innerHTML=tripTable(rows);const cap=document.querySelector('.trip-result-caption');if(cap)cap.textContent=rows.length+' of '+baseRows.length+' journey(s) · '+tripPeriodLabel(baseRows);document.querySelectorAll('#tripResults .open-trip').forEach(b=>b.onclick=e=>{e.stopPropagation();openTrip(b.dataset.id)});document.querySelectorAll('#tripResults [data-trip-open]').forEach(c=>c.onclick=e=>{if(e.target.closest('button'))return;openTrip(c.dataset.tripOpen)})};if(page==='tracking'){setTimeout(drawMap);if($('startPhoneGpsTest'))$('startPhoneGpsTest').onclick=()=>startPhoneGpsTest($('phoneGpsTestLabel')?.value||'Phone GPS Test');if($('stopPhoneGpsTest'))$('stopPhoneGpsTest').onclick=stopPhoneGpsTest;if($('downloadGpsTestApp'))$('downloadGpsTestApp').onclick=downloadAndroidApp;if($('refreshTracking'))$('refreshTracking').onclick=loadTracking;if($('addGeofence'))$('addGeofence').onclick=()=>addGeofence();document.querySelectorAll('.edit-geofence').forEach(b=>b.onclick=()=>{const f=geofences.find(x=>x.id===b.dataset.id);if(f)addGeofence(f)});document.querySelectorAll('.delete-geofence').forEach(b=>b.onclick=()=>deleteGeofence(b.dataset.id,b.dataset.name||'geofence'))}if(page==='notifications'){loadPushDeviceStatus(false);if($('refreshNotifications'))$('refreshNotifications').onclick=async()=>{await Promise.all([loadNotifications(),loadPushDeviceStatus(false)]);render()};if($('enablePush'))$('enablePush').onclick=enablePush;if($('testPhonePush'))$('testPhonePush').onclick=testThisPhonePush;if($('testAlerts'))$('testAlerts').onclick=async()=>{try{await api('/api/notifications/test',{method:'POST'});await loadNotifications()}catch(e){notify(e.message)}};document.querySelectorAll('.read-notification').forEach(b=>b.onclick=async()=>{await api(`/api/notifications/${b.dataset.id}/read`,{method:'PATCH'});await loadNotifications()})}if(page==='rates')wireRates();if($('changeQuickPin'))$('changeQuickPin').onclick=()=>openQuickPinSetup(true);const ss=$('saveSettings');if(ss)ss.onclick=()=>{db.settings.dieselPrice=num($('setDiesel').value);db.settings.vat=num($('setVat').value);db.settings.targetKml=num($('setKml').value);db.settings.standingFee=num($('setStanding').value);db.settings.mdcRatePer100km=num($('setMdcRate').value)||73.30;commit('Operating defaults updated')};const sd=$('saveDriver');if(sd)sd.onclick=()=>{db.settings.currentDriver=$('setDriver').value;commit('Driver identity updated')};if($('downloadBackup'))$('downloadBackup').onclick=backup;if($('restoreBackup'))$('restoreBackup').onclick=()=>{$('fileInput').dataset.kind='restore';$('fileInput').click()};if($('resetData'))$('resetData').onclick=()=>{if(confirm('Reset all demonstration data?')){db=structuredClone(base);commit('Demonstration data reset')}}}
 function connectEvents(){const events=new EventSource(`/api/events?token=${encodeURIComponent(authToken)}`);events.addEventListener('gps',e=>{const p=JSON.parse(e.data),i=liveGps.findIndex(x=>x.vehicleId===p.vehicleId);if(i<0)liveGps.push(p);else liveGps[i]=p;if(page==='tracking')render()});events.addEventListener('notification',e=>{serverNotifications.unshift(JSON.parse(e.data));$('notificationCount').textContent=serverNotifications.filter(x=>!x.read).length;if(page==='notifications')render()});events.addEventListener('driver-upload',e=>{const u=JSON.parse(e.data);driverUploads.unshift(u);driverUploadsLoaded=true;if(page==='driverUploads')render()});events.addEventListener('state',async()=>{try{const state=await api('/api/state');if(state.payload&&Object.keys(state.payload).length){db=merge(state.payload);appLocalStorage.setItem(STORE,JSON.stringify(db));render()}}catch{}});events.onerror=()=>{} }
 async function boot(fromLogin=false){

@@ -210,13 +210,24 @@ function scoreReceiptText(raw){
 
 function receiptDateISO(value){
   const s=String(value||'').trim();if(!s)return'';
-  const iso=s.match(/\b(20\d{2})[-\/.](\d{1,2})[-\/.](\d{1,2})\b/);
-  if(iso){const y=Number(iso[1]),m=Number(iso[2]),d=Number(iso[3]);if(m>=1&&m<=12&&d>=1&&d<=31)return y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0')}
-  const dmy=s.match(/\b(\d{1,2})[-\/.](\d{1,2})[-\/.](\d{2,4})\b/);
-  if(dmy){let d=Number(dmy[1]),m=Number(dmy[2]),y=Number(dmy[3]);if(y<100)y+=2000;if(m>=1&&m<=12&&d>=1&&d<=31)return y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0')}
-  const named=s.match(/\b(\d{1,2})\s+(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(20\d{2}|\d{2})\b/i);
-  if(named){const months={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,sept:9,oct:10,nov:11,dec:12},d=Number(named[1]),m=months[named[2].slice(0,4).toLowerCase()]||months[named[2].slice(0,3).toLowerCase()],y=Number(named[3])+(Number(named[3])<100?2000:0);if(m&&d>=1&&d<=31)return y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0')}
+  const valid=(y,m,d)=>{
+    y=Number(y);m=Number(m);d=Number(d);if(y<100)y+=2000;
+    const dt=new Date(Date.UTC(y,m-1,d));
+    return y>=2000&&y<=2099&&dt.getUTCFullYear()===y&&dt.getUTCMonth()===m-1&&dt.getUTCDate()===d?y+'-'+String(m).padStart(2,'0')+'-'+String(d).padStart(2,'0'):'';
+  };
+  const iso=s.match(/\b(20\d{2})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(\d{1,2})\b/);
+  if(iso)return valid(iso[1],iso[2],iso[3]);
+  const dmy=s.match(/\b(\d{1,2})\s*[-/.]\s*(\d{1,2})\s*[-/.]\s*(20\d{2}|\d{2})\b/);
+  if(dmy)return valid(dmy[3],dmy[2],dmy[1]);
+  const named=s.match(/\b(\d{1,2})[\s./-]+(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:t(?:ember)?)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)[\s./-]+(20\d{2}|\d{2})\b/i);
+  if(named){const months={jan:1,feb:2,mar:3,apr:4,may:5,jun:6,jul:7,aug:8,sep:9,oct:10,nov:11,dec:12};return valid(named[3],months[named[2].slice(0,3).toLowerCase()],named[1])}
   return''
+}
+function receiptOdometer(value){
+  const s=String(value??'').trim().replace(/\s*km\s*$/i,'');
+  if(!/^\d{1,9}(?:[ ,. ]\d{3})*(?:[.,]\d{1,2})?$/.test(s))return null;
+  const n=Number(s.replace(/[ ,](?=\d{3}(?:\D|$))/g,'').replace(/\.(?=\d{3}(?:\D|$))/g,'').replace(',','.'));
+  return Number.isFinite(n)&&n>0&&n<1e9?n:null;
 }
 
 function extractReceiptFields(raw,state={}){
@@ -287,7 +298,7 @@ function extractReceiptFields(raw,state={}){
   const lineMathOk=fuelTransactions.every(x=>Math.abs(x.litres*x.pricePerLitre-x.amount)<=Math.max(0.25,x.amount*0.003));
   const needsReview=!totalsReconcile||!lineMathOk;
 
-  const odometerMatch=text.match(/ODOMETER\s*[:#-]?\s*(\d{4,9})/i);
+  const odometerMatch=text.match(/\b(?:od[o0]meter|odometer\s*reading|odo|odemeter|kilomet(?:er|re)s?|mileage|km\s*reading)\b\s*(?:reading\b)?\s*[:#=-]?\s*(\d{1,9}(?:[ ,. ]\d{3})*(?:[.,]\d{1,2})?)\b/i);
   const supplier=receiptSupplier(text);
   const facts={litres,pricePerLitre,suggestedAmount};
   let classification=classifyReceipt(text,supplier,state,facts);
@@ -295,9 +306,9 @@ function extractReceiptFields(raw,state={}){
 
   return{
     documentNumber:(text.match(/(?:invoice|slip|pod|ref|receipt|ticket)\s*(?:no|number|#)?\s*[:.-]?\s*([A-Z0-9/-]+)/i)||[])[1]||null,
-    date:receiptDateISO((text.match(/\b(?:20\d{2}[-\/.]\d{1,2}[-\/.]\d{1,2}|\d{1,2}[-\/.]\d{1,2}[-\/.]\d{2,4})\b/)||[])[0])||null,
+    date:lines.map(line=>receiptDateISO(line)).find(Boolean)||null,
     registration:(text.match(/\bN\s?\d{1,6}\s?[A-Z]{1,3}\b/i)||[])[0]||null,
-    odometer:odometerMatch?toN(odometerMatch[1]):null,
+    odometer:odometerMatch?receiptOdometer(odometerMatch[1]):null,
     amountCandidates:amountCandidates.slice(0,20),
     suggestedAmount:suggestedAmount?Number(suggestedAmount.toFixed(2)):null,
     printedTotal:printedTotal!==null?Number(printedTotal.toFixed(2)):null,
@@ -341,7 +352,7 @@ function mergeReceiptExtractions(candidates){
   const out=JSON.parse(JSON.stringify(valid[0]));
   for(const c of valid.slice(1)){
     for(const key of ['supplier','documentNumber','date','registration','odometer','printedTotal','suggestedAmount','litres','pricePerLitre']){
-      if((out[key]===null||out[key]===undefined||out[key]===''||num(out[key])===0)&&(c[key]!==null&&c[key]!==undefined&&c[key]!==''))out[key]=c[key];
+      if((out[key]===null||out[key]===undefined||out[key]===''||(typeof out[key]==='number'&&out[key]===0))&&(c[key]!==null&&c[key]!==undefined&&c[key]!==''))out[key]=c[key];
     }
     if((!out.category||out.category==='Other')&&c.category&&c.category!=='Other'){
       out.category=c.category;out.categoryConfidence=c.categoryConfidence;out.categoryReason=c.categoryReason;out.categorySource=c.categorySource;
@@ -427,7 +438,7 @@ function normalizeAiReceipt(raw,model){
     documentNumber:text(raw?.documentNumber)||null,
     date:receiptDateISO(raw?.date)||null,
     registration:text(raw?.registration)||null,
-    odometer:n(raw?.odometer),
+    odometer:receiptOdometer(raw?.odometer),
     suggestedAmount:n(raw?.suggestedAmount),
     printedTotal:n(raw?.printedTotal),
     litres:n(raw?.litres),
@@ -464,6 +475,8 @@ function finalizeReceiptExtraction(input){
   }
   x.totalDifference=Number(difference.toFixed(2));
   x.totalsReconcile=mathOk;
+  x.missingFields=[...(!x.date?['date']:[]),...(x.category==='Diesel'?['litres','pricePerLitre','odometer'].filter(k=>!num(x[k])):[])];
+  if(x.missingFields.length)x.needsReview=true;
   if(x.category==='Diesel'&&(!amount||!litres))x.needsReview=true;
   if(!mathOk)x.needsReview=true;
   x.requiresManualAmountConfirmation=Boolean(x.needsReview)||!amount;
@@ -482,8 +495,10 @@ function receiptNeedsSol(combined,luna,ocr,ocrConfidence){
   if(num(luna.extractionConfidence)<RECEIPT_AI_SOL_THRESHOLD)return true;
   if(!combined||combined.category==='Other'||num(combined.categoryConfidence)<75)return true;
   if(!num(combined.suggestedAmount)&&!num(combined.printedTotal))return true;
+  if(!combined.date)return true;
   if(combined.category==='Diesel'&&(!num(combined.litres)||!num(combined.pricePerLitre)))return true;
-  if(combined.needsReview||combined.totalsReconcile===false)return true;
+  // Missing optional odometer alone should not cause another expensive vision pass.
+  if(luna.needsReview||combined.totalsReconcile===false)return true;
   return receiptAiDisagrees(luna,ocr,ocrConfidence)
 }
 async function openAiReceiptExtract(buffer,mimeType,ocrText,model,detail='high'){
@@ -496,6 +511,7 @@ async function openAiReceiptExtract(buffer,mimeType,ocrText,model,detail='high')
       'This is for Angermund Transport in Namibia. Never invent a value that is not visible.',
       'Use 0 for unknown numeric values and an empty string for unknown text.',
       'Recognise diesel/fuel, toll, meals, accommodation, parking, border permits, customs/clearing, RFA/road permits, mass distance charges, weighbridge, loading/offloading, ferry/crossing, wash bay, tyre repair, emergency repair, breakdown parts, workshop/spares, police/traffic fines, general supplies and other transport expenses.',
+      'Read odometer/ODO/odemeter/mileage/km reading, including handwritten entries, and vehicle registration. Odometer is the cumulative vehicle km reading, never trip distance, receipt number or pump number. Return odometer as digits without thousands separators; if absent return 0.',
       'For fuel: carefully read litres, price per litre, printed total and each visible fuel transaction. Check litres × price against amount.',
       'Read the actual transaction/receipt date printed on the slip. Return date exactly as YYYY-MM-DD. If the date is not visible or cannot be read confidently, return an empty string. Never substitute today or the current date.',
       'If the image is unclear, numbers conflict, or a required fuel value is missing, set needsReview=true and lower extractionConfidence.',
