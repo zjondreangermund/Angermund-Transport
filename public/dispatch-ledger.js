@@ -1,11 +1,12 @@
 'use strict';
 function ledgerDotBar(labels,current,color,label){return '<ol class="ledger-progress status-'+color+'" aria-label="'+esc(label)+'">'+labels.map((x,i)=>'<li class="'+(i<=current?'reached ':'')+(i===current?'current':'')+'" '+(i===current?'aria-current="step"':'')+'><span class="ledger-dot"></span><span>'+esc(x)+'</span></li>').join('')+'</ol>'}
 function ledgerProgress(t){
- const ls=tripLegs(t),phase=TripLifecycle.phase(t),returning=TripLifecycle.returning(t),done=TripLifecycle.completed(t);
- const outbound=ls.map((leg,i)=>{const g=leg.geo||{},status=String(leg.status||''),delivered=TripLifecycle.deliveredLeg(leg)||(ls.length===1&&(returning||done)),step=delivered?3:/in transit/i.test(status)?2:/loading/i.test(status)?1:0;
- return '<div class="ledger-leg"><small>'+(ls.length>1?'Leg '+(i+1)+' · ':'')+esc(route(leg.routeId))+'</small>'+ledgerDotBar(['Planned','Loading','On route','Delivered'],step,delivered?'destination':phase.key,'Leg '+(i+1)+' delivery progress')+'</div>'}).join('');
- const returnBar=returning||done?'<div class="ledger-leg ledger-return"><small>Return · Angermund depot</small>'+ledgerDotBar(['Delivered','Returning','At depot'],done?2:1,done?'completed':'returning','Return to Angermund depot')+'</div>':'';
- return outbound+returnBar;
+ const ls=tripLegs(t),phase=TripLifecycle.phase(t),returning=TripLifecycle.returning(t),done=TripLifecycle.completed(t),delivered=TripLifecycle.delivered(t),moving=returning||phase.key==='route';
+ const completedLoads=ls.filter(TripLifecycle.deliveredLeg).length;
+ const position=done?0:returning?50:delivered?100:phase.key==='route'?66:phase.key==='loading'?25:0;
+ const label=done?'At Angermund depot · Complete':returning?'Returning to Angermund depot':delivered?'Delivered · Awaiting return':phase.label;
+ const stops=ls.length>1?'<small>'+ls.map((leg,i)=>'Leg '+(i+1)+' · '+esc(route(leg.routeId))+(TripLifecycle.deliveredLeg(leg)?' · Delivered':'')).join(' → ')+'</small>':'';
+ return '<div class="ledger-single-journey '+(returning?'is-returning ':'')+(done?'is-home ':'')+(delivered?'is-delivered ':'')+(moving?'is-driving':'')+'" role="group" aria-label="Journey progress: '+esc(label)+'">'+stops+'<div class="ledger-one-track" style="--truck-position:'+position+'%"><span class="ledger-one-line"></span><span class="ledger-depot-marker"></span><span class="ledger-delivery-marker"></span><span class="ledger-moving-dot" aria-hidden="true"></span></div><div class="ledger-one-labels"><span>'+(done?'At depot':'Angermund depot')+'</span><strong>'+esc(label)+'</strong><span>Delivered</span></div>'+(ls.length>1?'<small>'+completedLoads+' / '+ls.length+' loads delivered</small>':'')+'</div>';
 }
 function ledgerTripCard(t){
  const phase=TripLifecycle.phase(t),ls=tripLegs(t),pod=ls.every(l=>l.pod||l.podDocumentId||l.podUploadId)||Boolean(t.pod||t.podDocumentId||t.podUploadId),fills=(db.diesel||[]).filter(f=>f.tripId===t.id),litres=sum(fills,f=>num(f.litres)),capture=['admin','manager','dispatcher'].includes(role),done=TripLifecycle.completed(t),returned=TripLifecycle.returning(t),delivered=TripLifecycle.delivered(t);

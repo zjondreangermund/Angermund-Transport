@@ -1,0 +1,1 @@
+.preview-ribbon{position:fixed;top:0;left:0;right:0;min-height:38px;padding:8px 16px;background:#123858;color:#fff;z-index:20000;font:12px Arial}body>header,#sidebar{top:38px!important}body>main#app{padding-top:calc(var(--app-header-height,82px) + 55px)!important}#globalLogoutBtn,#globalInstallAppBtn,#backupBtn{display:none!important}.app-install-prompt{display:none!important}
