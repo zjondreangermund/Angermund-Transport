@@ -1328,3 +1328,13 @@ html.modal-open{overflow:hidden!important}@media(max-width:760px){html:has(#side
  .data-scroll-region thead th{position:static!important;background:var(--panel2,#11243a)!important;box-shadow:0 1px 0 var(--line,#22364e)}
  .data-scroll-region:focus-visible{outline:2px solid var(--blue);outline-offset:2px}
 }
+
+/* Work menu: one expanded group, with Admin sections inside the group. */
+#sidebar .nav-work-group{margin-bottom:5px}
+#sidebar .nav-work-group>.nav-more-toggle{position:static;margin:2px 0;min-height:44px}
+#sidebar .nav-work-group>.nav-group-active{color:#fff;border-color:#2d4d6a}
+#sidebar .nav-work-group>.nav-more-items{padding:3px 0 7px 8px;border-left:1px solid #2d4d6a;margin-left:11px;margin-top:3px}
+#sidebar .nav-work-group>.nav-more-items[hidden]{display:none!important}
+#sidebar .nav-work-group>.nav-more-items>button{min-height:42px}
+#sidebar .nav-admin-heading{padding:14px 10px 5px;color:#91a9bf;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
+#sidebar .nav-admin-heading:first-child{padding-top:7px}
