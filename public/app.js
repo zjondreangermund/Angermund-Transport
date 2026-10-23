@@ -1452,6 +1452,29 @@ function driverTripSort(a,b){
   if(bd!==ad)return bd-ad;
   return String(b.number||'').localeCompare(String(a.number||''),undefined,{numeric:true})
 }
+function tripPhoneTrackingControls(t){
+  if(role!=='driver'||!t?.id)return '';
+  const native=nativeGpsStatus(),active=Boolean(t.phoneTracking?.active)&&native?.tripTrackingEnabled!==false;
+  return '<section class="policy"><b>Phone tracking for this trip: '+(active?'ON':'STOPPED')+'</b><p>Start while driving. Stop before leaving the truck on foot. Stopping tracking does not complete or cancel the trip.</p><button type="button" class="'+(active?'ghost':'primary')+'" data-trip-tracking="'+esc(t.id)+'" data-active="'+(!active)+'">'+(active?'Stop tracking':'Start tracking')+'</button></section>';
+}
+async function setTripPhoneTracking(id,active){
+  if(role!=='driver')return;
+  if(active&&typeof window.AngermundNative?.startTripTracking!=='function')return openAndroidInstallPrompt();
+  if(!active)window.AngermundNative?.pauseTripTracking?.();
+  try{
+    const result=await api('/api/trips/'+encodeURIComponent(id)+'/phone-tracking',{method:'POST',body:{active}});
+    const t=get('trips',id);if(t.id)t.phoneTracking=result.phoneTracking;
+    if(active)window.AngermundNative.startTripTracking(authToken,id);
+    else if(driverGeoWatchId!==null){navigator.geolocation?.clearWatch(driverGeoWatchId);driverGeoWatchId=null}
+    render();notify(active?'Tracking started · allow Location if prompted':'Tracking stopped · start again when driving');
+    if(active)setTimeout(refreshNativeGpsStatus,1000);
+  }catch(e){notify((active?'Could not start tracking: ':'Phone paused; could not update server: ')+e.message);render()}
+}
+function tripPlaceDetails(t){
+  const c=t.carrierDetails;if(!c)return '';
+  return '<div class="driver-trip-meta">'+[['Loading',c.origin],['Offloading',c.destination]].map(([label,p])=>'<div><b>'+label+'</b><br>'+esc([p?.name,p?.address,p?.city,p?.country,p?.postalCode].filter(Boolean).join(', ')||'Not supplied')+'</div>').join('')+'</div>';
+}
+document.addEventListener('click',e=>{const b=e.target.closest('[data-trip-tracking]');if(b){e.stopPropagation();setTripPhoneTracking(b.dataset.tripTracking,b.dataset.active==='true')}});
 function driverPortal(){
   const preview=role!=='driver';
   const did=preview?(driverPreviewId||currentDriver()):currentDriver();
@@ -1492,13 +1515,15 @@ function driverPortal(){
     ${t?`<section class="driver-trip-card">
       <div class="driver-trip-top"><div><small>${legs.length>1?`CURRENT LEG ${num(leg?.sequence)}/${legs.length}`:'CURRENT TRIP'}</small><h2>${esc(t.number)} · ${esc(truck(t.truckId))}</h2></div>${badge(leg?.status||t.status)}</div>
       <div class="driver-route">${esc(route(leg?.routeId||t.routeId))}</div>
+      ${tripPlaceDetails(t)}
+      ${!preview?tripPhoneTrackingControls(t):''}
       <div class="driver-trip-meta"><span>📦 ${esc(leg?.load||t.load||'Load')}</span><span>🏢 ${esc(client(leg?.clientId||t.clientId))}</span></div>
       ${legs.length>1?`<div class="driver-leg-progress">${legs.map(x=>`<span class="${x.id===leg?.id?'current':x.pod?'done':''}">${x.sequence}</span>`).join('')}</div>`:''}
       <button class="driver-next" data-driver-main="${next.key}" data-trip="${t.id}" ${(preview||next.key==='complete'||next.key==='geo')?'disabled':''}>
         <span>${next.icon}</span><strong>${next.label}</strong><small>${preview?'Preview only · log in as driver to use this button':next.sub}</small>
       </button>
       ${quick}
-      <div class="driver-small-status"><span>📍 Location updates automatically</span><span>${podSaved?'✅ This leg POD saved':'📷 POD required for this leg'}</span></div>
+      <div class="driver-small-status"><span>📍 Start tracking while driving</span><span>${podSaved?'✅ This leg POD saved':'📷 POD required for this leg'}</span></div>
     </section>`:`<section class="driver-no-trip"><div>✅</div><h2>No active trip</h2><p>${esc(d.name||'This driver')} has no active trip at the moment.</p>${preview?'<button class="primary nav-to" data-page="driverAccounts">Manage driver login</button>':'<a href="tel:+264811299942">📞 CALL OFFICE</a>'}</section>`}
     ${pending?`<div class="driver-reminder">🔔 ${pending} action${pending===1?'':'s'} still required for this journey</div>`:''}
     ${bottom}
@@ -2024,7 +2049,7 @@ function routeAutoGpsReady(r){
 }
 function openRouteZones(id){
   const r=get('routes',id);if(!r.id)return;
-  const fenceOptions='<option value="">Choose existing geofence…</option>'+geofences.map(f=>'<option value="'+f.id+'">'+esc(f.name)+'</option>').join('');
+  const fenceOptions='<option value="">Choose existing geofence…</option>'+geofences.filter(f=>!/^Route town[ ·:]/i.test(f.name||'')).map(f=>'<option value="'+f.id+'">'+esc(f.name)+'</option>').join('');
   $('modalTitle').textContent='Automatic GPS zones · '+r.name;
   $('entryForm').innerHTML='<div class="route-zone-form">'
     +'<div class="notice"><b>How it works:</b> 5 km = approaching alert · 2 km = arrived · departure triggers once the truck moves safely outside the arrival zone.</div>'
@@ -2040,7 +2065,7 @@ function openRouteZones(id){
   $('offloadFenceSelect').onchange=e=>copyFence('offload',e.target.value);
   document.querySelectorAll('.use-current-zone').forEach(b=>b.onclick=()=>{if(!navigator.geolocation)return notify('GPS not available on this device');navigator.geolocation.getCurrentPosition(p=>{const k=b.dataset.zone;if(k==='load'){$('zoneLoadLat').value=p.coords.latitude.toFixed(6);$('zoneLoadLon').value=p.coords.longitude.toFixed(6)}else{$('zoneOffloadLat').value=p.coords.latitude.toFixed(6);$('zoneOffloadLon').value=p.coords.longitude.toFixed(6)}notify('Current position copied')},e=>notify(e.message),{enableHighAccuracy:true,timeout:15000})});
   $('cancelForm').onclick=()=>$('modal').classList.add('hidden');
-  $('entryForm').onsubmit=e=>{e.preventDefault();const vals={loadName:$('zoneLoadName').value.trim(),loadLat:Number($('zoneLoadLat').value),loadLon:Number($('zoneLoadLon').value),offloadName:$('zoneOffloadName').value.trim(),offloadLat:Number($('zoneOffloadLat').value),offloadLon:Number($('zoneOffloadLon').value),approachKm:Number($('zoneApproachKm').value),arrivalKm:Number($('zoneArrivalKm').value),roundTrip:$('zoneRoundTrip').value==='true'};if(!Number.isFinite(vals.loadLat)||!Number.isFinite(vals.loadLon)||!Number.isFinite(vals.offloadLat)||!Number.isFinite(vals.offloadLon))return notify('Enter valid loading and offloading coordinates');if(vals.approachKm<2||vals.approachKm>5)return notify('Approaching distance must be 2–5 km');if(vals.arrivalKm<.5||vals.arrivalKm>=vals.approachKm)return notify('Arrival distance must be smaller than approaching distance');Object.assign(r,vals);$('modal').classList.add('hidden');commit('Automatic GPS zones updated for '+r.name,'route',r.id)};
+  $('entryForm').onsubmit=e=>{e.preventDefault();const vals={loadName:$('zoneLoadName').value.trim(),loadLat:Number($('zoneLoadLat').value),loadLon:Number($('zoneLoadLon').value),offloadName:$('zoneOffloadName').value.trim(),offloadLat:Number($('zoneOffloadLat').value),offloadLon:Number($('zoneOffloadLon').value),approachKm:Number($('zoneApproachKm').value),arrivalKm:Number($('zoneArrivalKm').value),roundTrip:$('zoneRoundTrip').value==='true'};if(!Number.isFinite(vals.loadLat)||!Number.isFinite(vals.loadLon)||!Number.isFinite(vals.offloadLat)||!Number.isFinite(vals.offloadLon))return notify('Enter valid loading and offloading coordinates');if(vals.approachKm<2||vals.approachKm>5)return notify('Approaching distance must be 2–5 km');if(vals.arrivalKm<.5||vals.arrivalKm>=vals.approachKm)return notify('Arrival distance must be smaller than approaching distance');Object.assign(r,vals);for(const kind of ['loading','offloading']){const field=kind+'GeofenceId',selected=$(kind==='loading'?'loadFenceSelect':'offloadFenceSelect').value;r[field]=selected||'';for(const t of db.trips){if(t.routeId===r.id)t[field]=selected||'';for(const l of t.legs||[])if(l.routeId===r.id)l[field]=selected||''}}$('modal').classList.add('hidden');commit('Automatic GPS zones updated for '+r.name,'route',r.id)};
 }
 function clients(){
   const routeRows=db.routes.map(r=>'<tr><td><b>'+esc(r.name)+'</b><br><small>'+esc(r.notes||'')+'</small></td><td>'+num(r.distance).toLocaleString()+' km</td><td>'+money(r.rate)+'</td><td>'+(r.crossBorder?'Cross-border':'Namibia')+(routeUsesRoundTrip(r)?' · Round trip':'')+'</td><td>'+(routeAutoGpsReady(r)?'<span class="zone-ready">● AUTO GPS READY</span><small>'+esc(r.loadName||'Loading')+' → '+esc(r.offloadName||'Offloading')+'<br>'+(num(r.approachKm)||5)+' km / '+(num(r.arrivalKm)||2)+' km</small>':'<span class="zone-needed">● SETUP NEEDED</span><small>Loading/offloading pins not set</small>')+'</td><td><button class="link-button route-zones" data-id="'+r.id+'">GPS zones</button></td></tr>').join('');
@@ -2790,10 +2815,27 @@ function geofenceKindValue(f){
   return ['loading','offloading','operating_area','custom'].includes(kind)?kind:'custom'
 }
 function geofenceKindLabel(f){return({depot:'Company depot',loading:'Loading zone',offloading:'Offloading zone',operating_area:'Trip-start operating area',custom:'General geofence'})[geofenceKindValue(f)]}
+let tripSiteSetup=null;
+function tripSitesPanel(){
+  if(!['admin','manager','dispatcher'].includes(role))return '';
+  const sites=tripSiteSetup?.sites||[],towns=tripSiteSetup?.towns||[];
+  return '<section class="panel"><div class="panel-head"><div><h2>Loading and offloading geofences</h2><p>Saved geofences are reused by exact site name. Missing locations need a map pin or a saved geofence.</p></div><button type="button" class="ghost" data-refresh-sites>Refresh site links</button></div><div class="table-wrap"><table><thead><tr><th>Site</th><th>Location supplied</th><th>Trips</th><th>Geofence</th><th></th></tr></thead><tbody>'+(sites.length?sites.map((site,i)=>'<tr><td><b>'+esc(site.name)+'</b><br>'+esc(site.kind)+'</td><td>'+esc([site.address,site.city,site.country].filter(Boolean).join(', ')||'No street address supplied')+'</td><td>'+site.trips.length+'</td><td><select data-site-fence="'+i+'"><option value="">Choose saved geofence…</option>'+geofences.filter(f=>f.active!==false&&!/^Route town[ ·:]/i.test(f.name||'')).map(f=>'<option value="'+esc(f.id)+'" '+(f.id===site.fenceId?'selected':'')+'>'+esc(f.name)+'</option>').join('')+'</select></td><td><button class="ghost small" type="button" data-link-site="'+i+'">Use geofence</button> <button class="ghost small" type="button" data-pin-site="'+i+'">Pin site on map</button></td></tr>').join(''):'<tr><td colspan="5">Refresh to review imported trip sites.</td></tr>')+'</tbody></table></div><details><summary>International town checkpoints ('+towns.length+')</summary><p>'+towns.map(t=>esc(t.name)).join(' → ')+'</p><small>Town checkpoints notify entry/exit. They do not mark a delivery or complete a trip. Edit their radii in the Geofences list.</small></details></section>';
+}
+async function refreshTripSites(){
+  try{tripSiteSetup=await api('/api/trip-sites');const state=await api('/api/state');if(state.payload)db=merge(state.payload);if(page==='tracking')render()}catch(e){notify(e.message)}
+}
+document.addEventListener('click',async e=>{
+  if(e.target.closest('[data-refresh-sites]'))return refreshTripSites();
+  const b=e.target.closest('[data-link-site],[data-pin-site]');if(!b)return;
+  const i=Number(b.dataset.linkSite??b.dataset.pinSite),site=tripSiteSetup?.sites?.[i];if(!site)return;
+  if(b.hasAttribute('data-pin-site'))return addGeofence({name:site.name,kind:site.kind});
+  const select=document.querySelector('[data-site-fence="'+i+'"]');if(!select?.value)return notify('Choose a saved geofence first');
+  try{await api('/api/trip-sites/link',{method:'POST',body:{routeId:site.routeId,kind:site.kind,fenceId:select.value}});await refreshTripSites();notify('Geofence linked to this site and its active trips')}catch(e){notify(e.message)}
+});
 function tracking(){
   const canEdit=['admin','manager','dispatcher'].includes(role),testActive=phoneGpsTestActive(),nativeTest=nativePhoneGpsTestAvailable();
   const testPanel=canEdit?`<section class="panel phone-gps-test"><div class="panel-head"><div><h2>📱 Phone GPS geofence test</h2><p class="muted-copy">Temporary testing only. It triggers geofence entry/exit alerts but never starts, advances or closes a transport trip.</p></div><span class="gps-test-state ${testActive?'on':''}">${testActive?'● TEST GPS ACTIVE':'● TEST GPS OFF'}</span></div><div class="phone-gps-test-controls"><input id="phoneGpsTestLabel" value="${esc(nativeGpsStatus()?.testLabel||'Phone GPS Test')}" placeholder="Test phone label"><button type="button" class="primary" id="startPhoneGpsTest">${testActive?'Restart test GPS':(nativeTest?'Start background GPS test':'Start browser GPS test')}</button><button type="button" class="ghost" id="stopPhoneGpsTest" ${testActive?'':'disabled'}>Stop</button><button type="button" class="ghost" id="downloadGpsTestApp">Download latest app</button></div><small>${nativeTest?'Background GPS is available in this installed app. Allow Location / Allow all the time for the test.':'Browser test works while this page stays open. Install the Android app for reliable background GPS while driving or when the screen is off.'}</small></section>`:'';
-  return `<section class="kpis">${kpi('Vehicles reporting',liveGps.length,`${db.trucks.length} registered`)}${kpi('Moving',liveGps.filter(x=>num(x.speed)>3).length,'Speed above 3 km/h')}${kpi('Geofences',geofences.length,'Entry and exit monitoring')}${kpi('Last update',liveGps[0]?.recordedAt?new Date(liveGps[0].recordedAt).toLocaleTimeString():'Waiting','Real-time event stream')}</section>${testPanel}${nativeGpsStatusPanel()}<section class="tracking-layout"><div class="panel"><div class="panel-head"><h2>Live fleet map</h2><button class="ghost" id="refreshTracking">Refresh</button></div><div id="fleetMap" class="map"></div></div><div class="panel"><h2>Live vehicles / test phones</h2><div id="liveVehicleList">${liveGps.map(x=>`<div class="vehicle-live" data-vehicle="${esc(x.vehicleId)}"><b>${esc(gpsVehicleLabel(x.vehicleId))}</b><p>${num(x.speed).toFixed(0)} km/h · ${new Date(x.recordedAt).toLocaleString()} · ${Date.now()-Date.parse(x.recordedAt)>180000?'STALE · no recent location':'Recent'}${x.source==='android-background'?' · Driver phone':''}</p></div>`).join('')||'<div class="empty">No GPS positions yet.</div>'}</div><hr style="border-color:var(--line)"><div class="panel-head"><h2>Geofences</h2>${canEdit?'<button class="primary small" id="addGeofence">+ Add geofence</button>':''}</div>${geofences.length?`<div class="geofence-list">${geofences.map(f=>`<div class="geofence-row"><div><b>${esc(f.name)}</b><small>${num(f.radiusM)>=1000?(num(f.radiusM)/1000).toFixed(1)+' km':num(f.radiusM)+' m'} radius · ${esc(geofenceKindLabel(f))}</small></div>${canEdit?`<div class="geofence-row-actions"><button class="ghost small edit-geofence" data-id="${f.id}">Edit</button><button class="danger small delete-geofence" data-id="${f.id}" data-name="${esc(f.name)}">Delete</button></div>`:''}</div>`).join('')}</div>`:'<p class="muted">No geofences configured.</p>'}</div></section>`;
+  return `<section class="kpis">${kpi('Vehicles reporting',liveGps.length,`${db.trucks.length} registered`)}${kpi('Moving',liveGps.filter(x=>num(x.speed)>3).length,'Speed above 3 km/h')}${kpi('Geofences',geofences.length,'Entry and exit monitoring')}${kpi('Last update',liveGps[0]?.recordedAt?new Date(liveGps[0].recordedAt).toLocaleTimeString():'Waiting','Real-time event stream')}</section>${testPanel}${nativeGpsStatusPanel()}${tripSitesPanel()}<section class="tracking-layout"><div class="panel"><div class="panel-head"><h2>Live fleet map</h2><button class="ghost" id="refreshTracking">Refresh</button></div><div id="fleetMap" class="map"></div></div><div class="panel"><h2>Live vehicles / test phones</h2><div id="liveVehicleList">${liveGps.map(x=>`<div class="vehicle-live" data-vehicle="${esc(x.vehicleId)}"><b>${esc(gpsVehicleLabel(x.vehicleId))}</b><p>${num(x.speed).toFixed(0)} km/h · ${new Date(x.recordedAt).toLocaleString()} · ${Date.now()-Date.parse(x.recordedAt)>180000?'STALE · no recent location':'Recent'}${x.source==='android-background'?' · Driver phone':''}</p></div>`).join('')||'<div class="empty">No GPS positions yet.</div>'}</div><hr style="border-color:var(--line)"><div class="panel-head"><h2>Geofences</h2>${canEdit?'<button class="primary small" id="addGeofence">+ Add geofence</button>':''}</div>${geofences.length?`<div class="geofence-list">${geofences.map(f=>`<div class="geofence-row"><div><b>${esc(f.name)}</b><small>${num(f.radiusM)>=1000?(num(f.radiusM)/1000).toFixed(1)+' km':num(f.radiusM)+' m'} radius · ${esc(geofenceKindLabel(f))}</small></div>${canEdit?`<div class="geofence-row-actions"><button class="ghost small edit-geofence" data-id="${f.id}">Edit</button><button class="danger small delete-geofence" data-id="${f.id}" data-name="${esc(f.name)}">Delete</button></div>`:''}</div>`).join('')}</div>`:'<p class="muted">No geofences configured.</p>'}</div></section>`;
 }
 async function deleteGeofence(id,name='geofence'){
   if(!confirm('Delete '+name+'? This stops entry/exit monitoring for this saved geofence.'))return;
@@ -3251,7 +3293,7 @@ function carrierOrderPanel(t){
   return '<section class="carrier-order-panel"><div class="panel-head"><div><h3>NBL / Carrier order details</h3><p class="muted-copy">Imported directly from the carrier load-status workbook.</p></div><div><span class="badge">'+esc(c.status||t.carrierStatus||'')+'</span> <b>TMS '+esc(c.tmsId||t.externalTmsId||'—')+'</b></div></div>'
     +'<div class="carrier-detail-grid"><div><span>Order reference</span><b>'+esc(c.orderRef||t.sourceOrderRef||'—')+'</b></div><div><span>PRO / fleet</span><b>'+esc(c.pro||t.carrierPro||'—')+'</b></div><div><span>Shipper</span><b>'+esc(c.shipper||'—')+'</b></div><div><span>Main contact</span><b>'+esc(c.mainContact||'—')+'</b></div>'
     +'<div><span>Pickup planned</span><b>'+esc(carrierDateLabel(c.pickPlanStart))+'</b></div><div><span>Pickup actual arrival</span><b>'+esc(carrierDateLabel(c.pickActualArrival))+'</b></div><div><span>Pickup actual departure</span><b>'+esc(carrierDateLabel(c.pickActualDeparture))+'</b></div><div><span>Drop planned</span><b>'+esc(carrierDateLabel(c.dropPlanStart))+'</b></div><div><span>Drop actual arrival</span><b>'+esc(carrierDateLabel(c.dropActualArrival))+'</b></div><div><span>Drop actual departure</span><b>'+esc(carrierDateLabel(c.dropActualDeparture))+'</b></div>'
-    +'<div><span>Origin</span><b>'+esc([origin.name,origin.city,origin.country].filter(Boolean).join(' · ')||'—')+'</b></div><div><span>Destination</span><b>'+esc([dest.name,dest.city,dest.country].filter(Boolean).join(' · ')||'—')+'</b></div><div><span>Equipment</span><b>'+esc(c.equipment||'—')+'</b></div><div><span>Trailer(s)</span><b>'+esc((c.trailers||[]).join(' / ')||'—')+'</b></div><div><span>Weight</span><b>'+(num(c.weightKg)>0?(num(c.weightKg)/1000).toFixed(2)+' t':'—')+'</b></div><div><span>Picks / drops</span><b>'+num(c.pickCount)+' / '+num(c.dropCount)+'</b></div><div><span>Tendered</span><b>'+esc(carrierDateLabel(c.tenderDate))+'</b></div><div><span>Accepted</span><b>'+esc(carrierDateLabel(c.acceptDate))+'</b></div></div>'
+    +'<div><span>Origin</span><b>'+esc([origin.name,origin.address,origin.city,origin.country,origin.postalCode].filter(Boolean).join(' · ')||'—')+'</b></div><div><span>Destination</span><b>'+esc([dest.name,dest.address,dest.city,dest.country,dest.postalCode].filter(Boolean).join(' · ')||'—')+'</b></div><div><span>Equipment</span><b>'+esc(c.equipment||'—')+'</b></div><div><span>Trailer(s)</span><b>'+esc((c.trailers||[]).join(' / ')||'—')+'</b></div><div><span>Weight</span><b>'+(num(c.weightKg)>0?(num(c.weightKg)/1000).toFixed(2)+' t':'—')+'</b></div><div><span>Picks / drops</span><b>'+num(c.pickCount)+' / '+num(c.dropCount)+'</b></div><div><span>Tendered</span><b>'+esc(carrierDateLabel(c.tenderDate))+'</b></div><div><span>Accepted</span><b>'+esc(carrierDateLabel(c.acceptDate))+'</b></div></div>'
     +(c.productDescription&&c.productDescription!=='DEFAULT'?'<details><summary>Products / cargo detail</summary><p>'+esc(c.productDescription)+'</p>'+(c.productCodes?'<small>'+esc(c.productCodes)+'</small>':'')+'</details>':'')
     +(refs||c.intermediateStops||c.divertedTo||c.divertedFrom?'<div class="carrier-extra"><b>Carrier notes / references</b><p>'+esc([refs,c.intermediateStops?'Intermediate: '+c.intermediateStops:'',c.divertedFrom?'Diverted from '+c.divertedFrom:'',c.divertedTo?'Diverted to '+c.divertedTo:''].filter(Boolean).join(' · '))+'</p></div>':'')
     +'</section>'
@@ -3329,7 +3371,7 @@ function openTrip(id){
   const t=get('trips',id),legs=tripLegs(t),fuel=linked('diesel','tripId',id),expenses=linked('expenses','tripId',id),issues=linked('tripIssues','tripId',id),settlement=tripSettlement(t),m=settlement.fuel;
   const dieselSpend=tripDieselSpend(t),expenseSpend=tripRouteExpenseSpend(t),totalCost=tripCost(t),contribution=tripProfit(t);
   $('modalTitle').textContent=`${t.number} · ${legs.length} leg${legs.length===1?'':'s'} · ${truck(t.truckId)}`;
-  $('entryForm').innerHTML='<section class="panel status-'+TripLifecycle.phase(t).key+'"><span class="ledger-status">'+esc(TripLifecycle.phase(t).label)+'</span>'+ledgerProgress(t)+'</section>'+shunterReconDetail(t)+
+  $('entryForm').innerHTML='<section class="panel status-'+TripLifecycle.phase(t).key+'"><span class="ledger-status">'+esc(TripLifecycle.phase(t).label)+'</span>'+ledgerProgress(t)+'</section>'+tripPhoneTrackingControls(t)+shunterReconDetail(t)+
     `<div class="trip-live-summary">
       <div><span>Journey income</span><b>${money(journeyIncome(t))}</b></div>
       <div><span>Distance</span><b>${journeyDistance(t).toLocaleString()} km</b></div>
@@ -3560,12 +3602,12 @@ document.addEventListener('click',e=>{
   if(e.target.closest('[data-tracking-settings]'))window.AngermundNative?.openTrackingSettings?.();
   if(e.target.closest('[data-tracking-status]'))refreshNativeGpsStatus();
 });
-function forceAndroidInstallPrompt(message='Latest Android app: v1.4.0'){
+function forceAndroidInstallPrompt(message='Latest Android app: v1.4.1'){
   if(!$('appInstallPrompt'))return;
   if($('appInstallStatus'))$('appInstallStatus').innerHTML='<b>'+esc(message)+'</b><br><span>Download and install the APK. Android may ask you to allow installs from this browser.</span>';
   $('appInstallPrompt').classList.remove('hidden')
 }
-function openAndroidInstallPrompt(){forceAndroidInstallPrompt('Angermund Transport Android v1.4.0 is ready to install.')}
+function openAndroidInstallPrompt(){forceAndroidInstallPrompt('Angermund Transport Android v1.4.1 is ready to install.')}
 async function postBrowserPhoneGps(position,label){
   const now=Date.now();if(now-lastPhoneGpsTestSentAt<15000)return;lastPhoneGpsTestSentAt=now;
   try{
@@ -3623,7 +3665,7 @@ function openInstalledAndroidApp(){
   location.href='angermund://open';
   setTimeout(()=>{document.removeEventListener('visibilitychange',mark);if(!opened&&!document.hidden&&$('appInstallStatus'))$('appInstallStatus').innerHTML='<b>App not detected.</b> If it is not installed yet, use Download Android app.'},1800)
 }
-function downloadAndroidApp(){sessionStorage.setItem(ANDROID_APP_SKIP_KEY,'1');hideAndroidAppPrompt();const a=document.createElement('a');a.href='/download/android?ts='+Date.now();a.download='Angermund-Transport-v1.4.0.apk';document.body.appendChild(a);a.click();a.remove();notify('Downloading Angermund Transport v1.4.0…')}
+function downloadAndroidApp(){sessionStorage.setItem(ANDROID_APP_SKIP_KEY,'1');hideAndroidAppPrompt();const a=document.createElement('a');a.href='/download/android?ts='+Date.now();a.download='Angermund-Transport-v1.4.1.apk';document.body.appendChild(a);a.click();a.remove();notify('Downloading Angermund Transport v1.4.1…')}
 function startNativeBackgroundAlerts(){if(!authToken||!runningInsideAndroidApp()||typeof window.AngermundNative?.startBackgroundAlerts!=='function')return false;try{window.AngermundNative.startBackgroundAlerts(authToken);return true}catch{return false}}
 function startNativeBackgroundGps(){
   if(role!=='driver'||!authToken||!nativeBackgroundGpsAvailable())return false;
@@ -3636,6 +3678,7 @@ function stopNativeBackgroundGps(){
 function startDriverGpsWatch(){
   if(role!=='driver')return;
   if(startNativeBackgroundGps())return;
+  if(!db.trips.some(t=>t.driverId===currentDriver()&&t.phoneTracking?.active))return;
   if(driverGeoWatchId!==null||!navigator.geolocation)return;
   driverGeoWatchId=navigator.geolocation.watchPosition(postDriverGpsPosition,e=>{if(e.code===1&&sessionStorage.getItem('driver_gps_denied')!=='1'){sessionStorage.setItem('driver_gps_denied','1');notify('Location permission is needed for automatic arrival/departure alerts')}},{enableHighAccuracy:true,maximumAge:20000,timeout:30000});
 }
@@ -3669,7 +3712,7 @@ async function ensureMapLibraries(){
   })().catch(err=>{mapLibraryPromise=null;console.warn('Map libraries unavailable',err);return false});
   return mapLibraryPromise
 }
-async function loadTracking(){try{[liveGps,geofences]=await Promise.all([api('/api/gps/latest'),api('/api/geofences')]);if(page==='tracking')render()}catch(e){notify(e.message)}}
+async function loadTracking(){try{[liveGps,geofences]=await Promise.all([api('/api/gps/latest'),api('/api/geofences')]);if(['admin','manager','dispatcher'].includes(role))tripSiteSetup=await api('/api/trip-sites');if(page==='tracking')render()}catch(e){notify(e.message)}}
 async function loadNotifications(){try{await loadPlatformActions();serverNotifications=await api('/api/notifications');$('notificationCount').textContent=serverNotifications.filter(x=>!x.read).length;if(page==='notifications'||page==='tasks')render()}catch{}}
 async function drawMap(){
   if(page!=='tracking'||!$('fleetMap'))return;
@@ -3727,7 +3770,7 @@ async function addGeofence(existing=null){
   const editing=Boolean(existing?.id),existingKind=existing?geofenceKindValue(existing):'custom';
   $('modalTitle').textContent=editing?'Edit geofence':'Add geofence';
   $('entryForm').innerHTML='<div class="geofence-builder">'
-    +'<div class="notice"><b>No coordinates needed.</b> Tap the map or drag the pin. Use small geofences for depot/loading/offloading and a larger <b>Trip-start operating area</b> around Windhoek; truck trackers control real trip movement. <b>Phone GPS Test</b> can trigger entry/exit alerts only and never changes trip status.</div>'
+    +'<div class="notice"><b>No coordinates needed.</b> Tap the map or drag the pin. Use small geofences for depot/loading/offloading and a larger <b>Trip-start operating area</b> around Windhoek; truck trackers or explicitly started driver phone tracking can update trip movement. <b>Phone GPS Test</b> can trigger entry/exit alerts only and never changes trip status.</div>'
     +'<div class="form-grid"><div class="field full"><label>Geofence name</label><input id="geofenceName" list="geofenceNameSuggestions" value="'+esc(existing?.name||'')+'" placeholder="e.g. Angermund Transport, NBL Windhoek, Oshakati depot"><datalist id="geofenceNameSuggestions">'+[...new Set(geofences.map(f=>f.name).filter(Boolean))].map(n=>'<option value="'+esc(n)+'"></option>').join('')+'</datalist></div>'
     +'<div class="field"><label>Geofence type</label><select id="geofenceKind"><option value="depot">🏢 Company depot / Angermund Transport</option><option value="loading">📦 Loading zone</option><option value="offloading">🏁 Offloading zone</option><option value="operating_area">🗺 Trip-start operating area / city</option><option value="custom">📍 General geofence</option></select></div>'
     +'<div class="field"><label>Radius</label><div class="geofence-radius-row"><input id="geofenceRadius" type="range" min="25" max="50000" step="25" value="500"><b id="geofenceRadiusValue">500 m</b></div></div>'
