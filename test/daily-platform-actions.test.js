@@ -26,3 +26,16 @@ test('no missing POD or diesel tasks for a planned trip; shunters need no trip d
  const rows=D.collect({trips:[{id:'p',stage:1},{id:'s',stage:4,shunter:true,pod:true}]},now);
  assert.equal(rows.some(x=>x.key==='missing-pod'),false);assert.equal(rows.some(x=>x.key==='trip-diesel'),false);
 });
+
+test('linked POD tasks complete only when every required load has proof',()=>{
+ const state={tasks:[{id:'task',title:'Upload POD for A',status:'Open',linkedType:'trip',linkedId:'a'}],trips:[{id:'a',legs:[{pod:true},{pod:false}]}]};
+ D.reconcile(state,now);assert.equal(state.tasks[0].status,'Open');state.trips[0].legs[1].pod=true;D.reconcile(state,now);assert.equal(state.tasks[0].status,'Completed');assert.match(state.tasks[0].completionReason,/proof/);
+});
+test('unrelated tasks and tasks with financial completion controls are not guessed complete',()=>{
+ const state={tasks:[{id:'review',title:'Review POD process',status:'Open',linkedType:'trip',linkedId:'a'},{id:'funds',title:'Upload POD for A',status:'Open',fundsUsed:true,linkedType:'trip',linkedId:'a'}],trips:[{id:'a',pod:true}]};
+ D.reconcile(state,now);assert.ok(state.tasks.every(t=>t.status==='Open'));
+});
+test('expired compliance is critical while renewed compliance becomes completed',()=>{
+ const state={permits:[{id:'p',expiry:'2026-10-01'}]};let group=D.reconcile(state,now).find(g=>g.key==='document-renewal');assert.equal(group.priority,'Critical');
+ state.permits[0].expiry='2028-01-01';group=D.reconcile(state,now).find(g=>g.key==='document-renewal');assert.equal(group.status,'Completed');assert.equal(group.priority,'Completed');
+});
