@@ -118,7 +118,8 @@ public class LocationService extends Service implements LocationListener {
 
     private boolean trackingEnabled() {
         return !destroyed && prefs().getBoolean("enabled", false) && prefs().getBoolean("gps_enabled", false)
-                && !prefs().getString("device_token", "").isEmpty();
+                && !prefs().getString("device_token", "").isEmpty()
+                && (prefs().getBoolean("gps_test_mode", false) || prefs().getBoolean("trip_tracking_enabled", false));
     }
 
     private void status(String text) {
@@ -226,6 +227,11 @@ public class LocationService extends Service implements LocationListener {
                 String line; while ((line = br.readLine()) != null) sb.append(line);
             }
             JSONObject trip = new JSONObject(sb.toString()).optJSONObject("trip");
+            JSONObject tracking = trip == null ? null : trip.optJSONObject("phoneTracking");
+            if (tracking == null || !tracking.optBoolean("active", false)) {
+                prefs().edit().putBoolean("trip_tracking_enabled", false).putBoolean("gps_enabled", false).apply();
+                queue.clear(); status("Trip tracking stopped · tap Start on your trip"); handler.post(this::stopSelf); return;
+            }
             if (token.equals(prefs().getString("device_token", "")))
                 prefs().edit().putString("gps_capture_trip", trip == null ? "" : trip.optString("id", "")).apply();
         } finally { c.disconnect(); }

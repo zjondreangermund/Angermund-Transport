@@ -1,0 +1,122 @@
+[
+  {
+    "name": "Rehoboth",
+    "latitude": -23.317,
+    "longitude": 17.09,
+    "country": "NA",
+    "radiusM": 3000,
+    "source": "https://www.geonames.org/3353540/"
+  },
+  {
+    "name": "Mariental",
+    "latitude": -24.62705,
+    "longitude": 17.96471,
+    "country": "NA",
+    "radiusM": 3000,
+    "source": "https://www.geonames.org/3355595/"
+  },
+  {
+    "name": "Keetmanshoop",
+    "latitude": -26.57654,
+    "longitude": 18.13359,
+    "country": "NA",
+    "radiusM": 3000,
+    "source": "https://www.geonames.org/3356264/"
+  },
+  {
+    "name": "Karasburg",
+    "latitude": -28.01658,
+    "longitude": 18.74797,
+    "country": "NA",
+    "radiusM": 3000,
+    "source": "https://www.geonames.org/3356343/"
+  },
+  {
+    "name": "Ariamsvlei",
+    "latitude": -28.11895,
+    "longitude": 19.83612,
+    "country": "NA",
+    "radiusM": 3000,
+    "source": "https://www.geonames.org/3358633/"
+  },
+  {
+    "name": "Upington",
+    "latitude": -28.44776,
+    "longitude": 21.25612,
+    "country": "ZA",
+    "radiusM": 6000,
+    "source": "https://www.geonames.org/945945/"
+  },
+  {
+    "name": "Groblershoop",
+    "latitude": -28.89531,
+    "longitude": 21.98378,
+    "country": "ZA",
+    "radiusM": 3000,
+    "source": "https://www.geonames.org/999962/"
+  },
+  {
+    "name": "Griekwastad",
+    "latitude": -28.85141,
+    "longitude": 23.25248,
+    "country": "ZA",
+    "radiusM": 3000,
+    "source": "https://www.geonames.org/999999/"
+  },
+  {
+    "name": "Kimberley",
+    "latitude": -28.73226,
+    "longitude": 24.76232,
+    "country": "ZA",
+    "radiusM": 6000,
+    "source": "https://www.geonames.org/990930/"
+  },
+  {
+    "name": "Bloemfontein",
+    "latitude": -29.12107,
+    "longitude": 26.214,
+    "country": "ZA",
+    "radiusM": 15000,
+    "source": "https://www.geonames.org/1018725/"
+  },
+  {
+    "name": "Winburg",
+    "latitude": -28.51805,
+    "longitude": 27.00933,
+    "country": "ZA",
+    "radiusM": 3000,
+    "source": "https://www.geonames.org/939608/"
+  },
+  {
+    "name": "Bethlehem",
+    "latitude": -28.23078,
+    "longitude": 28.30707,
+    "country": "ZA",
+    "radiusM": 3000,
+    "source": "https://www.geonames.org/1019704/"
+  },
+  {
+    "name": "Harrismith",
+    "latitude": -28.27276,
+    "longitude": 29.12946,
+    "country": "ZA",
+    "radiusM": 3000,
+    "source": "https://www.geonames.org/997751/"
+  },
+  {
+    "name": "Pietermaritzburg",
+    "latitude": -29.61679,
+    "longitude": 30.39278,
+    "country": "ZA",
+    "radiusM": 15000,
+    "source": "https://www.geonames.org/965301/"
+  },
+  {
+    "name": "Durban",
+    "latitude": -29.8579,
+    "longitude": 31.0292,
+    "country": "ZA",
+    "radiusM": 25000,
+    "source": "https://www.geonames.org/1007311/"
+  }
+]

@@ -37,3 +37,12 @@ The driver must grant:
 ## Build
 
 GitHub Actions workflow `build-driver-apk.yml` builds a debug-signed installable APK.
+
+
+## Trip controls (v1.4.1)
+
+- Drivers explicitly tap **Start tracking** on the assigned trip before driving. **Stop tracking** stops location collection and clears the unsent queue without completing the trip. Stop before leaving the truck on foot.
+- Start/Stop is stored on the server and phone. Reopening Driver Workspace never overrides a stop. A previously started session can resume after reboot with the required permissions.
+- Phone geofence trip automation accepts only recent accurate fixes for that driver's active session. Site arrivals and confirmed depot return require consecutive fixes; paused/test/historical points cannot complete a trip.
+- Town checkpoints are notification-only. Exact loading/offloading pins use their saved radius and are separate from town checkpoints.
+- General phone test mode remains separate from trucks and never advances trips.

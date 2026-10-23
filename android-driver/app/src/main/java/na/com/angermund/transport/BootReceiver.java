@@ -22,7 +22,7 @@ public class BootReceiver extends BroadcastReceiver {
             else context.startService(new Intent(context, NotificationService.class));
         } catch (Exception ignored) {}
 
-        if (!p.getBoolean("gps_enabled", false)) return;
+        if (!p.getBoolean("gps_enabled", false) || (!p.getBoolean("gps_test_mode", false) && !p.getBoolean("trip_tracking_enabled", false))) return;
         boolean foreground = context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
                 || context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
         boolean background = Build.VERSION.SDK_INT < 29

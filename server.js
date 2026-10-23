@@ -1,3 +1,5 @@
+const PhoneTracking=require('./phone-trip-tracking');
+const TripSites=require('./trip-site-geofences');
 const {resolveMobileGps}=require('./mobile-gps');
 const DailyActions=require('./daily-platform-actions');
 const {removeWorker}=require('./workforce-delete');
@@ -707,11 +709,12 @@ async function sendExternal(n){
 }
 async function evaluateGeofences(pos){
   if(!trustedVehicleGpsSource(pos.source))return;
-  const phoneTest=String(pos.source||'').toLowerCase()==='phone-test';
+  const phoneTest=String(pos.source||'').toLowerCase()==='phone-test',phoneFix=phoneTest||pos.source==='android-background';
+  if(pos.source==='android-background'){const t=((await readOpsState()).trips||[]).find(t=>t.id===pos.tripId);if(!PhoneTracking.permitsPoint(t,{driverId:pos.driverId},pos))return}
   const recordedAt=new Date(pos.recordedAt||Date.now()),accuracy=Math.max(0,num(pos.accuracy));
   if(!Number.isFinite(recordedAt.getTime()))return;
   // Phone GPS can occasionally report a very poor fix. Do not let that flip a geofence.
-  if(phoneTest&&accuracy>200)return;
+  if(phoneFix&&accuracy>200)return;
   // Ignore stale/out-of-order positions. This also prevents a browser and native app
   // from replaying an old fix and repeatedly toggling the same test geofence.
   if(pool){
@@ -724,7 +727,7 @@ async function evaluateGeofences(pos){
   const fences=pool?await q('SELECT * FROM geofences WHERE active=true'):memory.geofences.filter(x=>x.active!==false);
   for(const f of fences){
     const radius=Math.max(5,num(f.radius_m||f.radiusM)),d=distance(pos,{latitude:num(f.latitude),longitude:num(f.longitude)});
-    const margin=Math.min(Math.max(phoneTest?50:25,accuracy*1.5),Math.max(50,radius*.35));
+    const margin=Math.min(Math.max(phoneFix?50:25,accuracy*1.5),Math.max(50,radius*.35));
     const rawInside=d<=radius;
     const prev=pool?(await q('SELECT inside,candidate_inside AS "candidateInside",candidate_count AS "candidateCount",last_notified_at AS "lastNotifiedAt",last_position_at AS "lastPositionAt" FROM geofence_state WHERE vehicle_id=$1 AND geofence_id=$2',[pos.vehicleId,f.id]))[0]:f.states?.[pos.vehicleId];
     if(!prev){
@@ -751,7 +754,7 @@ async function evaluateGeofences(pos){
     }
     let finalInside=wasInside,notify=false;
     // Phone tests need two consecutive fixes on the new side of the fence.
-    const needed=phoneTest?2:1;
+    const needed=phoneFix?2:1;
     if(desired!==wasInside&&candidateCount>=needed){
       finalInside=desired;candidateInside=null;candidateCount=0;
       const lastNotified=prev.lastNotifiedAt?new Date(prev.lastNotifiedAt).getTime():0;
@@ -808,10 +811,10 @@ function operatingAreaForTrip(fences,zones,depot){
   const pool=containing.length?containing:areas;
   return pool.sort((a,b)=>distance(anchor,{latitude:num(a.latitude),longitude:num(a.longitude)})-distance(anchor,{latitude:num(b.latitude),longitude:num(b.longitude)}))[0]
 }
-function trustedVehicleGpsSource(source){return ['telematics','truck-device','tracker','vehicle-tracker','phone-test'].includes(String(source||'').toLowerCase())}
+function trustedVehicleGpsSource(source){return ['telematics','truck-device','tracker','vehicle-tracker','phone-test','android-background'].includes(String(source||'').toLowerCase())}
 async function previousVehiclePosition(pos){
   if(pool){
-    return (await q('SELECT latitude,longitude,recorded_at AS "recordedAt" FROM gps_positions WHERE vehicle_id=$1 AND recorded_at<$2 ORDER BY recorded_at DESC LIMIT 1',[pos.vehicleId,pos.recordedAt]))[0]||null
+    return (await q('SELECT latitude,longitude,source,trip_id AS "tripId",driver_id AS "driverId",recorded_at AS "recordedAt" FROM gps_positions WHERE vehicle_id=$1 AND recorded_at<$2 ORDER BY recorded_at DESC LIMIT 1',[pos.vehicleId,pos.recordedAt]))[0]||null
   }
   const at=new Date(pos.recordedAt).getTime();
   return memory.gps.filter(x=>x.vehicleId===pos.vehicleId&&new Date(x.recordedAt).getTime()<at).sort((a,b)=>new Date(b.recordedAt)-new Date(a.recordedAt))[0]||null
@@ -836,9 +839,9 @@ async function ensureOperationalGeofence({name,latitude,longitude,kind='custom',
   const fences=await operationalGeofences(false),names=[wanted,...aliases].filter(Boolean);
   let existing=null;
   if(hasPoint){
-    existing=fences.find(f=>f.active!==false&&distance({latitude:lat,longitude:lon},{latitude:num(f.latitude),longitude:num(f.longitude)})<=Math.max(100,Math.min(300,num(f.radiusM||f.radius_m)||500)));
+    existing=fences.find(f=>f.active!==false&&!TripSites.isTown(f)&&distance({latitude:lat,longitude:lon},{latitude:num(f.latitude),longitude:num(f.longitude)})<=Math.max(100,Math.min(300,num(f.radiusM||f.radius_m)||500)));
   }
-  if(!existing&&!hasPoint)existing=fences.find(f=>f.active!==false&&names.some(n=>geofenceNameMatches(f.name,n)));
+  if(!existing&&!hasPoint)existing=fences.find(f=>f.active!==false&&names.some(n=>TripSites.key(f.name)===TripSites.key(n))&&!TripSites.isTown(f));
   if(existing)return existing;
   if(!hasPoint)return null;
   const f={id:crypto.randomUUID(),name:wanted||'Trip site',latitude:lat,longitude:lon,radiusM:Math.max(25,num(radiusM)||500),eventTypes:['enter','exit'],kind:['depot','loading','offloading','custom'].includes(kind)?kind:'custom',active:true};
@@ -854,7 +857,8 @@ function linkedTripZones(route,leg,trip,fences){
   const offload=offFence?{latitude:num(offFence.latitude),longitude:num(offFence.longitude),name:String(offFence.name||base?.offload?.name||'Offloading point')}:base?.offload;
   if(!load||!offload)return null;
   const approachKm=Math.max(2,Math.min(5,num(route?.approachKm)||5)),arrivalKm=Math.max(.5,Math.min(approachKm-.25,num(route?.arrivalKm)||2));
-  return{load,offload,approachM:approachKm*1000,arrivalM:arrivalKm*1000,departM:Math.min(approachKm*1000,Math.max(arrivalKm*1000+500,arrivalKm*1250)),roundTrip:Boolean(route?.roundTrip)||/[↔]|round\s*trip|return/i.test(String(route?.name||'')+' '+String(route?.notes||''))}
+  const loadArrivalM=loadFence?Math.max(25,num(loadFence.radiusM||loadFence.radius_m)||500):arrivalKm*1000,offloadArrivalM=offFence?Math.max(25,num(offFence.radiusM||offFence.radius_m)||500):arrivalKm*1000;
+  return{load,offload,loadArrivalM,offloadArrivalM,loadDepartM:loadArrivalM+Math.max(100,loadArrivalM*.25),offloadDepartM:offloadArrivalM+Math.max(100,offloadArrivalM*.25),approachM:approachKm*1000,arrivalM:arrivalKm*1000,departM:Math.min(approachKm*1000,Math.max(arrivalKm*1000+500,arrivalKm*1250)),roundTrip:Boolean(route?.roundTrip)||/[↔]|round\s*trip|return/i.test(String(route?.name||'')+' '+String(route?.notes||''))}
 }
 async function linkTripLegGeofences(tripId,legId){
   const snapshot=await readOpsState(),t=(snapshot.trips||[]).find(x=>x.id===tripId);
@@ -864,8 +868,8 @@ async function linkTripLegGeofences(tripId,legId){
   const all=await operationalGeofences(false);
   const routeLoadLat=Number(route.loadLat),routeLoadLon=Number(route.loadLon),routeOffLat=Number(route.offloadLat),routeOffLon=Number(route.offloadLon);
   const loadPointOk=Number.isFinite(routeLoadLat)&&Number.isFinite(routeLoadLon)&&!(routeLoadLat===0&&routeLoadLon===0),offPointOk=Number.isFinite(routeOffLat)&&Number.isFinite(routeOffLon)&&!(routeOffLat===0&&routeOffLon===0);
-  const existingLoad=!loadPointOk?all.find(f=>f.active!==false&&[route.loadName,client?.name].filter(Boolean).some(n=>geofenceNameMatches(f.name,n))):null;
-  const existingOff=!offPointOk?all.find(f=>f.active!==false&&[route.offloadName,route.name].filter(Boolean).some(n=>geofenceNameMatches(f.name,n))&&(!existingLoad||f.id!==existingLoad.id)):null;
+  const existingLoad=!loadPointOk?TripSites.exactFence(all,route.loadName):null;
+  const existingOff=!offPointOk?TripSites.exactFence(all,route.offloadName):null;
   const load=existingLoad||await ensureOperationalGeofence({name:String(route.loadName||client?.name||'Loading point'),latitude:routeLoadLat,longitude:routeLoadLon,kind:'loading',radiusM:Math.max(250,num(route.loadingRadiusM)||500),aliases:[client?.name,route.name]});
   const offload=existingOff||await ensureOperationalGeofence({name:String(route.offloadName||'Offloading point'),latitude:routeOffLat,longitude:routeOffLon,kind:'offloading',radiusM:Math.max(250,num(route.offloadingRadiusM)||500),aliases:[route.offloadName]});
   const linked=await mutateOpsState(state=>{
@@ -887,6 +891,55 @@ async function linkTripLegGeofences(tripId,legId){
   });
   return{...linked.result,revision:linked.revision}
 }
+async function syncSavedTripSites(){
+  const fences=await operationalGeofences(false),snapshot=await readOpsState(),draft=structuredClone(snapshot);
+  let linked=TripSites.reuseSaved(draft,fences);
+  for(const site of TripSites.sites(draft)){
+    const route=(draft.routes||[]).find(r=>r.id===site.routeId);if(!route)continue;
+    const prefix=site.kind==='loading'?'load':'offload',lat=Number(route[prefix+'Lat']),lon=Number(route[prefix+'Lon']);
+    if(site.fenceId||!Number.isFinite(lat)||!Number.isFinite(lon)||(lat===0&&lon===0))continue;
+    const f=await ensureOperationalGeofence({name:site.name,latitude:lat,longitude:lon,kind:site.kind,radiusM:500});
+    if(f){fences.push(f);TripSites.applyFence(draft,site.routeId,site.kind,f);linked++}
+  }
+  if(!linked)return {linked:0,pending:TripSites.sites(draft).filter(s=>!s.fenceId).length};
+  const choices=TripSites.sites(draft).filter(site=>site.fenceId).map(site=>({site,fence:fences.find(f=>f.id===site.fenceId)}));
+  const changed=await mutateOpsState(state=>{
+    let count=TripSites.reuseSaved(state,fences);
+    for(const {site,fence} of choices){
+      const current=(state.routes||[]).find(r=>r.id===site.routeId),original=(snapshot.routes||[]).find(r=>r.id===site.routeId),prefix=site.kind==='loading'?'load':'offload';
+      if(!current||!original||!fence||current[prefix+'Name']!==original[prefix+'Name'])continue;
+      if(current[site.kind+'GeofenceId']!==fence.id){TripSites.applyFence(state,site.routeId,site.kind,fence);count++}
+    }
+    return count;
+  });
+  return {linked:changed.result,pending:TripSites.sites(draft).filter(s=>!s.fenceId).length};
+}
+async function seedRouteTownGeofences(){
+  const state=await readOpsState();if(state.routeTownGeofencesVersion===1)return {skipped:true};
+  const towns=require('./route-town-geofences.json'),fences=await operationalGeofences(false);let added=0;
+  for(const town of towns){
+    const name='Route town · '+town.name;
+    if(fences.some(f=>TripSites.key(f.name)===TripSites.key(name)))continue;
+    const f={id:crypto.randomUUID(),name,latitude:town.latitude,longitude:town.longitude,radiusM:town.radiusM,eventTypes:['enter','exit'],kind:'custom',active:true};
+    if(pool)await q('INSERT INTO geofences(id,name,latitude,longitude,radius_m,event_types,kind) VALUES($1,$2,$3,$4,$5,$6,$7)',[f.id,name,f.latitude,f.longitude,f.radiusM,f.eventTypes,f.kind]);
+    else memory.geofences.push(f);
+    added++;
+  }
+  await mutateOpsState(s=>{s.routeTownGeofencesVersion=1});return {added};
+}
+app.get('/api/trip-sites',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
+  try{
+    await syncSavedTripSites();const state=await readOpsState(),fences=await operationalGeofences(false);
+    res.json({sites:TripSites.sites(state).map(s=>({...s,fenceId:(state.routes||[]).find(r=>r.id===s.routeId)?.[s.kind+'GeofenceId']||s.fenceId})),towns:require('./route-town-geofences.json'),savedFences:fences.length});
+  }catch(e){res.status(500).json({error:e.message})}
+});
+app.post('/api/trip-sites/link',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
+  try{
+    const fence=(await operationalGeofences(false)).find(f=>f.id===req.body.fenceId);
+    await mutateOpsState(state=>TripSites.applyFence(state,String(req.body.routeId||''),req.body.kind,fence));
+    res.json({success:true});
+  }catch(e){res.status(400).json({error:e.message})}
+});
 async function tripGeoNotify(trip,title,message,severity='info'){
   await Promise.allSettled([
     createNotification({type:'trip-geofence',severity,title,message,role:'driver',driverId:trip.driverId,linkedType:'trip',linkedId:trip.id}),
@@ -902,13 +955,13 @@ function serverTripPriority(t){
 }
 
 async function evaluateDepotArrival(pos){
- if(!['telematics','truck-device','tracker','vehicle-tracker'].includes(String(pos.source||'').toLowerCase()))return;
+ if(!['telematics','truck-device','tracker','vehicle-tracker','android-background'].includes(String(pos.source||'').toLowerCase()))return;
  const snapshot=await readOpsState(),previous=await previousVehiclePosition(pos),fences=(await operationalGeofences(true)).filter(isCompanyDepot);
  const candidates=(snapshot.trips||[]).filter(t=>t.truckId===pos.vehicleId&&!TripLifecycle.completed(t)&&TripLifecycle.delivered(t)).sort((a,b)=>new Date(b.createdAt||b.date||0)-new Date(a.createdAt||a.date||0));
- const t=candidates[0];if(!t)return;const depot=fences.find(f=>canConfirmGps(pos,previous,f,t,geofenceInside));if(!depot)return;
+ const t=pos.source==='android-background'?candidates.find(x=>x.id===pos.tripId):candidates[0];if(!t)return;const depot=fences.find(f=>canConfirmGps(pos,previous,f,t,geofenceInside));if(!depot)return;
  const changed=await mutateOpsState(state=>{const trip=(state.trips||[]).find(x=>x.id===t.id);if(!trip||!canConfirmGps(pos,previous,depot,trip,geofenceInside))return false;
- const marked=TripLifecycle.confirmDepot(trip,{at:pos.recordedAt,source:'tracker',depotId:depot.id,depotName:depot.name,position:{latitude:pos.latitude,longitude:pos.longitude}});if(marked){releaseVehicle(state,trip);state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:'Tracker',action:trip.number+' arrived at Angermund depot · trip complete',linkedType:'trip',linkedId:trip.id})}return marked});
- if(changed.result)await tripGeoNotify(t,t.number+' arrived at Angermund depot','Return confirmed by vehicle tracker. Journey complete.');
+ const marked=TripLifecycle.confirmDepot(trip,{at:pos.recordedAt,source:pos.source==='android-background'?'phone-geofence':'tracker',depotId:depot.id,depotName:depot.name,position:{latitude:pos.latitude,longitude:pos.longitude}});if(marked){releaseVehicle(state,trip);state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:'Tracker',action:trip.number+' arrived at Angermund depot · trip complete',linkedType:'trip',linkedId:trip.id})}return marked});
+ if(changed.result)await tripGeoNotify(t,t.number+' arrived at Angermund depot',(pos.source==='android-background'?'Return confirmed by active driver phone geofence. Journey complete.':'Return confirmed by vehicle tracker. Journey complete.'));
 }
 app.post('/api/trips/:id/return',auth,roles('admin','manager','dispatcher','driver'),async(req,res)=>{try{const changed=await mutateOpsState(state=>{const t=(state.trips||[]).find(x=>x.id===req.params.id);if(!t){const e=Error('Trip not found');e.status=404;throw e}if(req.user.role==='driver'&&t.driverId!==req.user.driverId){const e=Error('Trip not assigned to you');e.status=403;throw e}TripLifecycle.startReturn(t,new Date().toISOString(),req.user.role);return t});res.json({trip:changed.result,revision:changed.revision})}catch(e){res.status(e.status||400).json({error:e.message})}});
 app.post('/api/admin/trips/:id/depot-arrival',auth,roles('admin','manager','dispatcher'),async(req,res)=>{try{if(req.body.confirmAtDepot!==true)return res.status(400).json({error:'Confirm that the truck has physically arrived at Angermund depot'});
@@ -916,14 +969,21 @@ app.post('/api/admin/trips/:id/depot-arrival',auth,roles('admin','manager','disp
 
 async function evaluateTripZones(pos){
   if(!trustedVehicleGpsSource(pos.source))return;
+  if(pos.source==='android-background'&&(!Number.isFinite(Number(pos.accuracy))||pos.accuracy==null||Number(pos.accuracy)>100))return;
   const snapshot=await readOpsState();
-  const active=(snapshot.trips||[]).filter(t=>t.truckId===pos.vehicleId&&!TripLifecycle.completed(t)).sort((a,b)=>{const p=serverTripPriority(b)-serverTripPriority(a);if(p)return p;return new Date(b.createdAt||b.date||0)-new Date(a.createdAt||a.date||0)})[0];
+  const active=(snapshot.trips||[]).filter(t=>t.truckId===pos.vehicleId&&!TripLifecycle.completed(t)&&(pos.source!=='android-background'||t.id===pos.tripId)).sort((a,b)=>{const p=serverTripPriority(b)-serverTripPriority(a);if(p)return p;return new Date(b.createdAt||b.date||0)-new Date(a.createdAt||a.date||0)})[0];
   if(!active||TripLifecycle.returning(active))return;
   const activeLeg=activeTripLegServer(active),route=(snapshot.routes||[]).find(r=>r.id===(activeLeg?.routeId||active.routeId)),multi=Array.isArray(active.legs)&&active.legs.length>1;
   const fences=await operationalGeofences(true),zones=linkedTripZones(route,activeLeg,active,fences);
   if(!zones)return;
   const depot=depotGeofenceForTrip(fences,zones),operatingArea=operatingAreaForTrip(fences,zones,depot),prevPos=(depot||operatingArea)?await previousVehiclePosition(pos):null;
   const preliminaryGeo=activeLeg?.geo||active.geo||{},loadM=distance(pos,zones.load),offM=distance(pos,zones.offload);
+  const phone=pos.source==='android-background';
+  if(phone&&!PhoneTracking.permitsPoint(active,{driverId:pos.driverId},pos))return;
+  const phonePrevious=phone?await previousVehiclePosition(pos):null;
+  const phonePriorValid=!phone||Boolean(phonePrevious&&phonePrevious.source==='android-background'&&phonePrevious.tripId===pos.tripId&&phonePrevious.driverId===pos.driverId&&Date.parse(phonePrevious.recordedAt)>=Date.parse(active.phoneTracking?.startedAt)&&Date.parse(pos.recordedAt)-Date.parse(phonePrevious.recordedAt)<=120000);
+  if(!phonePriorValid)return;
+  const phoneLoadInside=!phone||distance(phonePrevious,zones.load)<=zones.loadArrivalM,phoneOffInside=!phone||distance(phonePrevious,zones.offload)<=zones.offloadArrivalM;
   const started=Boolean(preliminaryGeo.tripStartedAt||active.startedAt||String(activeLeg?.status||'').toLowerCase()==='in transit'||(!multi&&(num(active.stage)>=3||['In transit','At offloading','Return journey','Delivered','Returned'].includes(active.status))));
   const depotM=depot?distance(pos,{latitude:num(depot.latitude),longitude:num(depot.longitude)}):Infinity;
   const prevDepotM=depot&&prevPos?distance(prevPos,{latitude:num(depot.latitude),longitude:num(depot.longitude)}):Infinity;
@@ -932,7 +992,7 @@ async function evaluateTripZones(pos){
   const areaInside=operatingArea?geofenceInside(pos,operatingArea):false,prevAreaInside=operatingArea&&prevPos?geofenceInside(prevPos,operatingArea):false;
   const movingTowardOffload=Boolean(prevPos)&&offM+75<prevOffM;
   const movingTowardDepot=Boolean(prevPos)&&depotM+75<prevDepotM;
-  const directDeparture=Boolean(depot&&preliminaryGeo.loadDepartedAt&&!preliminaryGeo.loadedAtDepotAt&&!started&&!depotInside&&loadM>=zones.departM&&movingTowardOffload&&!movingTowardDepot);
+  const directDeparture=Boolean(depot&&preliminaryGeo.loadDepartedAt&&!preliminaryGeo.loadedAtDepotAt&&!started&&!depotInside&&loadM>=zones.loadDepartM&&movingTowardOffload&&!movingTowardDepot);
   const depotReturn=Boolean(depot&&preliminaryGeo.loadDepartedAt&&!started&&depotInside&&!preliminaryGeo.loadedAtDepotAt);
   const depotExit=Boolean(depot&&preliminaryGeo.loadedAtDepotAt&&!started&&!depotInside&&(prevDepotInside||depotM>(Math.max(5,num(depot.radius_m||depot.radiusM)||500)+100)));
   const loadConfirmed=Boolean(preliminaryGeo.loadArrivedAt||preliminaryGeo.loadDepartedAt||preliminaryGeo.loadedAtDepotAt||/loaded|at loading|departure pending/i.test(String(active.status||'')));
@@ -941,19 +1001,19 @@ async function evaluateTripZones(pos){
   const possible=
     collectionExit||
     (!started&&!preliminaryGeo.loadApproachAt&&loadM<=zones.approachM)||
-    (!started&&!preliminaryGeo.loadArrivedAt&&loadM<=zones.arrivalM)||
-    (preliminaryGeo.loadArrivedAt&&!preliminaryGeo.loadDepartedAt&&loadM>=zones.departM)||
+    (!started&&!preliminaryGeo.loadArrivedAt&&loadM<=zones.loadArrivalM&&phoneLoadInside)||
+    (preliminaryGeo.loadArrivedAt&&!preliminaryGeo.loadDepartedAt&&loadM>=zones.loadDepartM)||
     depotReturn||depotExit||directDeparture||areaExit||
     (started&&!preliminaryGeo.offloadApproachAt&&offM<=zones.approachM)||
-    (started&&!preliminaryGeo.offloadArrivedAt&&offM<=zones.arrivalM)||
-    (preliminaryGeo.offloadArrivedAt&&!preliminaryGeo.offloadDepartedAt&&offM>=zones.departM)||
+    (started&&!preliminaryGeo.offloadArrivedAt&&offM<=zones.offloadArrivalM&&phoneOffInside)||
+    (preliminaryGeo.offloadArrivedAt&&!preliminaryGeo.offloadDepartedAt&&offM>=zones.offloadDepartM)||
     (!multi&&zones.roundTrip&&preliminaryGeo.offloadDepartedAt&&!preliminaryGeo.returnApproachAt&&loadM<=zones.approachM)||
-    (!multi&&zones.roundTrip&&preliminaryGeo.returnApproachAt&&!preliminaryGeo.returnArrivedAt&&loadM<=zones.arrivalM);
+    (!multi&&zones.roundTrip&&preliminaryGeo.returnApproachAt&&!preliminaryGeo.returnArrivedAt&&loadM<=zones.loadArrivalM&&phoneLoadInside);
   if(!possible)return;
 
   const changed=await mutateOpsState(async state=>{
     const t=(state.trips||[]).find(x=>x.id===active.id),currentLeg=t?activeTripLegServer(t):null,r=(state.routes||[]).find(x=>x.id===(currentLeg?.routeId||active.routeId)),z=linkedTripZones(r,currentLeg,t,fences),multiLeg=Array.isArray(t?.legs)&&t.legs.length>1;
-    if(!t||!z)return{events:[]};
+    if(!t||!z||(phone&&!PhoneTracking.permitsPoint(t,{driverId:pos.driverId},pos)))return{events:[]};
     if(currentLeg)currentLeg.geo??={};else t.geo??={};
     state.tasks??=[];state.trucks??=[];state.drivers??=[];
     const g=currentLeg?currentLeg.geo:t.geo,now=new Date().toISOString(),lm=distance(pos,z.load),om=distance(pos,z.offload),events=[],km=m=>(m/1000).toFixed(1);
@@ -983,12 +1043,12 @@ async function evaluateTripZones(pos){
       g.loadApproachAt=now;
       events.push({title:t.number+' approaching loading point',message:pos.vehicleId+' is '+km(lm)+' km from '+z.load.name+'.'})
     }
-    if(!statusStarted()&&!g.loadArrivedAt&&lm<=z.arrivalM){
+    if(!statusStarted()&&!g.loadArrivedAt&&lm<=z.loadArrivalM&&phoneLoadInside){
       g.loadArrivedAt=now;g.loadArrivalPosition={latitude:pos.latitude,longitude:pos.longitude};g.loadWasAtDepot=Boolean(dep&&depInside);
       t.stage=Math.max(2,num(t.stage)||1);t.status='At loading';if(currentLeg)currentLeg.status='At loading';
       events.push({title:t.number+' arrived at loading',message:pos.vehicleId+' arrived at '+z.load.name+' ('+km(lm)+' km from pin).'})
     }
-    if(g.loadArrivedAt&&!g.loadDepartedAt&&lm>=z.departM){
+    if(g.loadArrivedAt&&!g.loadDepartedAt&&lm>=z.loadDepartM){
       g.loadDepartedAt=now;g.departurePendingAt=now;g.loadDeparturePosition={latitude:pos.latitude,longitude:pos.longitude};g.offloadDistanceAtLoadDepartureKm=Number((om/1000).toFixed(2));
       if(area){
         t.stage=Math.max(2,num(t.stage)||1);t.status='Loaded · departure pending';if(currentLeg)currentLeg.status='Loaded · departure pending';
@@ -1014,7 +1074,7 @@ async function evaluateTripZones(pos){
       if(area){t.stage=Math.max(2,num(t.stage)||1);t.status='Loaded · departure pending';if(currentLeg)currentLeg.status='Loaded · departure pending';events.push({title:t.number+' left depot loaded',message:pos.vehicleId+' left '+dep.name+' loaded. Trip remains staged until the truck exits '+area.name+'.'})}
       else if(startTrip('depot-exit-after-loading',now))events.push({title:t.number+' trip started',message:pos.vehicleId+' left '+dep.name+' loaded. This depot exit is the official trip start.'})
     }
-    if(!area&&dep&&g.loadDepartedAt&&!g.loadedAtDepotAt&&!statusStarted()&&!depInside&&lm>=z.departM&&prevPos&&om+75<previousOffM&&!(depM+75<prevDepM)){
+    if(!area&&dep&&g.loadDepartedAt&&!g.loadedAtDepotAt&&!statusStarted()&&!depInside&&lm>=z.loadDepartM&&prevPos&&om+75<previousOffM&&!(depM+75<prevDepM)){
       const actualStart=g.loadDepartedAt||now;g.directDepartureConfirmedAt=now;
       if(startTrip('direct-from-loading',actualStart))events.push({title:t.number+' direct departure confirmed',message:pos.vehicleId+' continued toward '+z.offload.name+' instead of returning to '+dep.name+'. Trip start time is the loading-point departure time.'})
     }
@@ -1027,11 +1087,11 @@ async function evaluateTripZones(pos){
       g.offloadApproachAt=now;
       events.push({title:t.number+' approaching offloading',message:pos.vehicleId+' is '+km(om)+' km from '+z.offload.name+'.'})
     }
-    if(statusStarted()&&!g.offloadArrivedAt&&om<=z.arrivalM){
+    if(statusStarted()&&!g.offloadArrivedAt&&om<=z.offloadArrivalM&&phoneOffInside){
       g.offloadArrivedAt=now;g.offloadArrivalPosition={latitude:pos.latitude,longitude:pos.longitude};t.status='At offloading';t.arrivedAt=t.arrivedAt||now;if(currentLeg){currentLeg.status='At offloading';currentLeg.arrivedAt=currentLeg.arrivedAt||now}
       events.push({title:t.number+' arrived at offloading',message:pos.vehicleId+' arrived at '+z.offload.name+' ('+km(om)+' km from pin).'})
     }
-    if(g.offloadArrivedAt&&!g.offloadDepartedAt&&om>=z.departM){
+    if(g.offloadArrivedAt&&!g.offloadDepartedAt&&om>=z.offloadDepartM){
       g.offloadDepartedAt=now;g.offloadDeparturePosition={latitude:pos.latitude,longitude:pos.longitude};
       if(!multiLeg||!(t.legs||[]).some(l=>num(l.sequence)>num(currentLeg?.sequence)&&!['Delivered','Invoiced','Closed'].includes(l.status))){
         if(currentLeg)currentLeg.status='Delivered';g.returnStartedAt=now;TripLifecycle.startReturn(t,now,'tracker');
@@ -1684,9 +1744,9 @@ function carrierRowFromExcel(row){
     shipper:String(g('Shipper')||'').trim(),mainContact:String(g('Main Contact','Contact')||'').trim(),status:String(g('Status')||'').trim(),pickCount:excelImportNumber(g('# of Picks','Picks')),dropCount:excelImportNumber(g('# of Drops','Drops')),
     productCodes:String(g('Product')||'').trim(),product:String(g('Product Short Description','Load')||'').trim(),productWeightRaw,productNetWeightRaw,weightKg,weightUom:String(g('Product Weight UoM','Weight UoM')||'').trim(),
     pickDate:(pickPlanStart||'').slice(0,10)||excelImportDate(g('Pick Plan Date Start','Pick Date','Date')),pickPlanStart,pickPlanEnd:excelImportDateTime(g('Pick Plan Date End')),pickActualArrival:excelImportDateTime(g('Pick Actual Arrival')),pickActualDeparture:excelImportDateTime(g('Pick Actual Departure')),pickEta:excelImportDateTime(g('Pick ETA')),
-    origin:String(g('Origin Name','Origin')||'').trim(),originCity:String(g('Origin City')||'').trim(),originState:String(g('Origin State/Province','Origin State')||'').trim(),originCountry:String(g('Origin Country')||'').trim(),originPostalCode:String(g('Origin Postal Code')||'').trim(),intermediateStops:String(g('Intermediate Stops')||'').trim(),
+    origin:String(g('Origin Name','Origin')||'').trim(),originAddress:String(g('Origin Address','Loading Address','Pickup Address')||'').trim(),originCity:String(g('Origin City')||'').trim(),originState:String(g('Origin State/Province','Origin State')||'').trim(),originCountry:String(g('Origin Country')||'').trim(),originPostalCode:String(g('Origin Postal Code')||'').trim(),intermediateStops:String(g('Intermediate Stops')||'').trim(),
     dropDate:(dropPlanStart||'').slice(0,10)||excelImportDate(g('Drop Plan Date Start','Drop Date')),dropPlanStart,dropPlanEnd:excelImportDateTime(g('Drop Plan Date End')),dropActualArrival:excelImportDateTime(g('Drop Actual Arrival')),dropActualDeparture:excelImportDateTime(g('Drop Actual Departure')),dropEta:excelImportDateTime(g('Drop ETA')),
-    destination:String(g('Destination Name','Destination')||'').trim(),destinationCity:String(g('Destination City')||'').trim(),destinationState:String(g('Destination State/Province','Destination State')||'').trim(),destinationCountry:String(g('Destination Country')||'').trim(),destinationPostalCode:String(g('Destination Postal Code')||'').trim(),
+    destination:String(g('Destination Name','Destination')||'').trim(),destinationAddress:String(g('Destination Address','Offloading Address','Delivery Address')||'').trim(),destinationCity:String(g('Destination City')||'').trim(),destinationState:String(g('Destination State/Province','Destination State')||'').trim(),destinationCountry:String(g('Destination Country')||'').trim(),destinationPostalCode:String(g('Destination Postal Code')||'').trim(),
     trailers:String(g('Trailer','Trailers')||'').trim(),equipment:String(g('Equipment')||'').trim(),serviceRequests:String(g('Service Requests')||'').trim(),
     tenderDate:excelImportDateTime(g('Tender Date')),acceptDate:excelImportDateTime(g('Accept Date')),closedDate:excelImportDateTime(g('Closed Date')),rate:excelImportNumber(g('Rate','Amount')),currency:String(g('Currency')||'NAD').trim(),
     shipmentReferences:String(g('Shipment References','References')||'').trim(),divertedTo:String(g('Diverted To')||'').trim(),divertedFrom:String(g('Diverted From')||'').trim()
@@ -2178,7 +2238,7 @@ function applyCarrierWorkbookRows(state,rows,source,importId){
     const routeName=(src.origin||'Unknown origin')+' -> '+(src.destination||'Unknown destination'),actualRate=src.rate>1?src.rate:0,ratePending=src.rate<=1;if(ratePending)pendingRates++;
     let route=state.routes.find(x=>excelImportKey(x.name)===excelImportKey(routeName));if(!route){route={id:'rte_excel_'+excelImportSlug(routeName),name:routeName,distance:0,namibiaKm:0,rate:actualRate,crossBorder:false,roundTrip:false,loadName:src.origin,offloadName:src.destination,notes:'Imported carrier load; '+[src.originCity,src.destinationCity].filter(Boolean).join(' → '),sourceWorkbook:source,importBatchId:importId};state.routes.push(route);newRoutes++}else if(actualRate>0&&num(route.rate)<=0)route.rate=actualRate;
     const productLabel=src.product&&src.product!=='DEFAULT'?src.product:'NBL load',load=(productLabel?productLabel.slice(0,220):'NBL load')+(src.orderRef?' · Order '+src.orderRef:''),tons=src.weightUom.toLowerCase()==='kg'?Number((src.weightKg/1000).toFixed(3)):0;
-    const carrierDetails={tmsId:src.tmsId,primaryId:src.primaryId,orderRef:src.orderRef,pro:src.pro,shipper:src.shipper,mainContact:src.mainContact,status:src.status,pickCount:num(src.pickCount),dropCount:num(src.dropCount),productCodes:src.productCodes,productDescription:src.product,productWeightRaw:src.productWeightRaw,productNetWeightRaw:src.productNetWeightRaw,weightKg:num(src.weightKg),weightUom:src.weightUom,pickPlanStart:src.pickPlanStart,pickPlanEnd:src.pickPlanEnd,pickActualArrival:src.pickActualArrival,pickActualDeparture:src.pickActualDeparture,pickEta:src.pickEta,origin:{name:src.origin,city:src.originCity,state:src.originState,country:src.originCountry,postalCode:src.originPostalCode},intermediateStops:src.intermediateStops,dropPlanStart:src.dropPlanStart,dropPlanEnd:src.dropPlanEnd,dropActualArrival:src.dropActualArrival,dropActualDeparture:src.dropActualDeparture,dropEta:src.dropEta,destination:{name:src.destination,city:src.destinationCity,state:src.destinationState,country:src.destinationCountry,postalCode:src.destinationPostalCode},trailers:trailerRegs,equipment:src.equipment,serviceRequests:src.serviceRequests,tenderDate:src.tenderDate,acceptDate:src.acceptDate,closedDate:src.closedDate,rate:num(src.rate),currency:src.currency,shipmentReferences:src.shipmentReferences,divertedTo:src.divertedTo,divertedFrom:src.divertedFrom};
+    const carrierDetails={tmsId:src.tmsId,primaryId:src.primaryId,orderRef:src.orderRef,pro:src.pro,shipper:src.shipper,mainContact:src.mainContact,status:src.status,pickCount:num(src.pickCount),dropCount:num(src.dropCount),productCodes:src.productCodes,productDescription:src.product,productWeightRaw:src.productWeightRaw,productNetWeightRaw:src.productNetWeightRaw,weightKg:num(src.weightKg),weightUom:src.weightUom,pickPlanStart:src.pickPlanStart,pickPlanEnd:src.pickPlanEnd,pickActualArrival:src.pickActualArrival,pickActualDeparture:src.pickActualDeparture,pickEta:src.pickEta,origin:{name:src.origin,address:src.originAddress||'',city:src.originCity,state:src.originState,country:src.originCountry,postalCode:src.originPostalCode},intermediateStops:src.intermediateStops,dropPlanStart:src.dropPlanStart,dropPlanEnd:src.dropPlanEnd,dropActualArrival:src.dropActualArrival,dropActualDeparture:src.dropActualDeparture,dropEta:src.dropEta,destination:{name:src.destination,address:src.destinationAddress||'',city:src.destinationCity,state:src.destinationState,country:src.destinationCountry,postalCode:src.destinationPostalCode},trailers:trailerRegs,equipment:src.equipment,serviceRequests:src.serviceRequests,tenderDate:src.tenderDate,acceptDate:src.acceptDate,closedDate:src.closedDate,rate:num(src.rate),currency:src.currency,shipmentReferences:src.shipmentReferences,divertedTo:src.divertedTo,divertedFrom:src.divertedFrom};
     let desiredStage=1,desiredStatus='Planned';if(src.pickActualArrival){desiredStage=2;desiredStatus='Loading'}if(src.pickActualDeparture){desiredStage=3;desiredStatus='In transit'}if(src.dropActualArrival||src.dropActualDeparture){desiredStage=4;desiredStatus='Delivered'}
     let trip=state.trips.find(x=>String(x.externalTmsId||x.sourceTmsId||'')===src.tmsId||x.id==='trip_tms_'+src.tmsId);
     if(!trip){
@@ -3114,9 +3174,20 @@ app.get('/api/events',auth,(req,res)=>{res.set({'Content-Type':'text/event-strea
 function driverMobileTrip(state,driverId){
   const rows=(state.trips||[]).filter(t=>t.driverId===driverId&&!TripLifecycle.completed(t));
   const priority=t=>{const x=String(t.status||'').toLowerCase();if(/loading|to loading|loaded|departure pending|in transit|at offloading|awaiting pod|return journey|returning/.test(x))return 500;if(/planned|assigned|booked|at loading/.test(x))return 400;if(/delivered/.test(x)&&!t.pod)return 250;if(/delivered/.test(x)&&!t.driverComplete)return 200;return 100};
-  rows.sort((a,b)=>priority(b)-priority(a)||(new Date(b.createdAt||b.date||0)-new Date(a.createdAt||a.date||0))||String(b.number||'').localeCompare(String(a.number||''),undefined,{numeric:true}));
+  rows.sort((a,b)=>Number(Boolean(b.phoneTracking?.active))-Number(Boolean(a.phoneTracking?.active))||priority(b)-priority(a)||(new Date(b.createdAt||b.date||0)-new Date(a.createdAt||a.date||0))||String(b.number||'').localeCompare(String(a.number||''),undefined,{numeric:true}));
   return rows[0]||null
 }
+app.post('/api/trips/:tripId/phone-tracking',auth,roles('driver'),async(req,res)=>{
+  try{
+    if(typeof req.body.active!=='boolean')return res.status(400).json({error:'active must be true or false'});
+    const changed=await mutateOpsState(state=>{
+      const trip=PhoneTracking.setTracking(state,req.params.tripId,req.user.driverId,req.body.active);
+      state.audit??=[];state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:req.user.name||'Driver',action:(req.body.active?'Started':'Stopped')+' phone trip tracking · '+trip.number,linkedType:'trip',linkedId:trip.id});
+      return {id:trip.id,phoneTracking:trip.phoneTracking};
+    });
+    res.json({...changed.result,revision:changed.revision});
+  }catch(e){res.status(e.status||400).json({error:e.message})}
+});
 app.post('/api/mobile/register',auth,async(req,res)=>{
   try{
     const deviceId=String(req.body.deviceId||'').trim().slice(0,160);if(!deviceId)return res.status(400).json({error:'deviceId is required'});
@@ -3137,7 +3208,7 @@ app.post('/api/mobile/revoke',deviceAuth,async(req,res)=>{
 });
 app.get('/api/mobile/context',deviceAuth,async(req,res)=>{
   const state=await readOpsState(),t=driverMobileTrip(state,req.user.driverId),leg=t?activeTripLegServer(t):null;
-  res.json({driverId:req.user.driverId,trip:t?{id:t.id,number:t.number,truckId:t.truckId,status:t.status}:null,leg:leg?{id:leg.id,sequence:leg.sequence,label:leg.label,routeId:leg.routeId,status:leg.status}:null})
+  res.json({driverId:req.user.driverId,trip:t?{id:t.id,number:t.number,truckId:t.truckId,status:t.status,phoneTracking:t.phoneTracking||null}:null,leg:leg?{id:leg.id,sequence:leg.sequence,label:leg.label,routeId:leg.routeId,status:leg.status}:null})
 });
 app.post('/api/mobile/gps',deviceAuth,async(req,res)=>{
   try{
@@ -3152,8 +3223,8 @@ app.post('/api/mobile/gps',deviceAuth,async(req,res)=>{
     if(req.user.role!=='driver'||!req.user.driverId)return res.status(403).json({error:'GPS upload is only available to linked driver accounts unless Phone GPS Test is enabled'});
     const state=await readOpsState(),active=driverMobileTrip(state,req.user.driverId);
     const resolved=resolveMobileGps(req.body,req.user,state.trips,active),t=resolved.trip;
-    if(!t)return res.status(204).end();
-    req.gpsHistoryOnly=resolved.historical;
+    if(!t||!t.phoneTracking?.active||t.phoneTracking.driverId!==req.user.driverId)return res.status(204).end();
+    req.gpsHistoryOnly=resolved.historical||!PhoneTracking.permitsPoint(t,req.user,{...req.body,recordedAt:resolved.recordedAt});
     req.body={...req.body,recordedAt:resolved.recordedAt,vehicleId:t.truckId,driverId:req.user.driverId,tripId:t.id};
     return gpsIn(req,res,'android-background')
   }catch(e){res.status(e.status||500).json({error:e.message})}
@@ -3531,4 +3602,4 @@ app.get('/download/android',async(req,res)=>{
   }
 });
 app.get('/login',(req,res)=>{res.setHeader('Cache-Control','no-store, no-cache, must-revalidate');res.sendFile(path.join(root,'index.html'))});app.use(express.static(root,{maxAge:'1h',setHeaders:(res,file)=>{if(file.endsWith('.html')||file.endsWith('/app.js')||file.endsWith('/styles.css')||file.endsWith('/sw.js'))res.setHeader('Cache-Control','no-store, no-cache, must-revalidate')}}));app.use((req,res)=>res.sendFile(path.join(root,'index.html')));
-initDb().then(async()=>{if(process.argv.includes('--init-only'))return pool?.end();await applyOperationalCutoffDb(pool);const fleet=await ensureCanonicalFleet();if(!fleet?.skipped)console.log('Canonical fleet applied',fleet);const insuranceImport=await applyInsuranceWorkbookImport();if(!insuranceImport?.skipped)console.log('Insurance workbook import applied',insuranceImport);const imported=await applyWorkforceEnvImport();if(!imported?.skipped)console.log('Workforce import applied',imported);const linked=await reconcileWorkforceUserLinks();if(linked.linkedDrivers||linked.linkedStaff)console.log('Workforce user links reconciled',linked);const tripImport=await applyTripWorkbookTestImport();if(!tripImport?.skipped)console.log('Trip workbook test import applied',tripImport.actual);else console.log('Trip workbook test import already applied',tripImport.actual||'');const carrierImport=await applyNblCarrierLoadImport();if(!carrierImport?.skipped)console.log('NBL carrier loads imported',carrierImport);const shunterImport=await applyShunterReconAugustImport();if(!shunterImport?.skipped)console.log('Shunter recon imported',shunterImport);const payeMigration=await applyPayeThresholdMigration();if(!payeMigration?.skipped)console.log('PAYE threshold migration applied',payeMigration);await applyAuthorizedCleanStart();await removeAuthorizedWorkbookTests();await applyOperationalCutoffDb(pool);await repairEditedLoadWorkflow();await initializeTruckDriverDefaults();app.listen(PORT,()=>console.log(`Angermund Transport V3 running on port ${PORT}`));setTimeout(ensureMonthEndPayroll,15000);setInterval(ensureMonthEndPayroll,6*60*60*1000);setTimeout(ensureEnhancedNotifications,20000);setInterval(ensureEnhancedNotifications,60000);setTimeout(ensureOperationalAlerts,20000);setInterval(ensureOperationalAlerts,10*60*1000)}).catch(e=>{console.error('Startup failed',e);process.exit(1)});
+initDb().then(async()=>{if(process.argv.includes('--init-only'))return pool?.end();await applyOperationalCutoffDb(pool);const fleet=await ensureCanonicalFleet();if(!fleet?.skipped)console.log('Canonical fleet applied',fleet);const insuranceImport=await applyInsuranceWorkbookImport();if(!insuranceImport?.skipped)console.log('Insurance workbook import applied',insuranceImport);const imported=await applyWorkforceEnvImport();if(!imported?.skipped)console.log('Workforce import applied',imported);const linked=await reconcileWorkforceUserLinks();if(linked.linkedDrivers||linked.linkedStaff)console.log('Workforce user links reconciled',linked);const tripImport=await applyTripWorkbookTestImport();if(!tripImport?.skipped)console.log('Trip workbook test import applied',tripImport.actual);else console.log('Trip workbook test import already applied',tripImport.actual||'');const carrierImport=await applyNblCarrierLoadImport();if(!carrierImport?.skipped)console.log('NBL carrier loads imported',carrierImport);const shunterImport=await applyShunterReconAugustImport();if(!shunterImport?.skipped)console.log('Shunter recon imported',shunterImport);const payeMigration=await applyPayeThresholdMigration();if(!payeMigration?.skipped)console.log('PAYE threshold migration applied',payeMigration);await applyAuthorizedCleanStart();await removeAuthorizedWorkbookTests();await applyOperationalCutoffDb(pool);await repairEditedLoadWorkflow();await initializeTruckDriverDefaults();console.log('Route town geofences',await seedRouteTownGeofences());console.log('Saved trip site links',await syncSavedTripSites());app.listen(PORT,()=>console.log(`Angermund Transport V3 running on port ${PORT}`));setTimeout(ensureMonthEndPayroll,15000);setInterval(ensureMonthEndPayroll,6*60*60*1000);setTimeout(ensureEnhancedNotifications,20000);setInterval(ensureEnhancedNotifications,60000);setTimeout(ensureOperationalAlerts,20000);setInterval(ensureOperationalAlerts,10*60*1000)}).catch(e=>{console.error('Startup failed',e);process.exit(1)});

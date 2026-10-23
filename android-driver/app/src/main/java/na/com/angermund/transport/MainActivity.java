@@ -112,7 +112,7 @@ public class MainActivity extends Activity {
         settings.setGeolocationEnabled(true);
         settings.setAllowFileAccess(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " AngermundTransportNative/1.4.0");
+        settings.setUserAgentString(settings.getUserAgentString() + " AngermundTransportNative/1.4.1");
 
         webView.addJavascriptInterface(new NativeBridge(), "AngermundNative");
         webView.setWebViewClient(new WebViewClient() {
@@ -366,6 +366,7 @@ public class MainActivity extends Activity {
     private void revokeAndStop() {
         String token = prefs().getString("device_token", "");
         gpsRequested = false; pendingJwt = "";
+        prefs().edit().putBoolean("trip_tracking_enabled", false).apply();
         clearGpsQueue();
         prefs().edit().putBoolean("enabled", false).putBoolean("gps_enabled", false).remove("device_token").remove("pending_location").remove("last_alert_at").apply();
         stopService(new Intent(this, LocationService.class));
@@ -584,6 +585,7 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void startBackgroundGps(String jwt) {
             runOnUiThread(() -> {
+                if (!prefs().getBoolean("trip_tracking_enabled", false)) return;
                 if (prefs().getBoolean("gps_test_mode", false)) {
                     stopService(new Intent(MainActivity.this, LocationService.class)); clearGpsQueue();
                     prefs().edit().putBoolean("gps_test_mode", false).remove("gps_test_label").apply();
@@ -600,8 +602,29 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public void startTripTracking(String jwt, String tripId) {
+            runOnUiThread(() -> {
+                prefs().edit().putBoolean("trip_tracking_enabled", true)
+                        .putString("gps_capture_trip", tripId == null ? "" : tripId).apply();
+                startBackgroundGps(jwt);
+            });
+        }
+
+        @JavascriptInterface
+        public void pauseTripTracking() {
+            runOnUiThread(() -> {
+                gpsRequested = false; pendingJwt = "";
+                prefs().edit().putBoolean("trip_tracking_enabled", false).putBoolean("gps_enabled", false)
+                        .putString("gps_status", "Trip tracking stopped · tap Start when driving").apply();
+                stopService(new Intent(MainActivity.this, LocationService.class)); clearGpsQueue();
+                toast("Trip tracking stopped");
+            });
+        }
+
+        @JavascriptInterface
         public void startGpsTest(String jwt, String label) {
             runOnUiThread(() -> {
+                prefs().edit().putBoolean("trip_tracking_enabled", false).apply();
                 String testLabel = label == null ? "Phone GPS Test" : label;
                 if (!prefs().getBoolean("gps_test_mode", false) || !testLabel.equals(prefs().getString("gps_test_label", ""))) {
                     stopService(new Intent(MainActivity.this, LocationService.class)); clearGpsQueue();
@@ -652,6 +675,7 @@ public class MainActivity extends Activity {
                 o.put("appVersion", BuildConfig.VERSION_NAME);
                 o.put("enabled", prefs().getBoolean("gps_enabled", false));
                 o.put("testMode", prefs().getBoolean("gps_test_mode", false));
+                o.put("tripTrackingEnabled", prefs().getBoolean("trip_tracking_enabled", false));
                 o.put("testLabel", prefs().getString("gps_test_label", "Phone GPS Test"));
                 o.put("serviceRunning", System.currentTimeMillis() - prefs().getLong("gps_service_heartbeat", 0) < 180_000L);
                 o.put("lastCapturedAt", prefs().getLong("gps_last_captured", 0));
