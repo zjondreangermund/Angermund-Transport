@@ -8,7 +8,7 @@ function canConfirmGps(pos,previous,depot,trip,inside,now=Date.now()){
  const at=Date.parse(pos.recordedAt),prior=Date.parse(previous?.recordedAt);if(!Number.isFinite(at)||!Number.isFinite(prior)||at>now+60000||now-at>15*60000||at<=prior||at-prior>5*60000)return false;
  if(pos.accuracy!=null&&Number(pos.accuracy)>Math.min(100,Math.max(5,Number(depot.radiusM||depot.radius_m)||500)))return false;
  const deliveredAt=Date.parse(trip.returnJourney?.startedAt||trip.arrivedAt||Lifecycle.legs(trip).at(-1)?.arrivedAt||trip.geo?.offloadArrivedAt||trip.startedAt||trip.date);if(Number.isFinite(deliveredAt)&&at<deliveredAt)return false;
- if(phone&&(previous.source!=='android-background'||previous.tripId!==trip.id||previous.driverId!==pos.driverId||prior<Date.parse(trip.phoneTracking.startedAt)))return false;
+ if(phone&&(previous.source!=='android-background'||previous.accuracy==null||Number(previous.accuracy)>100||previous.tripId!==trip.id||previous.driverId!==pos.driverId||prior<Date.parse(trip.phoneTracking.startedAt)))return false;
  return inside(pos,depot)&&inside(previous,depot);
 }
 function releaseVehicle(state,t){

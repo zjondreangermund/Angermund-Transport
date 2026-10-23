@@ -814,7 +814,7 @@ function operatingAreaForTrip(fences,zones,depot){
 function trustedVehicleGpsSource(source){return ['telematics','truck-device','tracker','vehicle-tracker','phone-test','android-background'].includes(String(source||'').toLowerCase())}
 async function previousVehiclePosition(pos){
   if(pool){
-    return (await q('SELECT latitude,longitude,source,trip_id AS "tripId",driver_id AS "driverId",recorded_at AS "recordedAt" FROM gps_positions WHERE vehicle_id=$1 AND recorded_at<$2 ORDER BY recorded_at DESC LIMIT 1',[pos.vehicleId,pos.recordedAt]))[0]||null
+    return (await q('SELECT latitude,longitude,accuracy,source,trip_id AS "tripId",driver_id AS "driverId",recorded_at AS "recordedAt" FROM gps_positions WHERE vehicle_id=$1 AND recorded_at<$2 ORDER BY recorded_at DESC LIMIT 1',[pos.vehicleId,pos.recordedAt]))[0]||null
   }
   const at=new Date(pos.recordedAt).getTime();
   return memory.gps.filter(x=>x.vehicleId===pos.vehicleId&&new Date(x.recordedAt).getTime()<at).sort((a,b)=>new Date(b.recordedAt)-new Date(a.recordedAt))[0]||null
@@ -981,7 +981,7 @@ async function evaluateTripZones(pos){
   const phone=pos.source==='android-background';
   if(phone&&!PhoneTracking.permitsPoint(active,{driverId:pos.driverId},pos))return;
   const phonePrevious=phone?await previousVehiclePosition(pos):null;
-  const phonePriorValid=!phone||Boolean(phonePrevious&&phonePrevious.source==='android-background'&&phonePrevious.tripId===pos.tripId&&phonePrevious.driverId===pos.driverId&&Date.parse(phonePrevious.recordedAt)>=Date.parse(active.phoneTracking?.startedAt)&&Date.parse(pos.recordedAt)-Date.parse(phonePrevious.recordedAt)<=120000);
+  const phonePriorValid=!phone||Boolean(phonePrevious&&phonePrevious.source==='android-background'&&phonePrevious.tripId===pos.tripId&&phonePrevious.driverId===pos.driverId&&phonePrevious.accuracy!=null&&Number(phonePrevious.accuracy)<=100&&Date.parse(phonePrevious.recordedAt)>=Date.parse(active.phoneTracking?.startedAt)&&Date.parse(pos.recordedAt)-Date.parse(phonePrevious.recordedAt)<=120000);
   if(!phonePriorValid)return;
   const phoneLoadInside=!phone||distance(phonePrevious,zones.load)<=zones.loadArrivalM,phoneOffInside=!phone||distance(phonePrevious,zones.offload)<=zones.offloadArrivalM;
   const started=Boolean(preliminaryGeo.tripStartedAt||active.startedAt||String(activeLeg?.status||'').toLowerCase()==='in transit'||(!multi&&(num(active.stage)>=3||['In transit','At offloading','Return journey','Delivered','Returned'].includes(active.status))));

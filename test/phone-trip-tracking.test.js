@@ -22,6 +22,7 @@ test('phone depot completion needs two fixes for the opted-in trip and current s
   const t={id:'trip',driverId:'driver',stage:4,status:'Delivered',arrivedAt:new Date(now-100000).toISOString(),phoneTracking:{active:true,driverId:'driver',startedAt:new Date(now-120000).toISOString()}},depot={name:'Angermund depot',active:true,radiusM:100};
   const point={source:'android-background',driverId:'driver',tripId:'trip',accuracy:10,recordedAt:new Date(now).toISOString()},previous={...point,recordedAt:new Date(now-45000).toISOString()};
   assert(Depot.canConfirmGps(point,previous,depot,t,()=>true,now));
+  assert(!Depot.canConfirmGps(point,{...previous,accuracy:500},depot,t,()=>true,now));
   assert(!Depot.canConfirmGps(point,{...previous,source:'phone-test'},depot,t,()=>true,now));
   assert(!Depot.canConfirmGps(point,previous,depot,{...t,phoneTracking:{...t.phoneTracking,active:false}},()=>true,now));
   assert(!Depot.canConfirmGps(point,{...previous,tripId:'other'},depot,t,()=>true,now));
