@@ -3647,7 +3647,7 @@ app.get('/download/android',async(req,res)=>{
     if(!upstream.ok||!upstream.body)throw new Error('APK upstream '+upstream.status);
     res.status(200);
     res.setHeader('Content-Type','application/vnd.android.package-archive');
-    res.setHeader('Content-Disposition','attachment; filename="Angermund-Transport.apk"');
+    res.setHeader('Content-Disposition','attachment; filename="Angermund-Transport-v1.4.2.apk"');
     res.setHeader('Cache-Control','no-store');
     const {Readable}=require('stream');
     Readable.fromWeb(upstream.body).pipe(res)
