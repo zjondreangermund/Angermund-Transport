@@ -1859,6 +1859,36 @@ function wireInsuranceAssets(){
   document.querySelectorAll('.insurance-source').forEach(b=>b.onclick=()=>openCompanyReceiptFile(b.dataset.id))
 }
 
+function canEditComplianceDates(){return ['admin','manager','dispatcher','workshop','finance'].includes(role)}
+function complianceRegisterTable(){
+  const editable=canEditComplianceDates(),heads=['Document','Owner','Reference','Issued','Expiry','Days left','Status',...(editable?['Actions']:[])];
+  return '<div class="table-wrap"><table><thead><tr>'+heads.map(h=>'<th>'+h+'</th>').join('')+'</tr></thead><tbody>'+((db.permits||[]).map(x=>{
+    const days=daysUntil(x.expiry),status=days<0?'Expired':days<45?'Expiring':'Valid';
+    return '<tr>'+[x.type,documentOwnerLabel(x),x.reference,x.issued||'—',x.expiry||'—',days].map(v=>'<td>'+esc(v)+'</td>').join('')+'<td>'+badge(status)+'</td>'+(editable?'<td><button type="button" class="link-button edit-compliance-dates" data-id="'+esc(x.id)+'">Edit dates</button></td>':'')+'</tr>'
+  }).join('')||'<tr><td colspan="'+heads.length+'" class="empty">No records yet</td></tr>')+'</tbody></table></div>'
+}
+function openComplianceDates(id){
+  if(!canEditComplianceDates())return;
+  const record=(db.permits||[]).find(x=>x.id===id);if(!record)return notify('Record not found. Refresh the page.');
+  $('modalTitle').textContent='Edit licence / document dates';
+  $('entryForm').innerHTML='<p>'+esc(record.type)+' · '+esc(documentOwnerLabel(record))+' · '+esc(record.reference||'')+'</p><div class="form-grid"><div class="field"><label>Issued</label><input name="issued" type="date" value="'+esc(record.issued||'')+'"></div><div class="field"><label>Expiry</label><input name="expiry" type="date" required value="'+esc(record.expiry||'')+'"></div></div><div class="form-actions"><button type="button" class="ghost" id="cancelComplianceDates">Cancel</button><button type="submit" class="primary">Save dates</button></div>';
+  $('cancelComplianceDates').onclick=()=>$('modal').classList.add('hidden');
+  $('entryForm').onsubmit=async e=>{
+    e.preventDefault();const f=e.currentTarget,button=f.querySelector('[type="submit"]');if(button.disabled)return;
+    const issued=f.elements.issued.value,expiry=f.elements.expiry.value;
+    if(issued&&expiry&&expiry<issued)return notify('Expiry must be on or after the issued date.');
+    const next=structuredClone(db),target=next.permits.find(x=>x.id===id);
+    if(!target)return notify('Record not found. Refresh the page.');
+    target.issued=issued;target.expiry=expiry;
+    normalizeFleetCompliance(next);
+    next.audit??=[];next.audit.unshift({id:uid('log'),at:new Date().toISOString(),actor:roleLabel(),action:'Document dates updated · '+(target.reference||target.type),linkedType:'permit',linkedId:id});next.audit=next.audit.slice(0,100);
+    button.disabled=true;button.textContent='Saving…';
+    try{await api('/api/state',{method:'PUT',body:next});db=next;appLocalStorage.setItem(STORE,JSON.stringify(db));$('modal').classList.add('hidden');render();notify('Licence / document dates saved')}
+    catch(err){notify(err.message);button.disabled=false;button.textContent='Save dates'}
+  };
+  $('modal').classList.remove('hidden');
+}
+
 function documents(){
   const a=complianceAlerts(),trips=crossBorderTrips();
   if((!crossBorderPackTripId||!trips.some(x=>x.id===crossBorderPackTripId))&&trips.length)crossBorderPackTripId=trips[0].id;
@@ -1867,7 +1897,7 @@ function documents(){
   const insurance=(db.permits||[]).find(x=>x.ownerType==='company'&&/insurance|santam/i.test(String(x.type||'')+' '+String(x.provider||'')));
   return `<div class="notice ${a.length?'red':''}">${a.length?`<b>${a.length} compliance item(s) need action.</b> Do not dispatch expired drivers or vehicles.`:'All captured compliance records are currently valid.'}</div>
   ${insurance?`<section class="panel"><div class="toolbar"><div><h2>Company insurance summary</h2><p class="muted-copy">Imported from the current Santam summary.</p></div><div><span class="upload-posted">POLICY ${esc(insurance.reference||'')}</span> <button class="ghost small nav-to" data-page="insurance">Open full insurance</button></div></div><div class="split-3"><div><span>Monthly premium</span><h3>${money(insurance.monthlyPremium)}</h3></div><div><span>Goods in transit</span><h3>${money(insurance.goodsInTransitLimit)}</h3></div><div><span>Public liability</span><h3>${money(insurance.publicLiabilityLimit)}</h3></div></div><p class="muted-copy">Effective ${esc(insurance.issued||'—')} · ${num(insurance.insuredDriverCount)} insured truck drivers</p></section>`:''}
-  ${whiteboardSourceLinks()}<div class="panel"><div class="toolbar"><div><h2>Compliance register</h2><p class="muted-copy">Reusable vehicle, trailer and driver records.</p></div><button class="primary add-record" data-type="permit">+ Add document record</button></div>${table(['Document','Owner','Reference','Issued','Expiry','Days left','Status'],db.permits,x=>[x.type,documentOwnerLabel(x),x.reference,x.issued,x.expiry,daysUntil(x.expiry),daysUntil(x.expiry)<0?'Expired':daysUntil(x.expiry)<45?'Expiring':'Valid'])}</div>
+  ${whiteboardSourceLinks()}<div class="panel"><div class="toolbar"><div><h2>Compliance register</h2><p class="muted-copy">Reusable vehicle, trailer and driver records.</p></div><button class="primary add-record" data-type="permit">+ Add document record</button></div>${complianceRegisterTable()}</div>
   <section class="panel" style="margin-top:18px"><div class="toolbar"><div><h2>Cross-border trip pack builder</h2><p class="muted-copy">Prepare one pack from the actual journey, vehicle, driver and cargo legs.</p></div>${trips.length?`<select id="borderPackTrip">${trips.map(x=>`<option value="${x.id}" ${x.id===crossBorderPackTripId?'selected':''}>${esc(x.number)} · ${esc(journeyRouteLabel(x))} · ${esc(truck(x.truckId))}</option>`).join('')}</select>`:''}</div>
   <div class="notice"><b>Simple pack:</b> vehicle and driver records are reused. Confirm the goods invoice, waybill, customs release and manifest for each load. The clearing agent confirms any extra route or cargo requirement.</div>
   ${trips.length&&t.id?crossBorderPackPanel(t):'<div class="empty">No cross-border journey found yet. Create/select a route marked Cross-border and assign it to a trip.</div>'}</section>`
@@ -1899,6 +1929,7 @@ function printCrossBorderPack(t){
   openPrintWindow('Cross-border pack '+t.number,checklist)
 }
 function wireDocuments(){
+  document.querySelectorAll('.edit-compliance-dates').forEach(b=>b.onclick=()=>openComplianceDates(b.dataset.id));
   if($('borderPackTrip'))$('borderPackTrip').onchange=async e=>{crossBorderPackTripId=e.target.value;crossBorderDocs=[];crossBorderDocsLoadedFor='';await loadCrossBorderDocs(crossBorderPackTripId)};
   if($('refreshBorderPack'))$('refreshBorderPack').onclick=()=>{crossBorderDocsLoadedFor='';loadCrossBorderDocs(crossBorderPackTripId)};
   if($('printBorderPack'))$('printBorderPack').onclick=()=>printCrossBorderPack(get('trips',crossBorderPackTripId));
