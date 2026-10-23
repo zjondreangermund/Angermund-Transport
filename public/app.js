@@ -212,12 +212,37 @@ function initNavigationHistory(){
   }).observe($('modal'),{attributes:true,attributeFilter:['class']})
 }
 const hints={command:'Live operations & finance',dispatch:'Booking to invoice',trips:'Trips, costs, proof & profit',carrierOrders:'Carrier/TMS load-status orders, planned and actual milestones, trailers, rates and references',shunterRecon:'Monthly NBL shunter reconciliation, TMS references, daily charges and billing',driverPortal:'Assigned work, safety checks, proof and requirements',tasks:'Tasks, approvals and overdue actions',tracking:'Live positions, route trails and location-based alerts',notifications:'Push, WhatsApp, email and in-app exception alerts',driverUploads:'All receipt PDFs, PODs and uploaded proof linked to their records',fleet:'Availability, GPS, utilization and compliance',inspections:'Pre-trip, post-trip and defect control',diesel:'Trip fuel and normal company fleet fuel, with slips linked to each truck',workshop:'Maintenance planning, defects and service costs',tyres:'Tyre life, position, cost and replacement',documents:'Company, driver, vehicle and border compliance',insurance:'Current insurance policy, insured assets, drivers, limits, premiums and policy history',incidents:'Safety, damage, warnings and corrective actions',clients:'Customers, contacts and standard routes',invoices:'Invoices, payments, balances and debtor control',roadCharges:'Namibian mass-distance charges linked to each trip',payroll:'Month-end payroll and payslips for the full workforce',loans:'Record worker loans, balances and automatic payroll repayments',imports:'Upload Excel files, preview what will change and place records automatically',rates:'Diesel-linked quotes and standing charges',reports:'Linked operational and financial performance',monthlyPnl:'Month-by-month truck profit, company overheads, payroll, finance commitments and imported historical P&L',automation:'Verify scans before records are created',knowledge:'Duties, policies and checklists by role',driverAccounts:'Drivers, staff profiles and mobile account access',settings:'Defaults, roles and data protection'};
-let expandedNavGroup=null,lastNavPage=null;
+let expandedNavGroup=null,lastNavPage=null,topNavMedia=null,topNavObserver=null;
+function updateTopNavigationHeight(){
+  const height=window.matchMedia('(min-width:761px)').matches?$('sidebar').getBoundingClientRect().height:0;
+  document.documentElement.style.setProperty('--top-navigation-height',Math.ceil(height)+'px');
+}
+function setupTopNavigation(){
+ if(topNavMedia)return;
+ topNavMedia=window.matchMedia('(min-width:761px)');
+ const changed=()=>{renderNav();updateTopNavigationHeight()};
+ if(topNavMedia.addEventListener)topNavMedia.addEventListener('change',changed);else topNavMedia.addListener(changed);
+ if(typeof ResizeObserver!=='undefined'){topNavObserver=new ResizeObserver(updateTopNavigationHeight);topNavObserver.observe($('sidebar'))}
+ else window.addEventListener('resize',updateTopNavigationHeight);
+}
 function renderNav(){
   const nav=$('nav'),visible=navGroups.map((group,index)=>({name:group[0],icon:group[3],index,items:group[1].filter(x=>canView(x[0]))})).filter(group=>group.items.length);
   const activeGroup=visible.find(group=>group.items.some(item=>item[0]===page));
   if(lastNavPage!==page){expandedNavGroup=activeGroup?.index??null;lastNavPage=page;}
   const adminSections={driverAccounts:'People & Customers',clients:'People & Customers',documents:'Compliance & Records',insurance:'Compliance & Records',incidents:'Compliance & Records',reports:'Reports & Accounts',monthlyPnl:'Reports & Accounts',imports:'Tools & Settings',knowledge:'Tools & Settings',settings:'Tools & Settings'};
+  setupTopNavigation();
+  if(window.matchMedia('(min-width:761px)').matches){
+    const selected=visible.find(group=>group.index===expandedNavGroup);
+    nav.innerHTML='<div class="top-nav-groups" aria-label="Main navigation">'+visible.map(group=>{
+      const open=expandedNavGroup===group.index;
+      return '<button type="button" class="top-nav-toggle '+(open?'open ':'')+(group===activeGroup?'nav-group-active':'')+'" data-nav-group="'+group.index+'" aria-expanded="'+open+'" aria-controls="top-nav-items"><span aria-hidden="true">'+group.icon+'</span><span>'+group.name+'</span><b aria-hidden="true">⌄</b></button>';
+    }).join('')+'</div>'+(selected?'<div id="top-nav-items" class="top-nav-items" aria-label="'+selected.name+' pages">'+selected.items.map(item=>'<button type="button" data-page="'+item[0]+'" class="'+(page===item[0]?'active':'')+'"'+(page===item[0]?' aria-current="page"':'')+'><span aria-hidden="true">'+item[1]+'</span><span>'+item[2]+'</span></button>').join('')+'</div>':'');
+    nav.querySelectorAll('button[data-page]').forEach(button=>button.onclick=()=>go(button.dataset.page));
+    nav.querySelectorAll('[data-nav-group]').forEach(button=>button.onclick=()=>{const index=Number(button.dataset.navGroup);expandedNavGroup=expandedNavGroup===index?null:index;renderNav()});
+    nav.querySelector('button[aria-current="page"]')?.scrollIntoView({block:'nearest',inline:'nearest'});
+    updateTopNavigationHeight();
+    return;
+  }
   nav.innerHTML=visible.map(group=>{
     const open=expandedNavGroup===group.index,active=group===activeGroup;
     let previousSection='';
