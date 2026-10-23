@@ -56,7 +56,35 @@ function collect(state,now=Date.now()){
  for(const t of state.tasks||[])if(!['Completed','Cancelled'].includes(t.status)&&t.due&&t.due<=date)add('manual-tasks','Complete due or overdue assigned tasks',['dispatcher'],t,'Due '+t.due,'tasks','task');
  return [...groups.values()];
 }
+
+function reconcileLinkedTasks(state,now){
+ let count=0;
+ for(const task of state.tasks||[]){
+  if(['Completed','Cancelled'].includes(task.status)||task.fundsUsed||task.expenseId)continue;
+  const title=String(task.title||''),trip=(state.trips||[]).find(t=>task.linkedType==='trip'&&t.id===task.linkedId);
+  let resolved=false;
+  if(trip&&/^(upload|attach|add|capture)\s+.*\bPOD\b/i.test(title)){
+   resolved=trip.legs?.length?trip.legs.every(l=>l.pod):Boolean(trip.pod);
+  }else if(trip&&/^(upload|attach|add)\s+.*diesel.*slip/i.test(title)){
+   const fuel=(state.diesel||[]).filter(f=>f.tripId===trip.id);
+   resolved=fuel.length>0&&fuel.every(f=>f.receiptUploadId||f.receiptUploadIds?.length);
+  }
+  if(resolved){task.status='Completed';task.completedAt=new Date(now).toISOString();task.completedBy='System';task.completionReason='Required proof is present on the linked trip';count++}
+ }
+ return count;
+}
+function taskPriority(group,state,date){
+ if(group.status==='Completed')return 'Completed';
+ const open=group.items.filter(x=>!x.completed);
+ if(group.key==='document-renewal'&&open.some(x=>(state.permits||[]).some(p=>p.id===x.id&&p.expiry<date)))return 'Critical';
+ if(group.key==='manual-tasks'&&open.some(x=>(state.tasks||[]).some(t=>t.id===x.id&&t.priority==='Critical')))return 'Critical';
+ if(group.key==='inspection-defects'&&open.some(x=>(state.inspections||[]).some(i=>i.id===x.id&&i.status==='Failed')))return 'Critical';
+ if(group.key==='tyre-review'&&open.some(x=>(state.tyres||[]).some(t=>t.id===x.id&&t.status==='Replace')))return 'Critical';
+ return 'Open';
+}
+
 function reconcile(state,now=Date.now()){
+ reconcileLinkedTasks(state,now);
  const date=day(now),current=collect(state,now);state.dailyPlatformTasks??=[];
  // Resolve older snapshots as well; they remain history instead of reopening.
  for(const task of state.dailyPlatformTasks){
@@ -70,7 +98,8 @@ function reconcile(state,now=Date.now()){
   else{const prior=new Map(task.items.map(x=>[x.id,x]));for(const item of group.items)prior.set(item.id,{...item,completed:false});task.items=[...prior.values()];task.status='Open';task.roles=group.roles}
  }
  state.dailyPlatformTasks=state.dailyPlatformTasks.filter(x=>x.date>=new Date(Number(now)-30*86400000).toISOString().slice(0,10));
+ for(const group of state.dailyPlatformTasks)group.priority=taskPriority(group,state,date);
  return state.dailyPlatformTasks.filter(x=>x.date===date);
 }
 const allowed=(group,role)=>['admin','manager'].includes(role)||(group.roles||[]).includes(role);
-module.exports={collect,reconcile,day,allowed,office};
+module.exports={collect,reconcile,day,allowed,office,reconcileLinkedTasks,taskPriority};
