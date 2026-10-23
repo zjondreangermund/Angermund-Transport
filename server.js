@@ -1,4 +1,5 @@
 const PhoneTracking=require('./phone-trip-tracking');
+const TestJourney=require('./phone-test-journey');
 const TripSites=require('./trip-site-geofences');
 const {resolveMobileGps}=require('./mobile-gps');
 const DailyActions=require('./daily-platform-actions');
@@ -594,6 +595,7 @@ CREATE TABLE IF NOT EXISTS operational_notification_outbox(event_key text PRIMAR
 CREATE TABLE IF NOT EXISTS app_state_backups(id uuid PRIMARY KEY,version text UNIQUE NOT NULL,payload jsonb NOT NULL,note text,created_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS gps_positions(id bigserial PRIMARY KEY,vehicle_id text NOT NULL,driver_id text,trip_id text,latitude double precision NOT NULL,longitude double precision NOT NULL,speed double precision DEFAULT 0,heading double precision DEFAULT 0,accuracy double precision,source text DEFAULT 'driver',recorded_at timestamptz DEFAULT now());
 CREATE INDEX IF NOT EXISTS gps_vehicle_time ON gps_positions(vehicle_id,recorded_at DESC);
+CREATE TABLE IF NOT EXISTS phone_test_journeys(user_id uuid PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,payload jsonb NOT NULL,updated_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS geofences(id uuid PRIMARY KEY,name text NOT NULL,latitude double precision NOT NULL,longitude double precision NOT NULL,radius_m double precision NOT NULL,event_types text[] DEFAULT ARRAY['enter','exit'],kind text DEFAULT 'custom',active boolean DEFAULT true,created_at timestamptz DEFAULT now());
 ALTER TABLE geofences ADD COLUMN IF NOT EXISTS kind text DEFAULT 'custom';
 CREATE TABLE IF NOT EXISTS geofence_state(vehicle_id text NOT NULL,geofence_id uuid REFERENCES geofences(id) ON DELETE CASCADE,inside boolean NOT NULL,updated_at timestamptz DEFAULT now(),PRIMARY KEY(vehicle_id,geofence_id));
@@ -3256,7 +3258,7 @@ app.post('/api/integrations/traccar/position',async(req,res)=>{
     return gpsIn(req,res,'telematics')
   }catch(e){res.status(500).json({error:e.message})}
 });
-async function gpsIn(req,res,source){const p={vehicleId:String(req.body.vehicleId||req.body.vehicle_id||''),driverId:req.body.driverId||req.user.driverId||null,tripId:req.body.tripId||null,latitude:Number(req.body.latitude),longitude:Number(req.body.longitude),speed:num(req.body.speed),heading:num(req.body.heading),accuracy:req.body.accuracy==null?null:num(req.body.accuracy),source,recordedAt:req.body.recordedAt||new Date().toISOString()};if(!p.vehicleId||!Number.isFinite(p.latitude)||!Number.isFinite(p.longitude))return res.status(400).json({error:'vehicleId, latitude and longitude are required'});if(pool)await q('INSERT INTO gps_positions(vehicle_id,driver_id,trip_id,latitude,longitude,speed,heading,accuracy,source,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[p.vehicleId,p.driverId,p.tripId,p.latitude,p.longitude,p.speed,p.heading,p.accuracy,p.source,p.recordedAt]);else memory.gps.push(p);if(!req.gpsHistoryOnly){await evaluateGeofences(p);if(source!=='phone-test'){await evaluateDepotArrival(p);await evaluateTripZones(p);}}if(!req.gpsHistoryOnly)emit('gps',p);res.status(201).json(p)}
+async function gpsIn(req,res,source){const p={vehicleId:String(req.body.vehicleId||req.body.vehicle_id||''),driverId:req.body.driverId||req.user.driverId||null,tripId:req.body.tripId||null,latitude:Number(req.body.latitude),longitude:Number(req.body.longitude),speed:num(req.body.speed),heading:num(req.body.heading),accuracy:req.body.accuracy==null?null:num(req.body.accuracy),source,recordedAt:req.body.recordedAt||new Date().toISOString()};if(!p.vehicleId||!Number.isFinite(p.latitude)||!Number.isFinite(p.longitude))return res.status(400).json({error:'vehicleId, latitude and longitude are required'});if(pool)await q('INSERT INTO gps_positions(vehicle_id,driver_id,trip_id,latitude,longitude,speed,heading,accuracy,source,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[p.vehicleId,p.driverId,p.tripId,p.latitude,p.longitude,p.speed,p.heading,p.accuracy,p.source,p.recordedAt]);else memory.gps.push(p);if(!req.gpsHistoryOnly){await evaluateGeofences(p);if(source==='phone-test')await evaluatePhoneTestJourney(p,req.user);if(source!=='phone-test'){await evaluateDepotArrival(p);await evaluateTripZones(p);}}if(!req.gpsHistoryOnly)emit('gps',p);res.status(201).json(p)}
 app.post('/api/admin/slips/post',auth,roles('admin','manager','dispatcher','workshop','finance'),upload.fields([{name:'receipt',maxCount:1},{name:'receipts',maxCount:20}]),async(req,res)=>{
   let receipt=null;
   try{
@@ -3363,6 +3365,59 @@ app.delete('/api/admin/diesel/:id',auth,roles('admin','manager','finance'),async
     });
     res.json(changed.result)
   }catch(e){res.status(e.status||500).json({error:e.message})}
+});
+// Separate phone-only test progress from real truck dispatch and trip lifecycle.
+async function readPhoneTestJourney(userId){
+  if(pool){const rows=await q('SELECT payload FROM phone_test_journeys WHERE user_id=$1',[userId]);return rows[0]?.payload||null}
+  return memory.phoneTestJourneys?.[userId]||null;
+}
+async function storePhoneTestJourney(userId,journey){
+  if(pool)await q('INSERT INTO phone_test_journeys(user_id,payload,updated_at) VALUES($1,$2::jsonb,now()) ON CONFLICT(user_id) DO UPDATE SET payload=$2::jsonb,updated_at=now()',[userId,JSON.stringify(journey)]);
+  else{memory.phoneTestJourneys??={};memory.phoneTestJourneys[userId]=journey}
+}
+async function testJourneyFences(journey){
+  if(!journey)return [];
+  const fences=pool?await q('SELECT id,name,latitude,longitude,radius_m AS "radiusM" FROM geofences WHERE active=true AND id=ANY($1::uuid[])',[[journey.originGeofenceId,journey.destinationGeofenceId]]):memory.geofences.filter(x=>x.active!==false);
+  return fences;
+}
+async function evaluatePhoneTestJourney(position,user){
+  if(!user?.sub||position.source!=='phone-test')return;
+  const journey=await readPhoneTestJourney(user.sub);
+  if(!journey||journey.label!==String(position.vehicleId).slice('phone-test:'.length)||journey.status==='delivered')return;
+  const fences=await testJourneyFences(journey),origin=fences.find(f=>String(f.id)===journey.originGeofenceId),destination=fences.find(f=>String(f.id)===journey.destinationGeofenceId);
+  const result=TestJourney.advance(journey,position,origin,destination);
+  if(result.journey===journey||result.journey.lastPositionAt===journey.lastPositionAt)return;
+  await storePhoneTestJourney(user.sub,result.journey);
+  const titles={at_origin:'At Angermund Transport',departed:'Departed',approaching:'Approaching home · 1 km',arriving:'Arriving home · 300 m',delivered:'Delivered at home'};
+  for(const stage of result.events)await createNotification({
+    type:'gps-test-journey',userId:user.sub,severity:'info',title:'GPS TEST · '+titles[stage],
+    message:'Test phone '+journey.label+' · '+(stage==='delivered'?'Arrival confirmed at ':stage==='departed'?'Left ':stage==='at_origin'?'At ':'Heading to ')+(stage==='departed'||stage==='at_origin'?journey.originName:journey.destinationName)+'.',
+    eventKey:'phone-test-journey:'+journey.id+':'+stage
+  });
+}
+app.get('/api/gps/test-journey',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
+  try{res.json({journey:await readPhoneTestJourney(req.user.sub)})}catch(e){res.status(500).json({error:e.message})}
+});
+app.post('/api/gps/test-journey',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
+  try{
+    const originId=String(req.body.originGeofenceId||''),destinationId=String(req.body.destinationGeofenceId||'');
+    if(!originId||!destinationId||originId===destinationId)return res.status(400).json({error:'Select two different saved geofences'});
+    if(!/^[a-f0-9-]{36}$/i.test(originId)||!/^[a-f0-9-]{36}$/i.test(destinationId))return res.status(400).json({error:'Invalid geofence IDs'});
+    const fences=pool?await q('SELECT id,name,latitude,longitude,radius_m AS "radiusM" FROM geofences WHERE active=true AND id=ANY($1::uuid[])',[[originId,destinationId]]):memory.geofences.filter(x=>x.active!==false);
+    const origin=fences.find(f=>String(f.id)===originId),destination=fences.find(f=>String(f.id)===destinationId);
+    if(!origin||!destination)return res.status(400).json({error:'The departure and home pins must be active saved geofences'});
+    const label=String(req.body.label||'Phone GPS Test').trim().replace(/[^a-zA-Z0-9 ._-]/g,'').slice(0,80)||'Phone GPS Test';
+    const journey=TestJourney.newJourney(label,origin,destination);
+    await storePhoneTestJourney(req.user.sub,journey);
+    res.status(201).json({journey})
+  }catch(e){res.status(500).json({error:e.message})}
+});
+app.delete('/api/gps/test-journey',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
+  try{
+    if(pool)await q('DELETE FROM phone_test_journeys WHERE user_id=$1',[req.user.sub]);
+    else if(memory.phoneTestJourneys)delete memory.phoneTestJourneys[req.user.sub];
+    res.json({journey:null})
+  }catch(e){res.status(500).json({error:e.message})}
 });
 app.post('/api/gps/test',auth,async(req,res)=>{
   try{
@@ -3592,7 +3647,7 @@ app.get('/download/android',async(req,res)=>{
     if(!upstream.ok||!upstream.body)throw new Error('APK upstream '+upstream.status);
     res.status(200);
     res.setHeader('Content-Type','application/vnd.android.package-archive');
-    res.setHeader('Content-Disposition','attachment; filename="Angermund-Transport.apk"');
+    res.setHeader('Content-Disposition','attachment; filename="Angermund-Transport-v1.4.2.apk"');
     res.setHeader('Cache-Control','no-store');
     const {Readable}=require('stream');
     Readable.fromWeb(upstream.body).pipe(res)

@@ -1,0 +1,31 @@
+name: Validate phone journey
+
+on:
+  pull_request:
+    paths:
+      - 'phone-test-journey.js'
+      - 'test/phone-test-journey.test.js'
+      - 'server.js'
+      - 'public/app.js'
+      - '.github/workflows/test-phone-journey.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'phone-test-journey.js'
+      - 'test/phone-test-journey.test.js'
+      - 'server.js'
+      - 'public/app.js'
+      - '.github/workflows/test-phone-journey.yml'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Check JavaScript syntax
+        run: npm run check
+      - name: Test isolated phone milestones and existing driver tracking
+        run: node --test test/phone-test-journey.test.js test/phone-trip-tracking.test.js

@@ -653,6 +653,26 @@ body.driver-mode main{padding-bottom:94px!important}
 .quick-pin-setup{text-align:center;max-width:440px;margin:auto}.quick-pin-setup .quick-pin-shield{font-size:48px}.quick-pin-setup h2{margin:6px 0}.quick-pin-setup p{color:var(--muted);line-height:1.5}
 .quick-pin-setup label{text-align:left;display:grid;gap:6px;margin:14px 0;color:var(--muted)}
 .quick-pin-setup input{text-align:center;font-size:25px;letter-spacing:12px;padding-left:12px}
+
+/* Isolated test-phone journey progress, mobile-friendly. */
+.phone-journey{margin-top:16px;padding:14px;border:1px solid #3a638a;border-radius:14px;background:rgba(6,19,34,.65)}
+.phone-journey h3{margin:0 0 4px;font-size:17px}
+.phone-journey-route{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin:14px 0}
+.phone-journey-route label{display:grid;gap:6px;font-size:12px;color:var(--muted)}
+.phone-journey-route select{width:100%;min-width:0;max-width:100%;padding:10px;border:1px solid var(--line);border-radius:8px;background:#10263c;color:#eaf4ff}
+.phone-trip-track{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:3px;align-items:start;position:relative;margin:18px 0 14px}
+.phone-trip-track:before{content:'';position:absolute;top:14px;height:4px;left:10%;right:10%;background:#3a5068;border-radius:10px}
+.phone-trip-stage{position:relative;z-index:1;text-align:center;min-width:0;color:var(--muted);font-size:11px}
+.phone-trip-dot{display:grid;place-items:center;width:32px;height:32px;border:2px solid #536a80;background:#0b1b2d;color:#b6cada;border-radius:50%;font-weight:bold;margin:0 auto 6px}
+.phone-trip-stage small{display:block;font-size:10px;line-height:1.3;overflow-wrap:anywhere}
+.phone-trip-stage.reached .phone-trip-dot{background:#238b69;border-color:#54dbac;color:#fff}
+.phone-trip-stage.current .phone-trip-dot{outline:3px solid rgba(80,190,250,.35);border-color:#89ddff}
+.phone-trip-stage.current small{color:#eafaff;font-weight:900}
+.phone-journey-status{padding:10px 12px;border-radius:9px;background:rgba(64,140,215,.12);border:1px solid #284969;margin-bottom:8px;line-height:1.5}
+.phone-journey>small{display:block;color:var(--muted);line-height:1.5}
+.phone-journey-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+@media(max-width:600px){.phone-journey{padding:11px}.phone-journey-route{grid-template-columns:1fr}.phone-trip-stage small{font-size:9px}.phone-trip-dot{width:26px;height:26px}.phone-trip-track:before{top:11px}.phone-journey-actions button{width:100%}}
+
 .phone-gps-test{margin:0 0 16px;border-color:#285a85;background:linear-gradient(145deg,rgba(22,66,104,.32),rgba(7,23,37,.9))}
 .phone-gps-test-controls{display:grid;grid-template-columns:minmax(180px,1fr) auto auto;gap:8px;margin:13px 0 7px}
 .phone-gps-test-controls input{min-width:0}

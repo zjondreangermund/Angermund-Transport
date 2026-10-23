@@ -112,7 +112,7 @@ public class MainActivity extends Activity {
         settings.setGeolocationEnabled(true);
         settings.setAllowFileAccess(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " AngermundTransportNative/1.4.1");
+        settings.setUserAgentString(settings.getUserAgentString() + " AngermundTransportNative/1.4.2");
 
         webView.addJavascriptInterface(new NativeBridge(), "AngermundNative");
         webView.setWebViewClient(new WebViewClient() {
@@ -575,6 +575,22 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void exitApp() {
             runOnUiThread(MainActivity.this::finish);
+        }
+
+        @JavascriptInterface
+        public void openAndroidInstaller() {
+            // WebView downloads do not open the Android package installer directly.
+            // Hand the current APK to the phone browser after a deliberate user tap.
+            runOnUiThread(() -> {
+                try {
+                    Uri uri = Uri.parse(BuildConfig.SERVER_URL + "/download/android?v=1.4.2&ts=" + System.currentTimeMillis());
+                    Intent browser = new Intent(Intent.ACTION_VIEW, uri);
+                    browser.addCategory(Intent.CATEGORY_BROWSABLE);
+                    startActivity(browser);
+                } catch (Exception e) {
+                    toast("Open the Angermund Transport website in Chrome to update the app.");
+                }
+            });
         }
 
         @JavascriptInterface
