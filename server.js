@@ -1,3 +1,4 @@
+const DailyActions=require('./daily-platform-actions');
 const {removeWorker}=require('./workforce-delete');
 const TripLifecycle=require('./public/trip-lifecycle');
 const {isCompanyDepot,canConfirmGps,releaseVehicle,protectServerArrival}=require('./depot-arrival');
@@ -598,6 +599,7 @@ ALTER TABLE geofence_state ADD COLUMN IF NOT EXISTS candidate_count integer DEFA
 ALTER TABLE geofence_state ADD COLUMN IF NOT EXISTS last_notified_at timestamptz;
 ALTER TABLE geofence_state ADD COLUMN IF NOT EXISTS last_position_at timestamptz;
 CREATE TABLE IF NOT EXISTS notifications(id uuid PRIMARY KEY,type text NOT NULL,severity text DEFAULT 'info',title text NOT NULL,message text NOT NULL,role text,user_id uuid,driver_id text,linked_type text,linked_id text,read boolean DEFAULT false,created_at timestamptz DEFAULT now());
+ALTER TABLE notifications ADD COLUMN IF NOT EXISTS read_by jsonb NOT NULL DEFAULT '{}';
 CREATE TABLE IF NOT EXISTS push_subscriptions(id bigserial PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE CASCADE,subscription jsonb NOT NULL,created_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS scan_jobs(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id),filename text,status text NOT NULL DEFAULT 'processing',raw_text text,extracted jsonb,confidence double precision,error text,created_at timestamptz DEFAULT now(),completed_at timestamptz);\nCREATE TABLE IF NOT EXISTS driver_uploads(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,trip_id text NOT NULL,kind text NOT NULL,filename text NOT NULL,mime_type text NOT NULL,content bytea NOT NULL,created_at timestamptz DEFAULT now());\nCREATE TABLE IF NOT EXISTS company_receipts(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,linked_type text NOT NULL,linked_id text NOT NULL,kind text NOT NULL,filename text NOT NULL,mime_type text NOT NULL,content bytea NOT NULL,created_at timestamptz DEFAULT now());\nCREATE INDEX IF NOT EXISTS company_receipts_link ON company_receipts(linked_type,linked_id,created_at DESC);\nCREATE TABLE IF NOT EXISTS trip_documents(id uuid PRIMARY KEY,user_id uuid REFERENCES users(id) ON DELETE SET NULL,trip_id text NOT NULL,leg_id text,kind text NOT NULL,reference text,filename text,mime_type text,content bytea,created_at timestamptz DEFAULT now());\nCREATE INDEX IF NOT EXISTS trip_documents_trip ON trip_documents(trip_id,created_at DESC);\nCREATE TABLE IF NOT EXISTS mobile_devices(id uuid PRIMARY KEY,device_id text UNIQUE NOT NULL,user_id uuid REFERENCES users(id) ON DELETE CASCADE,driver_id text,token_hash text UNIQUE NOT NULL,name text,platform text,active boolean DEFAULT true,last_seen timestamptz,created_at timestamptz DEFAULT now());
 CREATE TABLE IF NOT EXISTS user_quick_pins(user_id uuid REFERENCES users(id) ON DELETE CASCADE,device_id text NOT NULL,pin_hash text NOT NULL,failed_attempts integer DEFAULT 0,locked_until timestamptz,updated_at timestamptz DEFAULT now(),PRIMARY KEY(user_id,device_id));\nCREATE INDEX IF NOT EXISTS mobile_devices_driver ON mobile_devices(driver_id,active);\nALTER TABLE notifications ADD COLUMN IF NOT EXISTS details jsonb NOT NULL DEFAULT '[]'::jsonb;
@@ -1348,7 +1350,7 @@ require('./whiteboard-routes')(app,{auth,roles,readOpsState,mutateOpsState,store
 app.get('/api/state',auth,async(req,res)=>{const row=pool?(await q('SELECT payload,revision,updated_at FROM app_state WHERE id=1'))[0]:{payload:memory.state||{},revision:0};res.json(row)});
 app.put('/api/state',auth,roles('admin','manager','dispatcher','workshop','finance'),async(req,res)=>{
  if(!req.body||typeof req.body!=='object'||Array.isArray(req.body))return res.status(400).json({error:'Invalid state'});
- try{const incoming=req.body;delete incoming.whiteboardReviews;removeWorkbookTests(incoming);pruneOperationalHistory(incoming);
+ try{const incoming=req.body;delete incoming.whiteboardReviews;delete incoming.dailyPlatformTasks;removeWorkbookTests(incoming);pruneOperationalHistory(incoming);
  const changed=await mutateOpsState(state=>{if((state.operationalResetVersion&&state.operationalResetVersion!==incoming.operationalResetVersion)||String(state.recordDeletionVersion||'')!==String(incoming.recordDeletionVersion||'')){const e=Error('Records changed. Refresh before saving.');e.status=409;throw e}protectServerArrival(incoming,state);Object.assign(state,incoming)});res.json({revision:changed.revision})}catch(e){res.status(e.status||500).json({error:e.message})}
 });
 
@@ -3319,8 +3321,40 @@ app.delete('/api/geofences/:id',auth,roles('admin','manager','dispatcher'),async
   if(pool){const rows=await q('DELETE FROM geofences WHERE id=$1 RETURNING id,name',[id]);if(!rows.length)return res.status(404).json({error:'Geofence not found'});emit('geofence-delete',{id,name:rows[0].name});return res.json({success:true,id})}
   const i=memory.geofences.findIndex(x=>x.id===id);if(i<0)return res.status(404).json({error:'Geofence not found'});const [removed]=memory.geofences.splice(i,1);emit('geofence-delete',{id,name:removed.name});res.json({success:true,id})
 });
-app.get('/api/notifications',auth,async(req,res)=>res.json(pool?await q(`SELECT id,type,severity,title,message,role,user_id AS "userId",driver_id AS "driverId",linked_type AS "linkedType",linked_id AS "linkedId",details,read,created_at AS "createdAt" FROM notifications WHERE user_id=$1 OR (user_id IS NULL AND driver_id IS NOT NULL AND driver_id=$2) OR (user_id IS NULL AND driver_id IS NULL AND role=$3) OR (user_id IS NULL AND driver_id IS NULL AND role IS NULL) ORDER BY created_at DESC LIMIT 100`,[req.user.sub,req.user.driverId||'',req.user.role]):memory.notifications.filter(x=>x.user_id?x.user_id===req.user.sub:x.driver_id?x.driver_id===req.user.driverId:x.role?x.role===req.user.role:true).slice(0,100)));
-app.patch('/api/notifications/:id/read',auth,async(req,res)=>{if(pool)await q('UPDATE notifications SET read=true WHERE id=$1',[req.params.id]);else{const n=memory.notifications.find(x=>x.id===req.params.id);if(n)n.read=true}res.json({success:true})});
+
+const notificationScope="(user_id=$1::uuid OR (user_id IS NULL AND driver_id IS NOT NULL AND driver_id=$2) OR (user_id IS NULL AND driver_id IS NULL AND role=$3) OR (user_id IS NULL AND driver_id IS NULL AND role IS NULL))";
+const notificationVisible=(n,u)=>n.user_id?n.user_id===u.sub:n.driver_id?n.driver_id===u.driverId:n.role?n.role===u.role:true;
+async function dailyActionsFor(user){
+ if(!DailyActions.office.includes(user.role))return [];
+ const snapshot=await readOpsState(),before=JSON.stringify(snapshot.dailyPlatformTasks||[]);
+ let rows=DailyActions.reconcile(snapshot);
+ if(before!==JSON.stringify(snapshot.dailyPlatformTasks))rows=(await mutateOpsState(state=>DailyActions.reconcile(state))).result;
+ const visible=rows.filter(g=>DailyActions.allowed(g,user.role));
+ for(const group of visible.filter(g=>g.status!=='Completed'))await createNotification({type:'daily-platform-action',userId:user.sub,title:group.title,message:group.items.filter(x=>!x.completed).length+' record(s) need attention. Open to see every affected record.',linkedType:'daily-action',linkedId:group.id,eventKey:group.id+':user:'+user.sub,items:group.items});
+ return visible;
+}
+app.get('/api/platform-actions',auth,async(req,res)=>{try{res.json(await dailyActionsFor(req.user))}catch(e){res.status(500).json({error:e.message})}});
+app.get('/api/notifications',auth,async(req,res)=>{
+ try{
+ const rows=pool?await q('SELECT id,type,severity,title,message,role,user_id AS "userId",driver_id AS "driverId",linked_type AS "linkedType",linked_id AS "linkedId",details,(read OR read_by ? $1::text) AS read,created_at AS "createdAt" FROM notifications WHERE '+notificationScope+' ORDER BY created_at DESC LIMIT 100',[req.user.sub,req.user.driverId||'',req.user.role]):memory.notifications.filter(x=>notificationVisible(x,req.user)).slice(0,100).map(x=>({...x,read:x.read||Boolean(x.readBy?.[req.user.sub])}));
+ const state=await readOpsState();
+ for(const row of rows)if(row.type==='daily-platform-action'){
+   const task=(state.dailyPlatformTasks||[]).find(t=>t.id===(row.linkedId||row.linked_id));
+   if(task){row.details=task.items;row.status=task.status;row.message=task.status==='Completed'?'Completed — all affected records have been updated.':task.items.filter(x=>!x.completed).length+' record(s) still need attention.'}
+ }
+ res.json(rows);
+ }catch(e){res.status(500).json({error:e.message})}
+});
+app.patch('/api/notifications/read-all',auth,async(req,res)=>{
+ try{if(pool)await q("UPDATE notifications SET read_by=read_by || jsonb_build_object($1::text,true) WHERE "+notificationScope,[req.user.sub,req.user.driverId||'',req.user.role]);
+ else for(const n of memory.notifications.filter(x=>notificationVisible(x,req.user))){n.readBy??={};n.readBy[req.user.sub]=true}
+ res.json({success:true})}catch(e){res.status(500).json({error:e.message})}
+});
+app.patch('/api/notifications/:id/read',auth,async(req,res)=>{
+ try{if(pool)await q("UPDATE notifications SET read_by=read_by || jsonb_build_object($1::text,true) WHERE "+notificationScope+" AND id=$4",[req.user.sub,req.user.driverId||'',req.user.role,req.params.id]);
+ else{const n=memory.notifications.find(x=>x.id===req.params.id&&notificationVisible(x,req.user));if(n){n.readBy??={};n.readBy[req.user.sub]=true}}
+ res.json({success:true})}catch(e){res.status(500).json({error:e.message})}
+});
 app.get('/api/push/status',auth,async(req,res)=>{
   let count=0;
   if(pool)count=num((await q('SELECT count(*)::int AS count FROM push_subscriptions WHERE user_id=$1',[req.user.sub]))[0]?.count);
@@ -3414,7 +3448,7 @@ async function ensureEnhancedNotifications(){
     const state=(await c.query('SELECT payload FROM app_state WHERE id=1')).rows[0]?.payload||{};
     const users=(await c.query('SELECT id,role,driver_id,staff_id,active FROM users WHERE active=true')).rows;
     const result=collectOperationalAlerts(state,row?.payload||{},users);
-    for(const batch of groupAlerts(expandOfficeRecipients(result.events,users))){
+    for(const batch of groupAlerts(expandOfficeRecipients(result.events.filter(e=>e.driverId||e.userId||e.type==='trip-assigned'),users))){
       const eventKey='ops:'+crypto.createHash('sha256').update(batch.eventKeys.slice().sort().join('|')).digest('hex');
       await c.query('INSERT INTO operational_notification_outbox(event_key,payload) VALUES($1,$2) ON CONFLICT DO NOTHING',[eventKey,batch]);
     }
@@ -3429,35 +3463,7 @@ async function ensureEnhancedNotifications(){
   }catch(e){try{if(c)await c.query('ROLLBACK')}catch{}console.error('Enhanced notifications failed',e.message)}finally{if(c)c.release();enhancedAlertsRunning=false}
 }
 async function ensureOperationalAlerts(){
-  try{
-    const today=new Date(Date.now()+2*60*60*1000).toISOString().slice(0,10),snapshot=await readOpsState(),alerts=[];
-    const changed=await mutateOpsState(state=>{
-      state.tasks??=[];state.permits??=[];state.maintenance??=[];state.invoices??=[];
-      for(const t of state.tasks){
-        if(!t||['Completed','Cancelled'].includes(t.status)||!t.due)continue;
-        if(t.due<today&&t.overdueAlertDate!==today){t.overdueAlertDate=today;alerts.push({task:t,title:'Overdue task: '+t.title,message:'This task was due '+t.due+'.',severity:'warning'})}
-        else if(t.due===today&&t.dueAlertDate!==today){t.dueAlertDate=today;alerts.push({task:t,title:'Task due today: '+t.title,message:t.description||'Please complete this task today.',severity:t.priority==='Critical'?'critical':t.priority==='High'?'warning':'info'})}
-      }
-      for(const p of state.permits){
-        if(!p?.expiry)continue;const days=Math.ceil((new Date(p.expiry+'T23:59:59+02:00')-new Date())/86400000);
-        if(days<=30&&p.expiryAlertDate!==today){p.expiryAlertDate=today;alerts.push({admin:true,title:(days<0?'Expired: ':'Document expiring: ')+p.type,message:(p.reference||p.type)+' '+(days<0?'expired '+Math.abs(days)+' day(s) ago':'expires in '+days+' day(s)'),severity:days<0?'critical':'warning',linkedType:'permit',linkedId:p.id})}
-      }
-      for(const m of state.maintenance){
-        if(String(m.status||'').toLowerCase()==='completed')continue;const tr=(state.trucks||[]).find(x=>x.id===m.truckId),remaining=num(m.nextService)-num(tr?.odometer);
-        if(num(m.nextService)>0&&remaining<=5000&&m.serviceAlertDate!==today){m.serviceAlertDate=today;alerts.push({role:'workshop',title:'Vehicle service due: '+(tr?.registration||'Vehicle'),message:m.type+' · '+(remaining<=0?'service is due/overdue':remaining.toLocaleString()+' km remaining'),severity:remaining<=0?'critical':'warning',linkedType:'maintenance',linkedId:m.id})}
-      }
-      for(const i of state.invoices){
-        if(!i?.due||['Paid'].includes(i.status))continue;
-        if(i.due<today&&i.overdueAlertDate!==today){i.overdueAlertDate=today;alerts.push({role:'finance',title:'Invoice overdue: '+i.number,message:'Invoice '+i.number+' was due '+i.due+'.',severity:'warning',linkedType:'invoice',linkedId:i.id})}
-      }
-      return{count:alerts.length}
-    });
-    for(const a of alerts){
-      if(a.task)await notifyTask(a.task,a.title,a.message,a.severity);
-      else await createNotification({type:'operational-alert',severity:a.severity,title:a.title,message:a.message,role:a.admin?'admin':a.role||'admin',linkedType:a.linkedType,linkedId:a.linkedId})
-    }
-    return changed.result
-  }catch(e){console.error('Operational alert sweep failed',e.message)}
+ try{const snapshot=await readOpsState(),before=JSON.stringify(snapshot.dailyPlatformTasks||[]);DailyActions.reconcile(snapshot);if(before!==JSON.stringify(snapshot.dailyPlatformTasks))await mutateOpsState(state=>DailyActions.reconcile(state))}catch(e){console.error('Daily platform review failed',e.message)}
 }
 
 
