@@ -3326,9 +3326,9 @@ const notificationScope="(user_id=$1::uuid OR (user_id IS NULL AND driver_id IS 
 const notificationVisible=(n,u)=>n.user_id?n.user_id===u.sub:n.driver_id?n.driver_id===u.driverId:n.role?n.role===u.role:true;
 async function dailyActionsFor(user){
  if(!DailyActions.office.includes(user.role))return [];
- const snapshot=await readOpsState(),before=JSON.stringify(snapshot.dailyPlatformTasks||[]);
+ const snapshot=await readOpsState(),before=JSON.stringify([snapshot.tasks||[],snapshot.dailyPlatformTasks||[]]);
  let rows=DailyActions.reconcile(snapshot);
- if(before!==JSON.stringify(snapshot.dailyPlatformTasks))rows=(await mutateOpsState(state=>DailyActions.reconcile(state))).result;
+ if(before!==JSON.stringify([snapshot.tasks||[],snapshot.dailyPlatformTasks]))rows=(await mutateOpsState(state=>DailyActions.reconcile(state))).result;
  const visible=rows.filter(g=>DailyActions.allowed(g,user.role));
  for(const group of visible.filter(g=>g.status!=='Completed'))await createNotification({type:'daily-platform-action',userId:user.sub,title:group.title,message:group.items.filter(x=>!x.completed).length+' record(s) need attention. Open to see every affected record.',linkedType:'daily-action',linkedId:group.id,eventKey:group.id+':user:'+user.sub,items:group.items});
  return visible;
@@ -3463,7 +3463,7 @@ async function ensureEnhancedNotifications(){
   }catch(e){try{if(c)await c.query('ROLLBACK')}catch{}console.error('Enhanced notifications failed',e.message)}finally{if(c)c.release();enhancedAlertsRunning=false}
 }
 async function ensureOperationalAlerts(){
- try{const snapshot=await readOpsState(),before=JSON.stringify(snapshot.dailyPlatformTasks||[]);DailyActions.reconcile(snapshot);if(before!==JSON.stringify(snapshot.dailyPlatformTasks))await mutateOpsState(state=>DailyActions.reconcile(state))}catch(e){console.error('Daily platform review failed',e.message)}
+ try{const snapshot=await readOpsState(),before=JSON.stringify([snapshot.tasks||[],snapshot.dailyPlatformTasks||[]]);DailyActions.reconcile(snapshot);if(before!==JSON.stringify([snapshot.tasks||[],snapshot.dailyPlatformTasks]))await mutateOpsState(state=>DailyActions.reconcile(state))}catch(e){console.error('Daily platform review failed',e.message)}
 }
 
 
