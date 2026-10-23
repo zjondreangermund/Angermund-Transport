@@ -3380,6 +3380,14 @@ async function testJourneyFences(journey){
   const fences=pool?await q('SELECT id,name,latitude,longitude,radius_m AS "radiusM" FROM geofences WHERE active=true AND id=ANY($1::uuid[])',[[journey.originGeofenceId,journey.destinationGeofenceId]]):memory.geofences.filter(x=>x.active!==false);
   return fences;
 }
+async function notifyPhoneTestJourneyEvents(journey,events,userId){
+  const titles={at_origin:'At Angermund Transport',departed:'Departed',approaching:'Approaching home · 1 km',arriving:'Arriving home · 300 m',delivered:'Delivered at home'};
+  for(const stage of events)await createNotification({
+    type:'gps-test-journey',userId,severity:'info',title:'GPS TEST · '+titles[stage],
+    message:'Test phone '+journey.label+' · '+(stage==='delivered'?'Arrival confirmed at ':stage==='departed'?'Left ':stage==='at_origin'?'At ':'Heading to ')+(stage==='departed'||stage==='at_origin'?journey.originName:journey.destinationName)+'.',
+    eventKey:'phone-test-journey:'+journey.id+':'+stage
+  });
+}
 async function evaluatePhoneTestJourney(position,user){
   if(!user?.sub||position.source!=='phone-test')return;
   const journey=await readPhoneTestJourney(user.sub);
@@ -3388,15 +3396,25 @@ async function evaluatePhoneTestJourney(position,user){
   const result=TestJourney.advance(journey,position,origin,destination);
   if(result.journey===journey||result.journey.lastPositionAt===journey.lastPositionAt)return;
   await storePhoneTestJourney(user.sub,result.journey);
-  const titles={at_origin:'At Angermund Transport',departed:'Departed',approaching:'Approaching home · 1 km',arriving:'Arriving home · 300 m',delivered:'Delivered at home'};
-  for(const stage of result.events)await createNotification({
-    type:'gps-test-journey',userId:user.sub,severity:'info',title:'GPS TEST · '+titles[stage],
-    message:'Test phone '+journey.label+' · '+(stage==='delivered'?'Arrival confirmed at ':stage==='departed'?'Left ':stage==='at_origin'?'At ':'Heading to ')+(stage==='departed'||stage==='at_origin'?journey.originName:journey.destinationName)+'.',
-    eventKey:'phone-test-journey:'+journey.id+':'+stage
-  });
+  await notifyPhoneTestJourneyEvents(journey,result.events,user.sub);
 }
 app.get('/api/gps/test-journey',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
   try{res.json({journey:await readPhoneTestJourney(req.user.sub)})}catch(e){res.status(500).json({error:e.message})}
+});
+// The phone can be away from the depot before this test was enabled.
+// A deliberate manual confirmation recovers the *test* progress immediately.
+app.post('/api/gps/test-journey/mark-departed',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
+  try{
+    if(req.body?.confirm!==true)return res.status(400).json({error:'Confirm the test phone has already left Angermund Transport'});
+    const journey=await readPhoneTestJourney(req.user.sub);
+    if(!journey)return res.status(404).json({error:'No phone test journey is configured'});
+    if(!['waiting','at_origin'].includes(journey.status))return res.json({journey,alreadyAdvanced:true});
+    const result=TestJourney.markAlreadyDeparted(journey);
+    await storePhoneTestJourney(req.user.sub,result.journey);
+    await notifyPhoneTestJourneyEvents(journey,result.events,req.user.sub);
+    emit('phone-test-journey',{userId:req.user.sub,journey:result.journey});
+    res.json({journey:result.journey})
+  }catch(e){res.status(500).json({error:e.message})}
 });
 app.post('/api/gps/test-journey',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
   try{

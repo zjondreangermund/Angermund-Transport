@@ -33,11 +33,20 @@ function advance(state,point,origin,destination,now=Date.now()){
     if(status==='delivered')out.deliveredAt=point.recordedAt;
   };
   const originRadius=Math.max(20,Number(origin.radiusM||origin.radius_m)||150);
-  if(out.status==='waiting'&&originM<=originRadius&&accuracy<=Math.min(100,originRadius))set('at_origin');
-  if(out.status==='at_origin'){
-    if(originM>originRadius+Math.max(25,accuracy*1.5))out.departureFixes=(out.departureFixes||0)+1;
-    else out.departureFixes=0;
-    if(out.departureFixes>=2)set('departed');
+  // A phone may start its test AFTER leaving Angermund Transport. Two good GPS
+  // fixes outside the departure boundary also count as departed; an in-depot
+  // reading clears the pending outside fixes. No return to the yard is needed.
+  const outsideDepot=originM>originRadius+Math.max(25,accuracy*1.5);
+  if(out.status==='waiting'&&originM<=originRadius&&accuracy<=Math.min(100,originRadius)){
+    out.departureFixes=0;
+    set('at_origin');
+  }
+  if(out.status==='waiting'||out.status==='at_origin'){
+    out.departureFixes=outsideDepot?(out.departureFixes||0)+1:0;
+    if(out.departureFixes>=2){
+      set('departed');
+      out.departureSource=state.status==='waiting'?'gps-already-away':'gps-depot-exit';
+    }
   }
   if(['departed','approaching','arriving'].includes(out.status)){
     if(homeM<=1000)set('approaching');
@@ -50,4 +59,13 @@ function advance(state,point,origin,destination,now=Date.now()){
   }
   return {journey:out,events};
 }
-module.exports={statuses,metres,newJourney,advance};
+// Explicit recovery for a test begun after departure. This changes only the
+// separate demonstration journey, never any dispatch/transport trip.
+function markAlreadyDeparted(journey,at=new Date().toISOString()){
+  if(!journey||!['waiting','at_origin'].includes(journey.status))return {journey,events:[]};
+  if(!Number.isFinite(Date.parse(at)))throw Error('Valid timestamp required');
+  return {journey:{...journey,status:'departed',statusAt:at,departedAt:at,
+    departureFixes:2,departureSource:'manual-confirmed',lastPositionAt:journey.lastPositionAt||null},
+    events:['departed']};
+}
+module.exports={statuses,metres,newJourney,advance,markAlreadyDeparted};

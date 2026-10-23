@@ -670,7 +670,7 @@ body.driver-mode main{padding-bottom:94px!important}
 .phone-trip-stage.current small{color:#eafaff;font-weight:900}
 .phone-journey-status{padding:10px 12px;border-radius:9px;background:rgba(64,140,215,.12);border:1px solid #284969;margin-bottom:8px;line-height:1.5}
 .phone-journey>small{display:block;color:var(--muted);line-height:1.5}
-.phone-journey-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+.phone-journey-actions{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:8px;margin-top:12px}
 @media(max-width:600px){.phone-journey{padding:11px}.phone-journey-route{grid-template-columns:1fr}.phone-trip-stage small{font-size:9px}.phone-trip-dot{width:26px;height:26px}.phone-trip-track:before{top:11px}.phone-journey-actions button{width:100%}}
 
 .phone-gps-test{margin:0 0 16px;border-color:#285a85;background:linear-gradient(145deg,rgba(22,66,104,.32),rgba(7,23,37,.9))}
