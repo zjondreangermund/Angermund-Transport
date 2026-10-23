@@ -1352,3 +1352,15 @@ html.modal-open{overflow:hidden!important}@media(max-width:760px){html:has(#side
   #app > .grid-2 + .panel,#app > .grid-2 + .grid-2,
   #app > .kpis + .panel,#app > .panel + .kpis{margin-top:14px}
 }
+
+/* Task state colours: critical red, completed green, all other work orange. */
+.task-row.task-state-critical,.policy.task-state-critical{border-left:3px solid #ef4444;background:rgba(239,68,68,.07)}
+.task-row.task-state-completed,.policy.task-state-completed{border-left:3px solid #34d399;background:rgba(52,211,153,.07)}
+.task-row.task-state-open,.policy.task-state-open{border-left:3px solid #fb923c;background:rgba(251,146,60,.06)}
+.unified-tasks .task-row{padding:16px 12px;border-radius:8px}
+.task-status{display:inline-block;padding:4px 9px;border-radius:999px;font-size:11px;font-weight:700;white-space:nowrap}
+.task-status-critical{color:#fca5a5;background:rgba(239,68,68,.17)}
+.task-status-completed{color:#6ee7b7;background:rgba(52,211,153,.15)}
+.task-status-open{color:#fdba74;background:rgba(251,146,60,.17)}
+.task-legend{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.task-section-label{margin:22px 0 12px;font-size:13px;color:var(--muted)}
