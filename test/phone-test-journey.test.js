@@ -43,3 +43,39 @@ test('test creation rejects identical pins and stores no transport trip informat
   const j=Journey.newJourney('x',origin,home,at(0));
   assert.equal(j.tripId,undefined);assert.equal(j.truckId,undefined);
 });
+
+test('already-departed phone moves out of waiting after two accurate off-depot readings without returning',()=>{
+  let s=Journey.newJourney('Phone already driving',origin,home,at(0));
+  let result=move(s,0.009,1);s=result.journey;
+  assert.equal(s.status,'waiting');assert.deepEqual(result.events,[]);
+  result=move(s,0.010,2);s=result.journey;
+  assert.equal(s.status,'departed');assert.deepEqual(result.events,['departed']);
+  assert.equal(s.departureSource,'gps-already-away');
+  result=move(s,0.0125,3);s=result.journey;
+  assert.equal(s.status,'approaching');
+  result=move(s,0.0175,4);assert.equal(result.journey.status,'arriving');
+});
+test('bad GPS or a reading back inside depot resets the pending departed evidence',()=>{
+  let s=Journey.newJourney('Back and forth',origin,home,at(0));
+  s=move(s,0.003,1).journey;
+  assert.equal(s.departureFixes,1);
+  s=move(s,0.003,2,300).journey;
+  assert.equal(s.departureFixes,1,'poor accuracy is ignored');
+  s=move(s,0,3).journey;
+  assert.equal(s.departureFixes,0);assert.equal(s.status,'at_origin');
+  s=move(s,0.003,4).journey;
+  assert.equal(s.status,'at_origin');
+  s=move(s,0.003,5).journey;
+  assert.equal(s.status,'departed');
+});
+test('staff manual already-departed confirmation works only on an unfinished test',()=>{
+  let s=Journey.newJourney('Test only',origin,home,at(0));
+  const result=Journey.markAlreadyDeparted(s,at(2));
+  assert.equal(result.journey.status,'departed');assert.deepEqual(result.events,['departed']);
+  assert.equal(result.journey.departureSource,'manual-confirmed');
+  assert.equal(result.journey.tripId,undefined);assert.equal(result.journey.truckId,undefined);
+  assert.equal(Journey.markAlreadyDeparted(result.journey,at(3)).events.length,0);
+  let x=move(result.journey,0.0176,4);
+  assert.equal(x.journey.status,'arriving');assert(x.events.includes('approaching'));
+  assert(x.events.includes('arriving'));
+});
