@@ -3528,7 +3528,7 @@ function nativePhoneGpsTestAvailable(){return Boolean(window.AngermundNative&&ty
 function nativeGpsStatus(){
   try{return typeof window.AngermundNative?.getGpsStatus==='function'?JSON.parse(window.AngermundNative.getGpsStatus()):null}catch{return null}
 }
-function phoneGpsTestActive(){const s=nativeGpsStatus();return nativePhoneGpsTestAvailable()?(s?Boolean(s.enabled&&s.testMode):appLocalStorage.getItem(PHONE_GPS_TEST_KEY)==='1'):phoneGpsTestWatchId!==null}
+function phoneGpsTestActive(){const s=nativeGpsStatus();return nativePhoneGpsTestAvailable()?(s&&typeof s.testMode==='boolean'?Boolean(s.enabled&&s.testMode):Boolean(s?.enabled&&appLocalStorage.getItem(PHONE_GPS_TEST_KEY)==='1')):phoneGpsTestWatchId!==null}
 function nativeGpsStatusContent(){
   const s=nativeGpsStatus();if(!s)return '';
   const time=n=>n?new Date(n).toLocaleString():'Not yet';
@@ -3547,7 +3547,14 @@ function nativeGpsStatusContent(){
     +'<div><button type="button" class="ghost small" data-tracking-settings>Tracking setup</button> <button type="button" class="ghost small" data-tracking-status>Refresh status</button></div>';
 }
 function nativeGpsStatusPanel(){return nativeGpsStatus()?'<section class="panel" id="nativeGpsStatus">'+nativeGpsStatusContent()+'</section>':''}
-function refreshNativeGpsStatus(){const el=$('nativeGpsStatus');if(el)el.innerHTML=nativeGpsStatusContent()}
+function refreshNativeGpsStatus(){
+  const el=$('nativeGpsStatus');if(el)el.innerHTML=nativeGpsStatusContent();
+  if(page!=='tracking'||!nativePhoneGpsTestAvailable())return;
+  const active=phoneGpsTestActive(),state=document.querySelector('.gps-test-state');
+  if(state){state.textContent=active?'● TEST GPS ACTIVE':'● TEST GPS OFF';state.classList.toggle('on',active)}
+  if($('stopPhoneGpsTest'))$('stopPhoneGpsTest').disabled=!active;
+  if($('startPhoneGpsTest'))$('startPhoneGpsTest').textContent=active?'Restart test GPS':'Start background GPS test';
+}
 setInterval(()=>{if(!document.hidden)refreshNativeGpsStatus()},10000);
 document.addEventListener('click',e=>{
   if(e.target.closest('[data-tracking-settings]'))window.AngermundNative?.openTrackingSettings?.();
@@ -3571,7 +3578,7 @@ function startPhoneGpsTest(label='Phone GPS Test'){
     try{
       window.AngermundNative.startGpsTest(authToken,String(label||'Phone GPS Test').slice(0,80));
       appLocalStorage.setItem(PHONE_GPS_TEST_KEY,'1');
-      notify('Starting background test · allow Location if prompted');
+      notify('Starting background test · allow Location if prompted');setTimeout(refreshNativeGpsStatus,1000);
       if(page==='tracking')render()
     }catch(e){notify('Could not start native phone GPS test')}
     return
