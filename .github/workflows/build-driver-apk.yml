@@ -4,6 +4,10 @@ permissions:
   contents: write
 
 on:
+  pull_request:
+    paths:
+      - 'android-driver/**'
+      - '.github/workflows/build-driver-apk.yml'
   workflow_dispatch:
   push:
     branches: [main]
@@ -26,6 +30,9 @@ jobs:
         with:
           gradle-version: '8.10.2'
 
+      - name: Test offline GPS queue
+        run: gradle -p android-driver :app:testDebugUnitTest --stacktrace
+
       - name: Build installable debug APK
         run: gradle -p android-driver :app:assembleDebug --stacktrace
 
@@ -36,6 +43,7 @@ jobs:
           if-no-files-found: error
 
       - name: Publish stable Android download
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

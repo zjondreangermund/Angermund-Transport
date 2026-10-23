@@ -54,10 +54,12 @@ import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
     private static final int REQ_LOCATION = 2010;
+    private static final int REQ_NOTIFICATIONS = 2013;
+    private static final int REQ_BACKGROUND_LOCATION = 2014;
     private static final int REQ_FILE = 2011;
     private static final int REQ_CAMERA_WEB = 2012;
     private static final String PREFS = "angermund_driver_gps";
-    private static final String START_URL = BuildConfig.SERVER_URL + "/login";
+    private static final String START_URL = BuildConfig.SERVER_URL + "/";
 
     private WebView webView;
     private FrameLayout splashOverlay;
@@ -68,6 +70,7 @@ public class MainActivity extends Activity {
     private long lastExitBackAt = 0;
     private volatile boolean registeringDevice = false;
     private volatile boolean gpsRequested = false;
+    private boolean backgroundPromptShown = false;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
 
     @Override
@@ -109,7 +112,7 @@ public class MainActivity extends Activity {
         settings.setGeolocationEnabled(true);
         settings.setAllowFileAccess(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " AngermundTransportNative/1.3.5");
+        settings.setUserAgentString(settings.getUserAgentString() + " AngermundTransportNative/1.4.0");
 
         webView.addJavascriptInterface(new NativeBridge(), "AngermundNative");
         webView.setWebViewClient(new WebViewClient() {
@@ -241,7 +244,7 @@ public class MainActivity extends Activity {
     private void requestNotificationPermission() {
         if (Build.VERSION.SDK_INT >= 33
                 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_LOCATION);
+            requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFICATIONS);
         }
     }
 
@@ -321,8 +324,12 @@ public class MainActivity extends Activity {
     }
 
     private void promptBackgroundLocation() {
-        if (!hasForegroundLocation() || hasBackgroundLocation()) {
-            promptBatteryExemption();
+        if (!hasForegroundLocation()) return;
+        if (hasBackgroundLocation()) { promptBatteryExemption(); return; }
+        if (backgroundPromptShown) return;
+        backgroundPromptShown = true;
+        if (Build.VERSION.SDK_INT == 29) {
+            requestPermissions(new String[]{Manifest.permission.ACCESS_BACKGROUND_LOCATION}, REQ_BACKGROUND_LOCATION);
             return;
         }
         new AlertDialog.Builder(this)
@@ -358,12 +365,31 @@ public class MainActivity extends Activity {
 
     private void revokeAndStop() {
         String token = prefs().getString("device_token", "");
+        gpsRequested = false; pendingJwt = "";
+        clearGpsQueue();
         prefs().edit().putBoolean("enabled", false).putBoolean("gps_enabled", false).remove("device_token").remove("pending_location").remove("last_alert_at").apply();
         stopService(new Intent(this, LocationService.class));
         stopService(new Intent(this, NotificationService.class));
         if (!token.isEmpty()) io.execute(() -> {
             try { postJson("/api/mobile/revoke", "{}", null, token); } catch (Exception ignored) {}
         });
+    }
+
+    private void clearGpsQueue() {
+        try (GpsQueue queue = new GpsQueue(this)) { queue.clear(); }
+        prefs().edit().remove("pending_location").remove("gps_capture_trip")
+                .remove("gps_last_uploaded").remove("gps_last_captured").apply();
+    }
+
+    private void openGpsSetup() {
+        new AlertDialog.Builder(this)
+                .setTitle("Background tracking setup")
+                .setMessage("1. Permissions → Location → Allow all the time, with Precise location on.\n2. Battery → Unrestricted.\nOn Samsung, also remove this app from Sleeping / Deep sleeping apps.\nTracking uses an ongoing notification. Force stop pauses it until you open the app again.")
+                .setPositiveButton("App settings", (dialog, which) -> startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.parse("package:" + getPackageName()))))
+                .setNeutralButton("Battery settings", (dialog, which) -> {
+                    prefs().edit().putBoolean("battery_prompted", false).apply(); promptBatteryExemption();
+                })
+                .setNegativeButton("Close", null).show();
     }
 
     private String postJson(String path, String json, String authorization, String deviceToken) throws Exception {
@@ -498,6 +524,11 @@ public class MainActivity extends Activity {
             pendingJwt = "";
             ensureRegistered(jwt, true);
         }
+        if (requestCode == REQ_BACKGROUND_LOCATION && hasBackgroundLocation()) promptBatteryExemption();
+        if (requestCode == REQ_LOCATION && !hasForegroundLocation()) {
+            pendingJwt = ""; gpsRequested = false;
+            toast("Location permission is needed. Use Tracking setup to allow it.");
+        }
         if (requestCode == REQ_CAMERA_WEB && pendingWebPermissionRequest != null) {
             PermissionRequest request = pendingWebPermissionRequest;
             pendingWebPermissionRequest = null;
@@ -553,6 +584,10 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void startBackgroundGps(String jwt) {
             runOnUiThread(() -> {
+                if (prefs().getBoolean("gps_test_mode", false)) {
+                    stopService(new Intent(MainActivity.this, LocationService.class)); clearGpsQueue();
+                    prefs().edit().putBoolean("gps_test_mode", false).remove("gps_test_label").apply();
+                }
                 gpsRequested = true;
                 if (!hasForegroundLocation()) {
                     pendingJwt = jwt;
@@ -567,6 +602,10 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void startGpsTest(String jwt, String label) {
             runOnUiThread(() -> {
+                String testLabel = label == null ? "Phone GPS Test" : label;
+                if (!prefs().getBoolean("gps_test_mode", false) || !testLabel.equals(prefs().getString("gps_test_label", ""))) {
+                    stopService(new Intent(MainActivity.this, LocationService.class)); clearGpsQueue();
+                }
                 prefs().edit()
                         .putBoolean("gps_test_mode", true)
                         .putString("gps_test_label", label == null ? "Phone GPS Test" : label)
@@ -586,6 +625,7 @@ public class MainActivity extends Activity {
         @JavascriptInterface
         public void stopGpsTest() {
             runOnUiThread(() -> {
+                gpsRequested = false; pendingJwt = ""; clearGpsQueue();
                 prefs().edit()
                         .putBoolean("gps_test_mode", false)
                         .putBoolean("gps_enabled", false)
@@ -603,10 +643,26 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public void openTrackingSettings() { runOnUiThread(MainActivity.this::openGpsSetup); }
+
+        @JavascriptInterface
         public String getGpsStatus() {
             JSONObject o = new JSONObject();
             try {
+                o.put("appVersion", BuildConfig.VERSION_NAME);
                 o.put("enabled", prefs().getBoolean("gps_enabled", false));
+                o.put("testMode", prefs().getBoolean("gps_test_mode", false));
+                o.put("testLabel", prefs().getString("gps_test_label", "Phone GPS Test"));
+                o.put("serviceRunning", System.currentTimeMillis() - prefs().getLong("gps_service_heartbeat", 0) < 180_000L);
+                o.put("lastCapturedAt", prefs().getLong("gps_last_captured", 0));
+                o.put("lastUploadedAt", prefs().getLong("gps_last_uploaded", 0));
+                o.put("status", prefs().getString("gps_status", "Waiting for tracking to start"));
+                try (GpsQueue queue = new GpsQueue(MainActivity.this)) { o.put("pendingCount", queue.count()); }
+                PowerManager power = (PowerManager) getSystemService(POWER_SERVICE);
+                o.put("batteryUnrestricted", power != null && power.isIgnoringBatteryOptimizations(getPackageName()));
+                LocationManager location = (LocationManager) getSystemService(LOCATION_SERVICE);
+                o.put("locationOn", location != null && (Build.VERSION.SDK_INT >= 28 ? location.isLocationEnabled() : location.isProviderEnabled(LocationManager.GPS_PROVIDER)));
+                o.put("notificationsAllowed", Build.VERSION.SDK_INT < 33 || checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED);
                 o.put("backgroundPermission", hasBackgroundLocation());
                 o.put("foregroundPermission", hasForegroundLocation());
                 o.put("deviceRegistered", !prefs().getString("device_token", "").isEmpty());
