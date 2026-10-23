@@ -25,3 +25,19 @@ body:before{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;bac
 .ledger-dispatch .ledger-row,.ledger-dispatch .ledger-row:last-child{border:1px solid var(--line);border-radius:12px;background:var(--panel)}
 .ledger-dispatch .ledger-row:hover{background:var(--panel2)}
 @media(max-width:760px){.ledger-dispatch .cards-list{gap:14px}}
+
+/* The generic cards-list column template must not tile dispatch load rows. */
+.ledger-dispatch .cards-list{
+  grid-template-columns:minmax(0,1fr)!important;
+  grid-auto-flow:row;
+  grid-auto-columns:auto;
+  width:100%;
+  min-width:0;
+}
+.ledger-dispatch .cards-list>.ledger-row{
+  width:100%;
+  min-width:0;
+  max-width:100%;
+  margin:0;
+}
+.ledger-dispatch .ledger-row>div{min-width:0}
