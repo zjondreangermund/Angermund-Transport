@@ -1481,10 +1481,11 @@ function driverPortal(){
   const podSaved=leg?.pod||(!leg&&t?.pod);
   return `<div class="driver-shell">
     ${selector}
+    ${!preview?nativeGpsStatusPanel():''}
     <section class="driver-welcome">
       <div><small>${preview?'PREVIEWING DRIVER':'GOOD DAY'}</small><h1>${esc(d.name||'Driver')}</h1></div>
       <div class="driver-welcome-actions">
-        <span class="driver-online ${navigator.onLine?'on':'off'}">${nativeBackgroundGpsAvailable()?'● BACKGROUND GPS':(navigator.onLine?'● ONLINE':'● OFFLINE')}</span>
+        <span class="driver-online ${navigator.onLine?'on':'off'}">${nativeBackgroundGpsAvailable()?'● PHONE GPS':(navigator.onLine?'● ONLINE':'● OFFLINE')}</span>
         ${!preview?'<button type="button" class="driver-logout-top" id="driverLogoutTop">Log out</button>':''}
       </div>
     </section>
@@ -2791,8 +2792,8 @@ function geofenceKindValue(f){
 function geofenceKindLabel(f){return({depot:'Company depot',loading:'Loading zone',offloading:'Offloading zone',operating_area:'Trip-start operating area',custom:'General geofence'})[geofenceKindValue(f)]}
 function tracking(){
   const canEdit=['admin','manager','dispatcher'].includes(role),testActive=phoneGpsTestActive(),nativeTest=nativePhoneGpsTestAvailable();
-  const testPanel=canEdit?`<section class="panel phone-gps-test"><div class="panel-head"><div><h2>📱 Phone GPS geofence test</h2><p class="muted-copy">Temporary testing only. It triggers geofence entry/exit alerts but never starts, advances or closes a transport trip.</p></div><span class="gps-test-state ${testActive?'on':''}">${testActive?'● TEST GPS ACTIVE':'● TEST GPS OFF'}</span></div><div class="phone-gps-test-controls"><input id="phoneGpsTestLabel" value="School geofence test" placeholder="Test phone label"><button type="button" class="primary" id="startPhoneGpsTest">${testActive?'Restart test GPS':(nativeTest?'Start background GPS test':'Start browser GPS test')}</button><button type="button" class="ghost" id="stopPhoneGpsTest" ${testActive?'':'disabled'}>Stop</button><button type="button" class="ghost" id="downloadGpsTestApp">Download latest app</button></div><small>${nativeTest?'Background GPS is available in this installed app. Allow Location / Allow all the time for the test.':'Browser test works while this page stays open. Install the Android app for reliable background GPS while driving or when the screen is off.'}</small></section>`:'';
-  return `<section class="kpis">${kpi('Vehicles reporting',liveGps.length,`${db.trucks.length} registered`)}${kpi('Moving',liveGps.filter(x=>num(x.speed)>3).length,'Speed above 3 km/h')}${kpi('Geofences',geofences.length,'Entry and exit monitoring')}${kpi('Last update',liveGps[0]?.recordedAt?new Date(liveGps[0].recordedAt).toLocaleTimeString():'Waiting','Real-time event stream')}</section>${testPanel}<section class="tracking-layout"><div class="panel"><div class="panel-head"><h2>Live fleet map</h2><button class="ghost" id="refreshTracking">Refresh</button></div><div id="fleetMap" class="map"></div></div><div class="panel"><h2>Live vehicles / test phones</h2><div id="liveVehicleList">${liveGps.map(x=>`<div class="vehicle-live" data-vehicle="${esc(x.vehicleId)}"><b>${esc(gpsVehicleLabel(x.vehicleId))}</b><p>${num(x.speed).toFixed(0)} km/h · ${new Date(x.recordedAt).toLocaleString()}</p></div>`).join('')||'<div class="empty">No GPS positions yet.</div>'}</div><hr style="border-color:var(--line)"><div class="panel-head"><h2>Geofences</h2>${canEdit?'<button class="primary small" id="addGeofence">+ Add geofence</button>':''}</div>${geofences.length?`<div class="geofence-list">${geofences.map(f=>`<div class="geofence-row"><div><b>${esc(f.name)}</b><small>${num(f.radiusM)>=1000?(num(f.radiusM)/1000).toFixed(1)+' km':num(f.radiusM)+' m'} radius · ${esc(geofenceKindLabel(f))}</small></div>${canEdit?`<div class="geofence-row-actions"><button class="ghost small edit-geofence" data-id="${f.id}">Edit</button><button class="danger small delete-geofence" data-id="${f.id}" data-name="${esc(f.name)}">Delete</button></div>`:''}</div>`).join('')}</div>`:'<p class="muted">No geofences configured.</p>'}</div></section>`;
+  const testPanel=canEdit?`<section class="panel phone-gps-test"><div class="panel-head"><div><h2>📱 Phone GPS geofence test</h2><p class="muted-copy">Temporary testing only. It triggers geofence entry/exit alerts but never starts, advances or closes a transport trip.</p></div><span class="gps-test-state ${testActive?'on':''}">${testActive?'● TEST GPS ACTIVE':'● TEST GPS OFF'}</span></div><div class="phone-gps-test-controls"><input id="phoneGpsTestLabel" value="${esc(nativeGpsStatus()?.testLabel||'Phone GPS Test')}" placeholder="Test phone label"><button type="button" class="primary" id="startPhoneGpsTest">${testActive?'Restart test GPS':(nativeTest?'Start background GPS test':'Start browser GPS test')}</button><button type="button" class="ghost" id="stopPhoneGpsTest" ${testActive?'':'disabled'}>Stop</button><button type="button" class="ghost" id="downloadGpsTestApp">Download latest app</button></div><small>${nativeTest?'Background GPS is available in this installed app. Allow Location / Allow all the time for the test.':'Browser test works while this page stays open. Install the Android app for reliable background GPS while driving or when the screen is off.'}</small></section>`:'';
+  return `<section class="kpis">${kpi('Vehicles reporting',liveGps.length,`${db.trucks.length} registered`)}${kpi('Moving',liveGps.filter(x=>num(x.speed)>3).length,'Speed above 3 km/h')}${kpi('Geofences',geofences.length,'Entry and exit monitoring')}${kpi('Last update',liveGps[0]?.recordedAt?new Date(liveGps[0].recordedAt).toLocaleTimeString():'Waiting','Real-time event stream')}</section>${testPanel}${nativeGpsStatusPanel()}<section class="tracking-layout"><div class="panel"><div class="panel-head"><h2>Live fleet map</h2><button class="ghost" id="refreshTracking">Refresh</button></div><div id="fleetMap" class="map"></div></div><div class="panel"><h2>Live vehicles / test phones</h2><div id="liveVehicleList">${liveGps.map(x=>`<div class="vehicle-live" data-vehicle="${esc(x.vehicleId)}"><b>${esc(gpsVehicleLabel(x.vehicleId))}</b><p>${num(x.speed).toFixed(0)} km/h · ${new Date(x.recordedAt).toLocaleString()} · ${Date.now()-Date.parse(x.recordedAt)>180000?'STALE · no recent location':'Recent'}${x.source==='android-background'?' · Driver phone':''}</p></div>`).join('')||'<div class="empty">No GPS positions yet.</div>'}</div><hr style="border-color:var(--line)"><div class="panel-head"><h2>Geofences</h2>${canEdit?'<button class="primary small" id="addGeofence">+ Add geofence</button>':''}</div>${geofences.length?`<div class="geofence-list">${geofences.map(f=>`<div class="geofence-row"><div><b>${esc(f.name)}</b><small>${num(f.radiusM)>=1000?(num(f.radiusM)/1000).toFixed(1)+' km':num(f.radiusM)+' m'} radius · ${esc(geofenceKindLabel(f))}</small></div>${canEdit?`<div class="geofence-row-actions"><button class="ghost small edit-geofence" data-id="${f.id}">Edit</button><button class="danger small delete-geofence" data-id="${f.id}" data-name="${esc(f.name)}">Delete</button></div>`:''}</div>`).join('')}</div>`:'<p class="muted">No geofences configured.</p>'}</div></section>`;
 }
 async function deleteGeofence(id,name='geofence'){
   if(!confirm('Delete '+name+'? This stops entry/exit monitoring for this saved geofence.'))return;
@@ -3524,13 +3525,40 @@ async function loginWithQuickPin(){
   }
 }
 function nativePhoneGpsTestAvailable(){return Boolean(window.AngermundNative&&typeof window.AngermundNative.startGpsTest==='function')}
-function phoneGpsTestActive(){return nativePhoneGpsTestAvailable()?appLocalStorage.getItem(PHONE_GPS_TEST_KEY)==='1':phoneGpsTestWatchId!==null}
-function forceAndroidInstallPrompt(message='Latest Android app: v1.3.5'){
+function nativeGpsStatus(){
+  try{return typeof window.AngermundNative?.getGpsStatus==='function'?JSON.parse(window.AngermundNative.getGpsStatus()):null}catch{return null}
+}
+function phoneGpsTestActive(){const s=nativeGpsStatus();return nativePhoneGpsTestAvailable()?(s?Boolean(s.enabled&&s.testMode):appLocalStorage.getItem(PHONE_GPS_TEST_KEY)==='1'):phoneGpsTestWatchId!==null}
+function nativeGpsStatusContent(){
+  const s=nativeGpsStatus();if(!s)return '';
+  const time=n=>n?new Date(n).toLocaleString():'Not yet';
+  const live=s.enabled&&s.serviceRunning&&s.foregroundPermission&&s.locationOn!==false;
+  const needs=[];
+  if(!s.foregroundPermission)needs.push('Allow precise location');
+  if(!s.backgroundPermission)needs.push('Choose Location → Allow all the time for restart support');
+  if(s.batteryUnrestricted===false)needs.push('Set Battery → Unrestricted');
+  if(s.locationOn===false)needs.push('Turn phone Location on');
+  if(s.notificationsAllowed===false)needs.push('Allow notifications');
+  const fresh=s.lastUploadedAt&&Date.now()-s.lastUploadedAt<180000;
+  return '<div class="panel-head"><b>Phone background tracking'+(s.appVersion?' · '+esc(s.appVersion):'')+'</b>'+badge(!s.enabled?'Stopped':live&&fresh?'Reporting':live?'Waiting for upload':'Needs attention')+'</div>'
+    +'<p>'+esc(s.status||'Open Tracking setup to check permissions')+'</p>'
+    +'<small>Last location: '+esc(time(s.lastCapturedAt))+' · Last server contact: '+esc(time(s.lastUploadedAt))+' · Saved offline: '+num(s.pendingCount)+'</small>'
+    +(needs.length?'<p>'+needs.map(esc).join(' · ')+'</p>':'')
+    +'<div><button type="button" class="ghost small" data-tracking-settings>Tracking setup</button> <button type="button" class="ghost small" data-tracking-status>Refresh status</button></div>';
+}
+function nativeGpsStatusPanel(){return nativeGpsStatus()?'<section class="panel" id="nativeGpsStatus">'+nativeGpsStatusContent()+'</section>':''}
+function refreshNativeGpsStatus(){const el=$('nativeGpsStatus');if(el)el.innerHTML=nativeGpsStatusContent()}
+setInterval(()=>{if(!document.hidden)refreshNativeGpsStatus()},10000);
+document.addEventListener('click',e=>{
+  if(e.target.closest('[data-tracking-settings]'))window.AngermundNative?.openTrackingSettings?.();
+  if(e.target.closest('[data-tracking-status]'))refreshNativeGpsStatus();
+});
+function forceAndroidInstallPrompt(message='Latest Android app: v1.4.0'){
   if(!$('appInstallPrompt'))return;
   if($('appInstallStatus'))$('appInstallStatus').innerHTML='<b>'+esc(message)+'</b><br><span>Download and install the APK. Android may ask you to allow installs from this browser.</span>';
   $('appInstallPrompt').classList.remove('hidden')
 }
-function openAndroidInstallPrompt(){forceAndroidInstallPrompt('Angermund Transport Android v1.3.5 is ready to install.')}
+function openAndroidInstallPrompt(){forceAndroidInstallPrompt('Angermund Transport Android v1.4.0 is ready to install.')}
 async function postBrowserPhoneGps(position,label){
   const now=Date.now();if(now-lastPhoneGpsTestSentAt<15000)return;lastPhoneGpsTestSentAt=now;
   try{
@@ -3543,7 +3571,7 @@ function startPhoneGpsTest(label='Phone GPS Test'){
     try{
       window.AngermundNative.startGpsTest(authToken,String(label||'Phone GPS Test').slice(0,80));
       appLocalStorage.setItem(PHONE_GPS_TEST_KEY,'1');
-      notify('Background Phone GPS Test started');
+      notify('Starting background test · allow Location if prompted');
       if(page==='tracking')render()
     }catch(e){notify('Could not start native phone GPS test')}
     return
@@ -3588,7 +3616,7 @@ function openInstalledAndroidApp(){
   location.href='angermund://open';
   setTimeout(()=>{document.removeEventListener('visibilitychange',mark);if(!opened&&!document.hidden&&$('appInstallStatus'))$('appInstallStatus').innerHTML='<b>App not detected.</b> If it is not installed yet, use Download Android app.'},1800)
 }
-function downloadAndroidApp(){sessionStorage.setItem(ANDROID_APP_SKIP_KEY,'1');hideAndroidAppPrompt();const a=document.createElement('a');a.href='/download/android?ts='+Date.now();a.download='Angermund-Transport-v1.3.5.apk';document.body.appendChild(a);a.click();a.remove();notify('Downloading Angermund Transport v1.3.5…')}
+function downloadAndroidApp(){sessionStorage.setItem(ANDROID_APP_SKIP_KEY,'1');hideAndroidAppPrompt();const a=document.createElement('a');a.href='/download/android?ts='+Date.now();a.download='Angermund-Transport-v1.4.0.apk';document.body.appendChild(a);a.click();a.remove();notify('Downloading Angermund Transport v1.4.0…')}
 function startNativeBackgroundAlerts(){if(!authToken||!runningInsideAndroidApp()||typeof window.AngermundNative?.startBackgroundAlerts!=='function')return false;try{window.AngermundNative.startBackgroundAlerts(authToken);return true}catch{return false}}
 function startNativeBackgroundGps(){
   if(role!=='driver'||!authToken||!nativeBackgroundGpsAvailable())return false;

@@ -1,3 +1,4 @@
+const {resolveMobileGps}=require('./mobile-gps');
 const DailyActions=require('./daily-platform-actions');
 const {removeWorker}=require('./workforce-delete');
 const TripLifecycle=require('./public/trip-lifecycle');
@@ -3142,16 +3143,20 @@ app.post('/api/mobile/gps',deviceAuth,async(req,res)=>{
   try{
     const testMode=req.body.testMode===true||String(req.body.testMode||'').toLowerCase()==='true';
     if(testMode){
+      const resolved=resolveMobileGps(req.body,req.user,[],null);
+      req.gpsHistoryOnly=resolved.historical;req.body.recordedAt=resolved.recordedAt;
       const label=String(req.body.testLabel||req.user.name||req.device.name||'Phone test').trim().slice(0,80).replace(/[^a-zA-Z0-9 ._-]/g,'')||'Phone test';
       req.body={...req.body,vehicleId:'phone-test:'+label,driverId:req.user.driverId||null,tripId:null};
       return gpsIn(req,res,'phone-test')
     }
     if(req.user.role!=='driver'||!req.user.driverId)return res.status(403).json({error:'GPS upload is only available to linked driver accounts unless Phone GPS Test is enabled'});
-    const state=await readOpsState(),t=driverMobileTrip(state,req.user.driverId);
+    const state=await readOpsState(),active=driverMobileTrip(state,req.user.driverId);
+    const resolved=resolveMobileGps(req.body,req.user,state.trips,active),t=resolved.trip;
     if(!t)return res.status(204).end();
-    req.body={...req.body,vehicleId:t.truckId,driverId:req.user.driverId,tripId:t.id};
+    req.gpsHistoryOnly=resolved.historical;
+    req.body={...req.body,recordedAt:resolved.recordedAt,vehicleId:t.truckId,driverId:req.user.driverId,tripId:t.id};
     return gpsIn(req,res,'android-background')
-  }catch(e){res.status(500).json({error:e.message})}
+  }catch(e){res.status(e.status||500).json({error:e.message})}
 });
 app.get('/api/mobile/alerts',deviceAuth,async(req,res)=>{
   const afterRaw=String(req.query.after||''),after=Number.isFinite(Date.parse(afterRaw))?new Date(afterRaw).toISOString():new Date(Date.now()-5*60*1000).toISOString();
@@ -3180,7 +3185,7 @@ app.post('/api/integrations/traccar/position',async(req,res)=>{
     return gpsIn(req,res,'telematics')
   }catch(e){res.status(500).json({error:e.message})}
 });
-async function gpsIn(req,res,source){const p={vehicleId:String(req.body.vehicleId||req.body.vehicle_id||''),driverId:req.body.driverId||req.user.driverId||null,tripId:req.body.tripId||null,latitude:Number(req.body.latitude),longitude:Number(req.body.longitude),speed:num(req.body.speed),heading:num(req.body.heading),accuracy:req.body.accuracy==null?null:num(req.body.accuracy),source,recordedAt:req.body.recordedAt||new Date().toISOString()};if(!p.vehicleId||!Number.isFinite(p.latitude)||!Number.isFinite(p.longitude))return res.status(400).json({error:'vehicleId, latitude and longitude are required'});if(pool)await q('INSERT INTO gps_positions(vehicle_id,driver_id,trip_id,latitude,longitude,speed,heading,accuracy,source,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[p.vehicleId,p.driverId,p.tripId,p.latitude,p.longitude,p.speed,p.heading,p.accuracy,p.source,p.recordedAt]);else memory.gps.push(p);await evaluateGeofences(p);if(source!=='phone-test'){await evaluateDepotArrival(p);await evaluateTripZones(p);}emit('gps',p);res.status(201).json(p)}
+async function gpsIn(req,res,source){const p={vehicleId:String(req.body.vehicleId||req.body.vehicle_id||''),driverId:req.body.driverId||req.user.driverId||null,tripId:req.body.tripId||null,latitude:Number(req.body.latitude),longitude:Number(req.body.longitude),speed:num(req.body.speed),heading:num(req.body.heading),accuracy:req.body.accuracy==null?null:num(req.body.accuracy),source,recordedAt:req.body.recordedAt||new Date().toISOString()};if(!p.vehicleId||!Number.isFinite(p.latitude)||!Number.isFinite(p.longitude))return res.status(400).json({error:'vehicleId, latitude and longitude are required'});if(pool)await q('INSERT INTO gps_positions(vehicle_id,driver_id,trip_id,latitude,longitude,speed,heading,accuracy,source,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[p.vehicleId,p.driverId,p.tripId,p.latitude,p.longitude,p.speed,p.heading,p.accuracy,p.source,p.recordedAt]);else memory.gps.push(p);if(!req.gpsHistoryOnly){await evaluateGeofences(p);if(source!=='phone-test'){await evaluateDepotArrival(p);await evaluateTripZones(p);}}emit('gps',p);res.status(201).json(p)}
 app.post('/api/admin/slips/post',auth,roles('admin','manager','dispatcher','workshop','finance'),upload.fields([{name:'receipt',maxCount:1},{name:'receipts',maxCount:20}]),async(req,res)=>{
   let receipt=null;
   try{
@@ -3295,7 +3300,7 @@ app.post('/api/gps/test',auth,async(req,res)=>{
     return gpsIn(req,res,'phone-test')
   }catch(e){res.status(500).json({error:e.message})}
 });
-app.get('/api/gps/latest',auth,async(req,res)=>{const rows=pool?await q("SELECT DISTINCT ON(vehicle_id) vehicle_id AS \"vehicleId\",driver_id AS \"driverId\",trip_id AS \"tripId\",latitude,longitude,speed,heading,accuracy,source,recorded_at AS \"recordedAt\" FROM gps_positions WHERE source IN ('telematics','truck-device','tracker','vehicle-tracker','phone-test') ORDER BY vehicle_id,recorded_at DESC"):Object.values(memory.gps.filter(x=>trustedVehicleGpsSource(x.source)).reduce((a,x)=>(a[x.vehicleId]=x,a),{}));res.json(rows)});
+app.get('/api/gps/latest',auth,async(req,res)=>{const rows=pool?await q("SELECT DISTINCT ON(vehicle_id) vehicle_id AS \"vehicleId\",driver_id AS \"driverId\",trip_id AS \"tripId\",latitude,longitude,speed,heading,accuracy,source,recorded_at AS \"recordedAt\" FROM gps_positions WHERE source IN ('telematics','truck-device','tracker','vehicle-tracker','phone-test','android-background') ORDER BY vehicle_id,recorded_at DESC"):Object.values(memory.gps.filter(x=>trustedVehicleGpsSource(x.source)||x.source==='android-background').reduce((a,x)=>(a[x.vehicleId]=x,a),{}));res.json(rows)});
 app.get('/api/gps/history/:vehicleId',auth,async(req,res)=>{const hours=Math.min(168,Math.max(1,num(req.query.hours)||24)),rows=pool?await q('SELECT vehicle_id AS "vehicleId",latitude,longitude,speed,heading,recorded_at AS "recordedAt" FROM gps_positions WHERE vehicle_id=$1 AND recorded_at>now()-($2||\' hours\')::interval ORDER BY recorded_at',[req.params.vehicleId,String(hours)]):memory.gps.filter(x=>x.vehicleId===req.params.vehicleId&&Date.now()-new Date(x.recordedAt)<hours*3600000);res.json(rows)});
 app.get('/api/geofences',auth,async(req,res)=>res.json(pool?await q('SELECT id,name,latitude,longitude,radius_m AS "radiusM",event_types AS "eventTypes",kind,active FROM geofences ORDER BY name'):memory.geofences));
 app.post('/api/geofences',auth,roles('admin','manager','dispatcher'),async(req,res)=>{

@@ -10,6 +10,10 @@ import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.location.Location;
+import android.net.ConnectivityManager;
+import android.net.Network;
+import android.os.SystemClock;
+import java.util.concurrent.atomic.AtomicBoolean;
 import android.location.LocationListener;
 import android.location.LocationManager;
 import android.os.Build;
@@ -35,17 +39,28 @@ public class LocationService extends Service implements LocationListener {
     private static final String CHANNEL = "angermund_gps";
     private static final int NOTIFICATION_ID = 4401;
     private static final long MIN_TIME_MS = 45_000L;
-    private static final float MIN_DISTANCE_M = 75f;
+    private static final float MIN_DISTANCE_M = 0f;
 
     private LocationManager manager;
     private final ExecutorService io = Executors.newSingleThreadExecutor();
     private final Handler handler = new Handler(Looper.getMainLooper());
     private long lastAcceptedAt = 0;
+    private GpsQueue queue;
+    private ConnectivityManager connectivity;
+    private final AtomicBoolean uploading = new AtomicBoolean(false);
+    private volatile boolean destroyed = false;
+    private boolean foregroundReady = false;
+    private final ConnectivityManager.NetworkCallback networkCallback = new ConnectivityManager.NetworkCallback() {
+        @Override public void onAvailable(Network network) { retryPending(); }
+    };
 
     private final Runnable retryRunnable = new Runnable() {
         @Override public void run() {
+            if (!trackingEnabled()) { stopSelf(); return; }
+            prefs().edit().putLong("gps_service_heartbeat", System.currentTimeMillis()).apply();
+            requestUpdates();
             retryPending();
-            handler.postDelayed(this, 120_000L);
+            handler.postDelayed(this, 60_000L);
         }
     };
 
@@ -53,9 +68,25 @@ public class LocationService extends Service implements LocationListener {
     public void onCreate() {
         super.onCreate();
         createChannel();
-        startForeground(NOTIFICATION_ID, notification(prefs().getBoolean("gps_test_mode", false) ? "Angermund GPS TEST active" : "Background GPS active", "Waiting for location…"));
+        queue = new GpsQueue(this);
         manager = (LocationManager) getSystemService(LOCATION_SERVICE);
-        requestUpdates();
+        if (!trackingEnabled()) { stopSelf(); return; }
+        try {
+            startForeground(NOTIFICATION_ID, notification("Angermund GPS", "Waiting for location…"));
+            foregroundReady = true;
+        } catch (SecurityException e) {
+            status("Location permission required · open app"); stopSelf(); return;
+        }
+        prefs().edit().putLong("gps_service_started", System.currentTimeMillis()).apply();
+        // Migrate the old single pending point once, preserving its original timestamp.
+        String old = prefs().getString("pending_location", "");
+        if (!old.isEmpty()) {
+            try { JSONObject point = new JSONObject(old); queue.add(old, Instant.parse(point.getString("recordedAt")).toEpochMilli()); }
+            catch (Exception ignored) {}
+            prefs().edit().remove("pending_location").apply();
+        }
+        connectivity = (ConnectivityManager) getSystemService(CONNECTIVITY_SERVICE);
+        try { connectivity.registerDefaultNetworkCallback(networkCallback); } catch (Exception ignored) {}
         handler.post(retryRunnable);
     }
 
@@ -85,31 +116,44 @@ public class LocationService extends Service implements LocationListener {
                 .build();
     }
 
-    private void updateNotification(String text) {
-        ((NotificationManager) getSystemService(NOTIFICATION_SERVICE))
-                .notify(NOTIFICATION_ID, notification("Angermund GPS active", text));
+    private boolean trackingEnabled() {
+        return !destroyed && prefs().getBoolean("enabled", false) && prefs().getBoolean("gps_enabled", false)
+                && !prefs().getString("device_token", "").isEmpty();
+    }
+
+    private void status(String text) {
+        prefs().edit().putString("gps_status", text).apply();
+        handler.post(() -> {
+            if (!destroyed) ((NotificationManager) getSystemService(NOTIFICATION_SERVICE))
+                .notify(NOTIFICATION_ID, notification(prefs().getBoolean("gps_test_mode", false)
+                        ? "Angermund GPS TEST active" : "Angermund background GPS", text));
+        });
     }
 
     private void requestUpdates() {
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED
                 && checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
-            updateNotification("Location permission required");
-            return;
+            status("Location permission required · open app");
+            stopSelf(); return;
         }
         try {
+            if (Build.VERSION.SDK_INT >= 28 && !manager.isLocationEnabled()) status("Phone location is off · turn on Location");
             if (manager.isProviderEnabled(LocationManager.GPS_PROVIDER))
                 manager.requestLocationUpdates(LocationManager.GPS_PROVIDER, MIN_TIME_MS, MIN_DISTANCE_M, this);
         } catch (Exception ignored) {}
         try {
             if (manager.isProviderEnabled(LocationManager.NETWORK_PROVIDER))
-                manager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 90_000L, 150f, this);
+                manager.requestLocationUpdates(LocationManager.NETWORK_PROVIDER, 60_000L, MIN_DISTANCE_M, this);
         } catch (Exception ignored) {}
     }
 
     @Override
     public void onLocationChanged(Location location) {
-        long now = System.currentTimeMillis();
-        if (now - lastAcceptedAt < 30_000L) return;
+        if (!trackingEnabled()) return;
+        long now = SystemClock.elapsedRealtime();
+        long age = (SystemClock.elapsedRealtimeNanos() - location.getElapsedRealtimeNanos()) / 1_000_000L;
+        if (age < 0 || age > 120_000L || (location.hasAccuracy() && location.getAccuracy() > 200f)) return;
+        if (lastAcceptedAt > 0 && now - lastAcceptedAt < 30_000L) return;
         lastAcceptedAt = now;
         try {
             JSONObject j = new JSONObject();
@@ -122,70 +166,74 @@ public class LocationService extends Service implements LocationListener {
             boolean testMode = prefs().getBoolean("gps_test_mode", false);
             j.put("testMode", testMode);
             if (testMode) j.put("testLabel", prefs().getString("gps_test_label", "Phone GPS Test"));
-            String payload = j.toString();
-            prefs().edit().putString("pending_location", payload).apply();
-            sendPayload(payload);
+            if (!testMode) j.put("capturedTripId", prefs().getString("gps_capture_trip", ""));
+            j.put("pointId", java.util.UUID.randomUUID().toString());
+            queue.add(j.toString(), location.getTime());
+            prefs().edit().putLong("gps_last_captured", location.getTime()).apply();
+            retryPending();
         } catch (Exception ignored) {}
     }
 
     private void retryPending() {
-        String pending = prefs().getString("pending_location", "");
-        if (!pending.isEmpty()) sendPayload(pending);
-    }
-
-    private void sendPayload(String payload) {
-        String token = prefs().getString("device_token", "");
-        if (token.isEmpty() || !prefs().getBoolean("enabled", false)) return;
-        io.execute(() -> {
-            HttpURLConnection c = null;
+        if (!trackingEnabled() || queue == null || !uploading.compareAndSet(false, true)) return;
+        try { io.execute(() -> {
+            String token = prefs().getString("device_token", "");
             try {
-                c = (HttpURLConnection) new URL(BuildConfig.SERVER_URL + "/api/mobile/gps").openConnection();
-                c.setConnectTimeout(15_000);
-                c.setReadTimeout(20_000);
-                c.setRequestMethod("POST");
-                c.setDoOutput(true);
-                c.setRequestProperty("Content-Type", "application/json");
-                c.setRequestProperty("X-Device-Token", token);
-                try (OutputStream out = c.getOutputStream()) {
-                    out.write(payload.getBytes(StandardCharsets.UTF_8));
+                refreshTripContext(token);
+                // Bound a replay pass so a long outage cannot monopolise the service.
+                for (int sent = 0; sent < 100 && trackingEnabled(); sent++) {
+                    GpsQueue.Point point = queue.first();
+                    if (point == null) break;
+                    HttpURLConnection c = null;
+                    try {
+                        c = connection("/api/mobile/gps", token);
+                        c.setRequestMethod("POST"); c.setDoOutput(true);
+                        c.setRequestProperty("Content-Type", "application/json");
+                        try (OutputStream out = c.getOutputStream()) { out.write(point.payload.getBytes(StandardCharsets.UTF_8)); }
+                        int code = c.getResponseCode();
+                        if (!token.equals(prefs().getString("device_token", "")) || !trackingEnabled()) break;
+                        if (code == 201 || code == 204) {
+                            queue.remove(point.id);
+                            prefs().edit().putLong("gps_last_uploaded", System.currentTimeMillis()).apply();
+                            status(code == 204 ? "Waiting for an assigned trip" : "Location sent · " + queue.count() + " waiting");
+                        } else if (code == 401 || code == 403) {
+                            prefs().edit().putBoolean("gps_enabled", false).remove("device_token").apply();
+                            queue.clear(); status("Sign in again to resume GPS"); handler.post(this::stopSelf); break;
+                        } else if (code == 400 || code == 422) {
+                            queue.remove(point.id); status("Invalid location skipped");
+                        } else { status("Upload delayed · " + queue.count() + " saved on phone"); break; }
+                    } finally { if (c != null) c.disconnect(); }
                 }
-                int code = c.getResponseCode();
-                if (code == 201) {
-                    StringBuilder sb = new StringBuilder();
-                    try (BufferedReader br = new BufferedReader(new InputStreamReader(c.getInputStream(), StandardCharsets.UTF_8))) {
-                        String line; while ((line = br.readLine()) != null) sb.append(line);
-                    }
-                    JSONObject r = new JSONObject(sb.toString());
-                    String trip = r.optString("tripId", "active trip");
-                    String vehicle = r.optString("vehicleId", "");
-                    clearPendingIfSent(payload);
-                    handler.post(() -> updateNotification((prefs().getBoolean("gps_test_mode", false) ? "TEST · " : "") + (vehicle.isEmpty() ? "" : vehicle + " · ") + trip + " · last GPS sent"));
-                } else if (code == 204) {
-                    clearPendingIfSent(payload);
-                    handler.post(() -> updateNotification("Waiting for an assigned trip"));
-                } else if (code == 401 || code == 403) {
-                    prefs().edit().putBoolean("enabled", false).remove("device_token").apply();
-                    handler.post(() -> {
-                        updateNotification("Sign in again to resume GPS");
-                        stopSelf();
-                    });
-                }
-            } catch (Exception e) {
-                handler.post(() -> updateNotification("Offline · latest GPS will retry"));
-            } finally {
-                if (c != null) c.disconnect();
-            }
-        });
+            } catch (Exception e) { if (trackingEnabled()) status("Offline · " + queue.count() + " saved on phone"); }
+            finally { uploading.set(false); }
+        }); } catch (java.util.concurrent.RejectedExecutionException e) { uploading.set(false); }
     }
 
-    private void clearPendingIfSent(String payload) {
-        if (payload.equals(prefs().getString("pending_location", "")))
-            prefs().edit().remove("pending_location").apply();
+    private HttpURLConnection connection(String path, String token) throws Exception {
+        HttpURLConnection c = (HttpURLConnection) new URL(BuildConfig.SERVER_URL + path).openConnection();
+        c.setConnectTimeout(15_000); c.setReadTimeout(20_000);
+        c.setRequestProperty("X-Device-Token", token);
+        return c;
+    }
+
+    private void refreshTripContext(String token) throws Exception {
+        if (prefs().getBoolean("gps_test_mode", false)) return;
+        HttpURLConnection c = connection("/api/mobile/context", token);
+        try {
+            if (c.getResponseCode() != 200) return;
+            StringBuilder sb = new StringBuilder();
+            try (BufferedReader br = new BufferedReader(new InputStreamReader(c.getInputStream(), StandardCharsets.UTF_8))) {
+                String line; while ((line = br.readLine()) != null) sb.append(line);
+            }
+            JSONObject trip = new JSONObject(sb.toString()).optJSONObject("trip");
+            if (token.equals(prefs().getString("device_token", "")))
+                prefs().edit().putString("gps_capture_trip", trip == null ? "" : trip.optString("id", "")).apply();
+        } finally { c.disconnect(); }
     }
 
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        if (!prefs().getBoolean("enabled", false) || prefs().getString("device_token", "").isEmpty()) {
+        if (!foregroundReady || !trackingEnabled()) {
             stopSelf();
             return START_NOT_STICKY;
         }
@@ -196,7 +244,10 @@ public class LocationService extends Service implements LocationListener {
 
     @Override
     public void onDestroy() {
+        destroyed = true;
+        prefs().edit().remove("gps_service_heartbeat").apply();
         handler.removeCallbacks(retryRunnable);
+        try { if (connectivity != null) connectivity.unregisterNetworkCallback(networkCallback); } catch (Exception ignored) {}
         try { if (manager != null) manager.removeUpdates(this); } catch (Exception ignored) {}
         io.shutdownNow();
         super.onDestroy();
@@ -204,6 +255,6 @@ public class LocationService extends Service implements LocationListener {
 
     @Override public IBinder onBind(Intent intent) { return null; }
     @Override public void onStatusChanged(String provider, int status, Bundle extras) {}
-    @Override public void onProviderEnabled(String provider) {}
-    @Override public void onProviderDisabled(String provider) {}
+    @Override public void onProviderEnabled(String provider) { requestUpdates(); }
+    @Override public void onProviderDisabled(String provider) { status("Location provider off · check phone Location"); }
 }

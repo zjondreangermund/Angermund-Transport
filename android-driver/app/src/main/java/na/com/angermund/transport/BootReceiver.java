@@ -27,10 +27,15 @@ public class BootReceiver extends BroadcastReceiver {
                 || context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED;
         boolean background = Build.VERSION.SDK_INT < 29
                 || context.checkSelfPermission(Manifest.permission.ACCESS_BACKGROUND_LOCATION) == PackageManager.PERMISSION_GRANTED;
-        if (!foreground || !background) return;
+        if (!foreground || !background) {
+            p.edit().putString("gps_status", "Restart paused · allow Location all the time in app settings").apply();
+            return;
+        }
         try {
             if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(new Intent(context, LocationService.class));
             else context.startService(new Intent(context, LocationService.class));
-        } catch (Exception ignored) {}
+        } catch (Exception e) {
+            p.edit().putString("gps_status", "Android blocked restart · open app to resume tracking").apply();
+        }
     }
 }
