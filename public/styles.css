@@ -1338,3 +1338,17 @@ html.modal-open{overflow:hidden!important}@media(max-width:760px){html:has(#side
 #sidebar .nav-work-group>.nav-more-items>button{min-height:42px}
 #sidebar .nav-admin-heading{padding:14px 10px 5px;color:#91a9bf;font-size:10px;font-weight:700;letter-spacing:.06em;text-transform:uppercase}
 #sidebar .nav-admin-heading:first-child{padding-top:7px}
+
+/* Separate page sections without changing their layout or interactions. */
+#app > .panel + .panel,
+#app > .panel + .grid-2,
+#app > .grid-2 + .panel,
+#app > .grid-2 + .grid-2,
+#app > .kpis + .panel,
+#app > .panel + .kpis{margin-top:20px}
+.task-row + .task-row{margin-top:8px}
+@media(max-width:760px){
+  #app > .panel + .panel,#app > .panel + .grid-2,
+  #app > .grid-2 + .panel,#app > .grid-2 + .grid-2,
+  #app > .kpis + .panel,#app > .panel + .kpis{margin-top:14px}
+}
