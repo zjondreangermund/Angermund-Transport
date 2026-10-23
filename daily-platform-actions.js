@@ -11,8 +11,14 @@ function collect(state,now=Date.now()){
  const due=(expiry)=>expiry&&expiry<=new Date(Number(now)+30*86400000+7200000).toISOString().slice(0,10);
  const permits=state.permits||[],trucks=state.trucks||[],drivers=state.drivers||[];
  for(const p of permits)if(due(p.expiry))add('document-renewal','Renew expiring or expired documents',['dispatcher'],p,(p.type||'Document')+' · expires '+p.expiry,'documents','permit');
+ for(const p of permits)if(!p.expiry&&/licen[cs]e|prdp|roadworthy|permit/i.test(p.type||'')&&!/registration certificate/i.test(p.type||''))add('document-dates','Complete missing document dates',['dispatcher'],p,(p.type||'Document')+' has no expiry date','documents','permit');
+ for(const t of state.trailers||[]){
+  const permit=permits.find(p=>p.ownerId===t.id&&/licen[cs]e/i.test(p.type||'')&&p.expiry);
+  if(!t.licenseExpiry&&!permit)add('trailer-licence','Capture trailer licence dates',['dispatcher'],t,'Licence expiry is missing','documents','trailer');
+ }
  for(const t of trucks){
   if(!t.licenseExpiry&&!permits.some(p=>p.ownerId===t.id&&/licen[cs]e|operator/i.test(p.type||'')&&p.expiry))add('vehicle-licence','Capture vehicle licence dates',['dispatcher'],t,'Licence expiry is missing','documents','truck');
+  if(!number(t.odometer)||!number(t.serviceDue))add('fleet-service-details','Complete fleet service readings',['workshop'],t,'Odometer or next-service kilometres are missing','fleet','truck');
   if(number(t.serviceDue)>0&&number(t.serviceDue)-number(t.odometer)<=5000)add('service-due','Arrange vehicle services',['workshop'],t,'Next service '+t.serviceDue+' km · odometer '+number(t.odometer),'workshop','truck');
  }
  for(const d of drivers.filter(x=>!['Archived','Inactive','Terminated'].includes(x.status)&&x.isDriver!==false&&(!x.role||/driver/i.test(x.role)))){
