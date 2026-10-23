@@ -3699,8 +3699,20 @@ function openInstalledAndroidApp(){
   location.href='angermund://open';
   setTimeout(()=>{document.removeEventListener('visibilitychange',mark);if(!opened&&!document.hidden&&$('appInstallStatus'))$('appInstallStatus').innerHTML='<b>App not detected.</b> If it is not installed yet, use Download Android app.'},1800)
 }
-function downloadAndroidApp(){sessionStorage.setItem(ANDROID_APP_SKIP_KEY,'1');hideAndroidAppPrompt();const a=document.createElement('a');a.href='/download/android?v=1.4.2&ts='+Date.now();a.download='Angermund-Transport-v1.4.2.apk';document.body.appendChild(a);a.click();a.remove();notify('Downloading the newest Android APK v1.4.2…')}
-function installLatestAndroidApp(){if(/Android/i.test(navigator.userAgent)&&!runningInsideAndroidApp())downloadAndroidApp();else openAndroidInstallPrompt()}
+function downloadAndroidApp(){
+  sessionStorage.setItem(ANDROID_APP_SKIP_KEY,'1');
+  if(runningInsideAndroidApp()){
+    if(typeof window.AngermundNative?.openAndroidInstaller==='function'){
+      hideAndroidAppPrompt();window.AngermundNative.openAndroidInstaller();notify('Opening Chrome to download Android v1.4.2');return
+    }
+    forceAndroidInstallPrompt('To update the old installed app, open this website in Chrome and tap Install App. The old WebView cannot install APK files directly.');
+    return
+  }
+  hideAndroidAppPrompt();
+  const a=document.createElement('a');a.href='/download/android?v=1.4.2&ts='+Date.now();a.download='Angermund-Transport-v1.4.2.apk';
+  document.body.appendChild(a);a.click();a.remove();notify('Downloading the newest Android APK v1.4.2…')
+}
+function installLatestAndroidApp(){if(/Android/i.test(navigator.userAgent))downloadAndroidApp();else openAndroidInstallPrompt()}
 function startNativeBackgroundAlerts(){if(!authToken||!runningInsideAndroidApp()||typeof window.AngermundNative?.startBackgroundAlerts!=='function')return false;try{window.AngermundNative.startBackgroundAlerts(authToken);return true}catch{return false}}
 function startNativeBackgroundGps(){
   if(role!=='driver'||!authToken||!nativeBackgroundGpsAvailable())return false;
