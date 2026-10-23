@@ -19,3 +19,9 @@ body:before{content:'';position:fixed;inset:0;z-index:-1;pointer-events:none;bac
 @keyframes ledger-driving-pulse{0%,100%{box-shadow:0 0 0 2px rgba(53,207,154,.2)}50%{box-shadow:0 0 0 6px rgba(53,207,154,.45)}}
 @keyframes ledger-return-arrive{from{left:100%}to{left:50%}}
 @media(prefers-reduced-motion:reduce){.is-driving .ledger-moving-dot,.is-returning .ledger-moving-dot{animation:none}}
+
+/* Give each dispatch load its own visible space. */
+.ledger-dispatch .cards-list{display:grid;gap:18px;border:0;border-radius:0;overflow:visible;background:transparent}
+.ledger-dispatch .ledger-row,.ledger-dispatch .ledger-row:last-child{border:1px solid var(--line);border-radius:12px;background:var(--panel)}
+.ledger-dispatch .ledger-row:hover{background:var(--panel2)}
+@media(max-width:760px){.ledger-dispatch .cards-list{gap:14px}}
