@@ -4,7 +4,7 @@ const STORE='angermund_transport_ops_v2',LEGACY_STORE='angermund_transport_erp_v
 const $=id=>document.getElementById(id),today=()=>new Date().toISOString().slice(0,10),uid=(p='id')=>`${p}_${Date.now().toString(36)}${Math.random().toString(36).slice(2,6)}`;
 const SMART_SLIP_CATEGORIES=['Diesel','Toll','Meals','Accommodation','Parking','Border permit','Customs / clearing','Road permit / RFA','Mass distance charge (MDC)','Weighbridge','Loading / offloading','Ferry / crossing','Wash bay','Tyre repair','Emergency repair','Breakdown parts','Workshop / spares','Police / traffic fine','General supplies','Other'];
 let authToken=appLocalStorage.getItem('angermund_token')||'',sessionUser=null,liveGps=[],geofences=[],serverNotifications=[],providerConfig={},pushDeviceStatus={supported:false,permission:typeof Notification!=='undefined'?Notification.permission:'unsupported',subscribed:false,serverCount:0},mapInstance=null,mapLayers=[],geofencePickerMap=null,geofencePickerMarker=null,geofencePickerCircle=null,geofenceDraftPoint=null,appUsers=[],usersLoaded=false,driverUploads=[],driverUploadsLoaded=false,activeUploadObjectUrl='',activeUploadPreviewUrl='',driverPreviewId='',driverGeoWatchId=null,phoneGpsTestWatchId=null,lastPhoneGpsTestSentAt=0,lastDriverGpsSentAt=0,lastDriverGpsPoint=null,payrollPeriodFilter=new Date().toISOString().slice(0,7),mdcTripPrefill='',journeyQuoteLegs=[],crossBorderPackTripId='',crossBorderDocs=[],crossBorderDocsLoadedFor='';
-let adminSlipBatch=null,excelImportFile=null,excelImportPreview=null,tripCompletionFilter='process', tripViewMode='live',tripHistoryYear=String(new Date().getFullYear()),tripHistoryMonth='all',tripSearchTerm='',pnlPeriodFilter=new Date().toISOString().slice(0,7),carrierOrderMode='open',carrierOrderPeriod=new Date().toISOString().slice(0,7),carrierOrderSearch='',shunterReconPeriod='',commandYearFilter=String(new Date().getFullYear()),commandMonthFilter=String(new Date().getMonth()+1).padStart(2,'0');
+let adminSlipBatch=null,excelImportFile=null,excelImportPreview=null,excelImportBusy=false,excelImportStatus=null,tripCompletionFilter='process', tripViewMode='live',tripHistoryYear=String(new Date().getFullYear()),tripHistoryMonth='all',tripSearchTerm='',pnlPeriodFilter=new Date().toISOString().slice(0,7),carrierOrderMode='open',carrierOrderPeriod=new Date().toISOString().slice(0,7),carrierOrderSearch='',shunterReconPeriod='',commandYearFilter=String(new Date().getFullYear()),commandMonthFilter=String(new Date().getMonth()+1).padStart(2,'0');
 const QUICK_PIN_DEVICE_KEY='angermund_quick_pin_device',QUICK_PIN_READY_KEY='angermund_quick_pin_ready',QUICK_PIN_LOGIN_KEY='angermund_quick_pin_login',PHONE_GPS_TEST_KEY='angermund_phone_gps_test';
 function quickPinDeviceId(){let id=appLocalStorage.getItem(QUICK_PIN_DEVICE_KEY);if(!id){id=(crypto.randomUUID?crypto.randomUUID():'web-'+Date.now().toString(36)+Math.random().toString(36).slice(2));appLocalStorage.setItem(QUICK_PIN_DEVICE_KEY,id)}return id}
 function accountUsername(u){return String(u?.username||u?.email||'').split('@')[0]}
@@ -2070,19 +2070,37 @@ function excelImports(){
   const hist=history.length?history.map(h=>'<tr><td>'+esc(String(h.date||'').replace('T',' ').slice(0,16))+'</td><td><b>'+esc(h.filename||'')+'</b><br><small>'+esc(excelImportTypeLabel(h.type))+(h.sheet?' · '+esc(h.sheet):'')+'</small></td><td>'+num(h.created)+'</td><td>'+num(h.updated)+'</td><td>'+num(h.skipped)+'</td><td>'+esc(h.status||'Imported')+'</td><td>'+(h.sourceReceiptId?'<button type="button" class="link-button import-source" data-id="'+esc(h.sourceReceiptId)+'">Source file</button> ':'')+(h.canUndo&&h.status==='Imported'?'<button type="button" class="link-button undo-import" data-id="'+esc(h.id)+'">Undo</button>':'')+'</td></tr>').join(''):'<tr><td colspan="7" class="empty">No Excel imports yet.</td></tr>';
   return '<section class="panel excel-import-hero"><div class="toolbar"><div><h2>Excel Import Centre</h2><p class="muted-copy">Upload the new Excel file you receive. The app reads it, shows you what it found, then puts recognised records into the correct sections.</p></div><button type="button" class="primary" id="chooseExcelImport">⇩ Import Excel</button><input id="excelImportInput" type="file" accept=".xlsx,.xls,.xlsm,.csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" hidden></div>'
     +'<div class="import-known-grid"><div><b>NBL carrier load status</b><span>Trips / loads · routes · truck match · trailers · rates</span></div><div><b>Driver Trip Report - Loads</b><span>Repeated trip forms · drivers · trucks · odometers · diesel · tolls · trip expenses · income / profit</span></div><div><b>NBL Shunter Recon</b><span>Ang 4 / Ang 5 · daily TMS references · weekday and weekend/public-holiday charges · monthly total</span></div><div><b>Insurance / Santam-style summary</b><span>Newest policy sheet · fire/property · goods in transit · public liability · business all risk · insured drivers · trailers · trucks · other vehicles · premiums · policy history</span></div><div><b>Duplicate protection</b><span>TMS IDs, trip source details and registrations update existing records instead of creating duplicates.</span></div><div><b>Preview first</b><span>No workbook changes the database until you confirm the preview.</span></div></div></section>'
+    +(excelImportStatus?'<section class="panel" role="status" aria-live="polite"><div class="notice"><b>'+esc(excelImportStatus.title)+'</b><p>'+esc(excelImportStatus.message)+'</p></div></section>':'')
     +preview
     +'<section class="panel" style="margin-top:18px"><div class="panel-head"><div><h2>Import history</h2><p class="muted-copy">The original workbook is archived with the import. Only the most recent safe import can be undone.</p></div></div><div class="table-wrap"><table><thead><tr><th>Date</th><th>Workbook</th><th>Created</th><th>Updated</th><th>Skipped</th><th>Status</th><th></th></tr></thead><tbody>'+hist+'</tbody></table></div></section>'
 }
 async function previewExcelWorkbook(file){
-  if(!file)return;excelImportFile=file;excelImportPreview={loading:true,filename:file.name};render();
+  if(!file||excelImportBusy)return;excelImportStatus=null;excelImportFile=file;excelImportPreview={loading:true,filename:file.name};render();
   try{const fd=new FormData();fd.append('workbook',file,file.name);excelImportPreview=await api('/api/imports/excel/preview',{method:'POST',body:fd});render()}
-  catch(e){excelImportPreview=null;render();notify(e.message)}
+  catch(e){excelImportPreview=null;excelImportStatus={title:'Could not read workbook',message:e.message};render();notify(e.message)}
 }
 async function applyExcelWorkbook(){
-  if(!excelImportFile||!excelImportPreview||excelImportPreview.kind==='generic')return notify('Choose a recognised workbook first');
-  if(!confirm('Import '+excelImportPreview.filename+' and place the recognised records into Angermund Transport?'))return;
-  try{const fd=new FormData();fd.append('workbook',excelImportFile,excelImportFile.name);const r=await api('/api/imports/excel/apply',{method:'POST',body:fd});excelImportFile=null;excelImportPreview=null;await refreshCentralState(false);page='imports';render();notify('Excel imported · '+num(r.created)+' created · '+num(r.updated)+' updated · '+num(r.skipped)+' skipped'+(num(r.monthlySnapshots)?' · '+num(r.monthlySnapshots)+' monthly P&L snapshot(s)':''))}
-  catch(e){notify(e.message)}
+  if(excelImportBusy)return;
+  if(!excelImportFile||!excelImportPreview||excelImportPreview.kind==='generic'){
+    excelImportStatus={title:'Choose a workbook',message:'Choose a recognised workbook and review its preview before importing.'};render();return;
+  }
+  // The preview's explicit import button is the confirmation. A second native
+  // dialog can be suppressed by embedded browsers and silently cancel the save.
+  const file=excelImportFile;
+  excelImportBusy=true;excelImportStatus={title:'Saving Excel import…',message:file.name+' — please wait for the result before importing again.'};render();
+  try{
+    const fd=new FormData();fd.append('workbook',file,file.name);
+    const r=await api('/api/imports/excel/apply',{method:'POST',body:fd});
+    excelImportFile=null;excelImportPreview=null;
+    const summary=num(r.created)+' created · '+num(r.updated)+' updated · '+num(r.skipped)+' skipped'+(num(r.summary?.pendingRates)?' · '+num(r.summary.pendingRates)+' rates pending':'')+(num(r.summary?.unassigned)?' · '+num(r.summary.unassigned)+' need a truck assignment':'');
+    excelImportStatus={title:'Excel import saved',message:file.name+' · '+summary};
+    try{
+      await refreshCentralState(false);
+      if(!(db.importHistory||[]).some(h=>h.id===r.id))excelImportStatus={title:'Import saved — refresh needed',message:summary+'. The server saved this import, but the refreshed history does not show it yet. Refresh the page before importing again.'};
+    }catch(e){excelImportStatus={title:'Import saved — refresh failed',message:summary+'. Refresh the page to load the saved records. '+e.message};}
+    notify('Excel import saved · '+summary);
+  }catch(e){excelImportStatus={title:'Import not confirmed',message:e.message+'. Your workbook preview is still available. If the connection timed out, refresh import history before retrying.'};}
+  finally{excelImportBusy=false;render();}
 }
 async function undoExcelWorkbook(id){
   if(!confirm('Undo the most recent Excel import and restore the records to how they were before it?'))return;
@@ -2090,6 +2108,8 @@ async function undoExcelWorkbook(id){
   catch(e){notify(e.message)}
 }
 function wireExcelImports(){
+  ['chooseExcelImport','chooseAnotherExcel','excelImportInput','confirmExcelImport'].forEach(id=>{if($(id))$(id).disabled=excelImportBusy});
+  if(excelImportBusy&&$('confirmExcelImport'))$('confirmExcelImport').textContent='Saving import…';
   if($('chooseExcelImport'))$('chooseExcelImport').onclick=()=>$('excelImportInput').click();
   if($('excelImportInput'))$('excelImportInput').onchange=e=>{const file=e.target.files?.[0];e.target.value='';if(file)previewExcelWorkbook(file)};
   if($('chooseAnotherExcel'))$('chooseAnotherExcel').onclick=()=>{$('excelImportInput')?.click()};
@@ -3827,3 +3847,4 @@ function whiteboardSourceLinks(){
  const ids=[...new Set((db.permits||[]).map(p=>p.sourceImportId==='whiteboard-1001025828-2026-10-20'?p.sourceReceiptId:'').filter(Boolean).concat((db.trucks||[]).map(t=>t.whiteboardSourceReceiptId).filter(Boolean)))];
  return ids.length?'<section class="panel"><h3>Whiteboard source · 20 October 2026</h3><p>Handwritten expiry reference attached to the confirmed vehicles and document records. This photo is a reference list, not a copy of the actual licences.</p>'+ids.map(id=>'<button type="button" class="ghost" data-whiteboard-receipt="'+esc(id)+'">Open original whiteboard photo / PDF</button>').join('')+'</section>':'';
 }
+
