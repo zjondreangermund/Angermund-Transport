@@ -3,6 +3,7 @@ const TestJourney=require('./phone-test-journey');
 const AndroidUpdate=require('./public/android-update');
 const SiteAssistant=require('./public/site-assistant-core');
 const AssistantTripActions=require('./assistant-trip-actions');
+const AssistantOps=require('./assistant-operations');
 const PushDelivery=require('./push-delivery-policy');
 const TripSites=require('./trip-site-geofences');
 const {resolveMobileGps}=require('./mobile-gps');
@@ -3689,22 +3690,37 @@ async function currentAndroidRelease(){
 const assistantCalls=new Map();
 const assistantDrafts=new Map(),ASSISTANT_DRAFT_TTL=10*60*1000;
 const assistantCanChangeTrips=u=>['admin','manager','dispatcher'].includes(String(u?.role||''));
+const assistantCanPerform=(u,kind)=>['trip_rename','trip_depart'].includes(kind)?assistantCanChangeTrips(u):AssistantOps.roleCan(u?.role,kind);
 function assistantPublicDraft(d){
- return{id:d.id,kind:d.plan.kind,tripId:d.plan.tripId,tripNumber:d.plan.tripNumber,
+ return{id:d.id,kind:d.plan.kind,tripId:d.plan.tripId||null,tripNumber:d.plan.tripNumber||null,
+   entityId:d.plan.entityId||null,page:d.plan.page||'trips',
    description:d.plan.description,old:d.plan.old,next:d.plan.next,warning:d.plan.warning,
+   lines:Array.isArray(d.plan.lines)?d.plan.lines:[],
    expiresAt:new Date(d.expiresAt).toISOString()};
 }
 app.post('/api/assistant/approve/:draftId',auth,async(req,res)=>{
- if(!assistantCanChangeTrips(req.user))return res.status(403).json({error:'Only dispatch management can approve trip changes.'});
  const id=String(req.params.draftId),d=assistantDrafts.get(id);
+ if(d&&!assistantCanPerform(req.user,d.plan.kind))return res.status(403).json({error:'You do not have permission to approve this operation.'});
  if(!d||d.userId!==req.user.sub||d.expiresAt<Date.now())return res.status(404).json({error:'This assistant draft expired. Ask the assistant to prepare it again.'});
  if(req.body?.confirm!==true)return res.status(400).json({error:'Explicit approval is required.'});
  if(d.inProgress)return res.status(409).json({error:'This change is already being approved.'});
  d.inProgress=true;
  try{
    const actor=req.user.name||req.user.email||req.user.sub;
-   const change=await mutateOpsState(state=>AssistantTripActions.apply(state,d.plan,actor));
+   const change=await mutateOpsState(state=>
+     ['trip_rename','trip_depart'].includes(d.plan.kind)?
+       AssistantTripActions.apply(state,d.plan,actor):
+       AssistantOps.apply(state,d.plan,actor)
+   );
    assistantDrafts.delete(id);
+   if(d.plan.kind==='task_create')try{
+     const newState=await readOpsState();
+     const task=(newState.tasks||[]).find(x=>x.id===change.result.entityId);
+     if(task)await notifyTask(task,'New task: '+task.title,
+       (task.due?'Due '+task.due+' · ':'')+task.priority+' priority',
+       task.priority==='Critical'?'critical':task.priority==='High'?'warning':'info');
+   }catch(e){console.warn('Assistant task saved but notification was delayed:',e.message)}
+   // Expenses are deliberately left in Review, not approved or paid.
    res.json({success:true,change:change.result,revision:change.revision,
      message:d.plan.description+' · Approved and saved.'});
  }catch(e){
@@ -3727,8 +3743,24 @@ app.post('/api/assistant/ask',auth,async(req,res)=>{
     previous.push(now);assistantCalls.set(userId,previous);
     const message=String(req.body?.message||'').trim();
     if(!message||message.length>1200)return res.status(400).json({error:'Enter a question under 1,200 characters.'});
-    // Never ask the language model to execute operations. The authoritative
-    // database resolves trip identities and a per-user approval token is issued.
+    // The server (not AI-generated code) resolves real records and stages
+    // proposed operations behind one-use, per-user approval.
+    const opsKind=AssistantOps.kind(message);
+    if(opsKind){
+      if(!assistantCanPerform(req.user,opsKind))
+        return res.json({answer:'Your role cannot change these records. Ask an administrator or the responsible manager.',page:null,source:'operation-permission'});
+      const plan=AssistantOps.plan(message,await readOpsState());
+      if(plan?.error)return res.json({answer:plan.error,page:opsKind.startsWith('loan')?'loans':opsKind.startsWith('task')?'tasks':'trips',source:'operation-clarification'});
+      if(plan?.kind){
+        plan.actorRole=req.user.role;
+        const draft={id:crypto.randomUUID(),userId:req.user.sub,plan,expiresAt:Date.now()+ASSISTANT_DRAFT_TTL,inProgress:false};
+        for(const [id,x] of assistantDrafts)if(x.expiresAt<Date.now()||x.userId===req.user.sub)assistantDrafts.delete(id);
+        assistantDrafts.set(draft.id,draft);
+        return res.json({answer:'I prepared '+plan.description+'. Review the details below. Nothing has been saved yet.',
+          page:plan.page||'trips',source:'operation-proposal',proposal:assistantPublicDraft(draft)});
+      }
+    }
+    // Preserve the existing approved trip-number and departure workflows.
     if(AssistantTripActions.attempt(message)){
       if(!assistantCanChangeTrips(req.user))
         return res.json({answer:'Your account can view trips but cannot change trip numbers or departure status. Ask an admin, manager or dispatcher.',page:null,action:null,source:'trip-safety'});
