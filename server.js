@@ -3730,7 +3730,9 @@ app.post('/api/assistant/ask',auth,async(req,res)=>{
       const data=await response.json();
       const output=(data.output||[]).flatMap(o=>o.content||[]).find(o=>o.type==='output_text')?.text||data.output_text;
       const reply=JSON.parse(String(output||''));
-      const p=pages.find(x=>x.id===reply.page),action=reply.action==='new_trip'&&pages.some(x=>x.id==='dispatch')?'new_trip':null;
+      const p=pages.find(x=>x.id===reply.page);
+      const action=reply.action==='new_trip'&&['admin','manager','dispatcher'].includes(req.user.role)&&pages.some(x=>x.id==='dispatch')?'new_trip':
+        reply.action==='new_task'&&['admin','manager'].includes(req.user.role)&&pages.some(x=>x.id==='tasks')?'new_task':null;
       return res.json({answer:String(reply.answer||fallback.answer).slice(0,1250),
         page:p?.id||fallback.page||null,action,source:'ai',aiEnabled:true});
     }catch(err){
