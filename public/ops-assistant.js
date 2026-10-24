@@ -24,6 +24,10 @@
     const financial=bridge()?.context?.()?.pages?.some(x=>x.id==='monthlyPnl');
     const monthly=host.querySelector('[data-example="Where do I see my monthly income?"]');
     if(monthly)monthly.hidden=!financial;
+    const loans=host.querySelector('[data-example^="Add loan to"]');
+    if(loans)loans.hidden=!bridge()?.context?.()?.pages?.some(x=>x.id==='loans');
+    const assign=host.querySelector('[data-example^="Assign driver"]');
+    if(assign)assign.hidden=!bridge()?.context?.()?.pages?.some(x=>x.id==='dispatch');
   }
   window.angermundAssistantRefresh=refresh;
   function toggle(open){
