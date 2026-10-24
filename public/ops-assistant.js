@@ -15,8 +15,8 @@
  '<button type="button" data-example="Create task to check ANG 12 tomorrow, high priority">Create task</button>'+
  '<button type="button" data-example="What can you do?">All actions</button>'+
  '<button type="button" data-example="Record parts expense N$1200 for truck ANG 12 on 2026-10-24">Parts purchase</button>'+
- '<button type="button" data-example="Create invoice for trip AT-101 leg 1">Invoice</button>'+
- '<button type="button" data-example="Attach POD to trip AT-101">Attach POD</button></div>'+
+ '<button type="button" data-example="Create invoice for truck ANG 12">Invoice</button>'+
+ '<button type="button" data-example="Attach POD to truck ANG 12">Attach POD</button></div>'+
     '<form class="assistant-form"><textarea class="assistant-text" rows="2" maxlength="4000" aria-label="Ask a question" placeholder="Tell me what to do…" required></textarea><button type="submit" aria-label="Send question">➤</button></form>'+
     '<div class="assistant-attachment"><label>Attach slip / POD <input class="assistant-file" type="file" multiple accept="image/*,application/pdf" aria-label="Attach slips or PODs"></label><button type="button" class="assistant-clear-file" hidden>Remove file</button><small class="assistant-file-name"></small></div>'+
     '<div class="assistant-tools"><button type="button" class="assistant-mic" aria-label="Dictate instruction" aria-pressed="false">🎤 Speak</button><button type="button" class="assistant-record-audio">Record audio</button><button type="button" class="assistant-brief">Needs attention</button><button type="button" class="assistant-history">Changes</button><button type="button" class="assistant-clear-chat">Clear chat</button></div><small class="assistant-voice-status" role="status">Voice uses browser or server transcription. Check dictated text before sending.</small>'+
