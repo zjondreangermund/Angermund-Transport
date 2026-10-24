@@ -3787,7 +3787,15 @@ app.post('/api/assistant/ask',auth,async(req,res)=>{
     if(extraKind){
       if(!assistantCanPerform(req.user,extraKind))
         return res.json({answer:'Your account cannot make this type of change.',page:null,source:'operation-permission'});
-      const prepared=AssistantExtra.plan(message,await readOpsState());
+      const liveState=await readOpsState();
+      let prepared=AssistantExtra.plan(message,liveState);
+      if(prepared?.error&&OPENAI_API_KEY){
+        const normalized=await assistantNaturalCommand(message);
+        if(normalized!==message&&AssistantExtra.kind(normalized)===extraKind){
+          const retry=AssistantExtra.plan(normalized,liveState);
+          if(retry?.kind)prepared=retry;
+        }
+      }
       if(prepared?.error)return res.json({answer:prepared.error,page:extraKind==='task_update'?'tasks':'trips',source:'operation-clarification'});
       if(prepared?.kind){
         prepared.actorRole=req.user.role;
