@@ -43,3 +43,38 @@ Use real references and dates from your data; test in a safe environment before 
 `node --test test/assistant-platform*.test.js` covers planning, permissions, stale previews, receipt assignment, quotation calculations, dependent deletion, exact load selection and the full HTTP cancel/approve/replay/POD/invoice flow using an isolated in-memory server. PostgreSQL document writes share the state transaction; a real PostgreSQL and live OCR/model round trip require deployment validation.
 
 The full suite has two pre-existing failures reproduced on main 81a172b: the page-filters VM mock lacks matchMedia listener methods, and single-journey-bar expects no ledger-return class. They are unrelated to this change.
+
+## Conversation, workflows and voice extension (October 2026)
+
+The assistant now stores the last six exchanges and an unambiguous active record per account. Changing accounts clears the visible transcript; the session endpoint only returns that account's conversation. Clear chat deletes the transcript/focus without changing business records. The assistant can resolve “change the date” for a focused record and “assign it to Josef” for a focused trip. Ambiguous references require clarification.
+
+Grouped jobs can be written as semicolon-separated commands; natural compound instructions use the configured AI interpreter. Every step runs against a sandbox copy, and a single review card lists the entire job. Approval rechecks the business state and executes in one state/document transaction. No partial execution is reported as success. Ready-load billing jobs accept “Prepare invoices for YYYY-MM”; missing POD/MDC and NBL billing requirements are reported. NBL consolidated billing still uses its existing dedicated command.
+
+Batch capture accepts up to twenty images/PDFs, 12 MB each and 60 MB total. Use numbered lines such as:
+
+```
+1: POD trip AT-101 leg 1
+2: POD trip AT-102 leg 1
+3: diesel truck ANG 12
+```
+
+The existing scanner extracts receipt values. Match candidates come from explicit trip references, fleet names, registrations on receipts and filenames. Each proposed match/amount/document is reviewed. Unknown/ambiguous records, duplicates, missing fields or one failed step block the batch. Proof is stored only on approval. This is deliberate matching, not guessing which trip a truck was on.
+
+New role-checked business actions include recording received invoice payments (no bank transfer), generating payroll drafts using existing calculations, overhead entry, creating/updating/archiving fleet/staff/client/route/compliance records, and selected operational settings. Accounts/passwords and arbitrary settings are excluded. Truck/employee archive checks live trips; employee archive also checks outstanding loans. Drivers added as employees receive matching driver records. Compliance dates sync with truck records.
+
+“What needs attention?” checks current saved records through the platform's existing daily-task rules. Opening the assistant shows the count; it refreshes while the app is open. This does not create an independent external reminder schedule. “Why did ANG 12 profit change in YYYY-MM?” compares recorded operational contribution with the previous month and labels excluded/shared costs; it is not an audited net-profit or cash report.
+
+Attach one tender PDF/image with “Review this tender”. The configured AI reads requirements and source references, compares supplied company/compliance evidence, and lists missing information and pricing questions. Eligibility, unreadable sections and deadlines must be verified against the original tender. This is preparation, not automatic external submission or legal certification.
+
+“Action history” shows the account's recent changes. “Undo last job” prepares a separate reversal preview. Undo checks every affected record, rejects reference collisions or later changes, and retains audit history. Only the same user's currently matching staff role can reverse that job. Archived document bytes remain preserved; undo changes record links, not stored proof bytes.
+
+Voice:
+
+- Speak uses browser speech recognition when available; Record audio uses microphone recording plus server transcription.
+- Transcripts appear as editable text. Dictation never sends an instruction or approves changes automatically.
+- Microphone access is requested only after tapping a voice control. Recording stops at one minute or when the panel/app closes; permission denial has a text/keyboard fallback.
+- Record audio uses `OPENAI_API_KEY` and `ASSISTANT_TRANSCRIBE_MODEL` (default `gpt-transcribe`). The browser's speech service may also process audio; the UI states this.
+- Read aloud is an optional button on assistant replies; it uses browser speech synthesis.
+- Android APK 1.4.5 / code 22 requests RECORD_AUDIO and grants microphone/camera only to the configured HTTPS server origin, only after Android permission approval. Old APKs need updating for the recording fallback.
+
+Additional tests cover grouped job cancellation/replay/staleness, batch POD proof, role restrictions, session separation, payment baselines, payroll delegation, master record validation, undo, profit comparison, microphone denial and cancellation during a pending permission prompt. Android unit tests cover exact-origin media permissions and resource filtering. A real microphone/browser speech service, live model/OCR round trip and physical Android permission flow remain device checks.

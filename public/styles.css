@@ -1457,3 +1457,9 @@ html.modal-open{overflow:hidden!important}@media(max-width:760px){html:has(#side
 .assistant-attachment label{min-width:0;max-width:100%}.assistant-attachment input{display:block;width:100%;max-width:280px;color:inherit;font-size:12px}
 .assistant-file-name{overflow-wrap:anywhere;max-width:100%}.assistant-clear-file{border:1px solid #3d6b90;border-radius:7px;background:#1f3b52;color:white;padding:5px 9px;cursor:pointer}
 .assistant-clear-file[hidden]{display:none}
+.assistant-form textarea.assistant-text{flex:1;min-width:0;resize:vertical;max-height:120px;border:1px solid #3d6b90;background:#102b48;color:#fff;border-radius:9px;padding:10px;font:inherit;font-size:14px}
+.assistant-tools{display:flex;gap:6px;flex-wrap:wrap;padding:4px 12px}.assistant-tools button,.assistant-read{color:#dcefff;background:#123756;border:1px solid #2c679b;border-radius:8px;padding:7px 9px;font-size:12px;cursor:pointer;min-height:36px}
+.assistant-tools [aria-pressed=true]{background:#a43232;border-color:#f99}.assistant-voice-status{display:block;padding:4px 12px;color:#bdcddd;font-size:11px}.assistant-read{margin-top:7px;padding:4px 7px;min-height:30px}
+@media(max-width:760px){.assistant-suggestions{max-height:65px;overflow-y:auto}.assistant-tools button{padding:6px;font-size:11px}.assistant-head{padding:9px 12px}.assistant-log{min-height:80px}}
+/* Keep every voice/upload action reachable even with a short phone viewport. */
+.assistant-panel{overflow-y:auto;overscroll-behavior:contain}.assistant-head,.assistant-suggestions,.assistant-form,.assistant-attachment,.assistant-tools,.assistant-voice-status,.assistant-foot{flex-shrink:0}.assistant-log{flex:1 0 100px;max-height:420px}

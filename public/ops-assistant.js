@@ -17,19 +17,35 @@
  '<button type="button" data-example="Record parts expense N$1200 for truck ANG 12 on 2026-10-24">Parts purchase</button>'+
  '<button type="button" data-example="Create invoice for trip AT-101 leg 1">Invoice</button>'+
  '<button type="button" data-example="Attach POD to trip AT-101">Attach POD</button></div>'+
-    '<form class="assistant-form"><input type="text" maxlength="1200" aria-label="Ask a question" placeholder="Ask anything about this site…" autocomplete="off" required><button type="submit" aria-label="Send question">➤</button></form>'+
-    '<div class="assistant-attachment"><label>Attach slip / POD <input class="assistant-file" type="file" accept="image/*,application/pdf" aria-label="Attach slip or POD"></label><button type="button" class="assistant-clear-file" hidden>Remove file</button><small class="assistant-file-name"></small></div>'+
+    '<form class="assistant-form"><textarea class="assistant-text" rows="2" maxlength="4000" aria-label="Ask a question" placeholder="Tell me what to do…" required></textarea><button type="submit" aria-label="Send question">➤</button></form>'+
+    '<div class="assistant-attachment"><label>Attach slip / POD <input class="assistant-file" type="file" multiple accept="image/*,application/pdf" aria-label="Attach slips or PODs"></label><button type="button" class="assistant-clear-file" hidden>Remove file</button><small class="assistant-file-name"></small></div>'+
+    '<div class="assistant-tools"><button type="button" class="assistant-mic" aria-label="Dictate instruction" aria-pressed="false">🎤 Speak</button><button type="button" class="assistant-record-audio">Record audio</button><button type="button" class="assistant-brief">Needs attention</button><button type="button" class="assistant-history">Changes</button><button type="button" class="assistant-clear-chat">Clear chat</button></div><small class="assistant-voice-status" role="status">Voice uses browser or server transcription. Check dictated text before sending.</small>'+
     '<small class="assistant-foot">Create, edit or delete supported records. Review each change before saving. Ask “What can you do?” for the current list.</small></section>';
   document.body.appendChild(host);
   const launch=host.querySelector('.assistant-launch'),panel=host.querySelector('.assistant-panel'),
-    log=host.querySelector('.assistant-log'),input=host.querySelector('input[type=text]'),form=host.querySelector('form');
+    log=host.querySelector('.assistant-log'),input=host.querySelector('.assistant-text'),form=host.querySelector('form');
   const fileInput=host.querySelector('.assistant-file'),clearFile=host.querySelector('.assistant-clear-file'),fileName=host.querySelector('.assistant-file-name');
   function clearAttachment(){fileInput.value='';fileName.textContent='';clearFile.hidden=true}
-  fileInput.onchange=()=>{fileName.textContent=fileInput.files?.[0]?.name||'';clearFile.hidden=!fileInput.files?.length};clearFile.onclick=clearAttachment;
-  const turns=[];let busy=false;
+  fileInput.onchange=()=>{fileName.textContent=Array.from(fileInput.files||[]).map((f,i)=>(i+1)+': '+f.name).join(' · ');clearFile.hidden=!fileInput.files?.length};clearFile.onclick=clearAttachment;
+  const turns=[];let busy=false,loadedUser='',loadingSession=false;
+  const voiceStatus=host.querySelector('.assistant-voice-status');
+  const voice=window.AngermundVoice?.install({button:host.querySelector('.assistant-mic'),input,status:text=>{voiceStatus.textContent=text},postAudio:async(blob,name)=>{
+    const body=new FormData();body.append('audio',blob,name);const response=await fetch('/api/assistant/voice',{method:'POST',headers:{Authorization:'Bearer '+String(localStorage.getItem('angermund_token')||'')},body});const x=await response.json();if(!response.ok)throw Error(x.error||'Transcription failed');return x.text;
+  }});
+  window.angermundVoiceStop=()=>{voice?.stop();window.speechSynthesis?.cancel()};
+  host.querySelector('.assistant-record-audio').onclick=()=>voice?.record();
+  host.querySelector('.assistant-brief').onclick=()=>ask('What needs attention?');
+  host.querySelector('.assistant-history').onclick=()=>ask('Action history');
+  host.querySelector('.assistant-clear-chat').onclick=async()=>{try{const r=await fetch('/api/assistant/session',{method:'DELETE',headers:{Authorization:'Bearer '+String(localStorage.getItem('angermund_token')||'')}});if(!r.ok)throw Error('Could not clear conversation');log.replaceChildren();turns.length=0;voiceStatus.textContent='Conversation cleared. Saved records stay unchanged.';}catch(e){voiceStatus.textContent=e.message}};
+  async function loadSession(){
+    const sessionKey=String(localStorage.getItem('angermund_token')||'');if(!sessionKey||loadingSession||loadedUser===sessionKey)return;
+    loadingSession=true;const beforeTurns=turns.length;try{const r=await fetch('/api/assistant/session',{headers:{Authorization:'Bearer '+sessionKey}});if(!r.ok)return;const x=await r.json();if(sessionKey!==String(localStorage.getItem('angermund_token')||''))return;if(turns.length!==beforeTurns||log.querySelector('.assistant-approval-card')){loadedUser=sessionKey;return}log.replaceChildren();turns.length=0;for(const t of x.turns||[]){bubble(t.role,t.content);turns.push(t)}loadedUser=sessionKey;const n=x.briefing?.count||0;launch.title=n?n+' items need attention':'Ask Angermund assistant';const label=launch.querySelector('span');if(label)label.textContent='Ask Angermund'+(n?' · '+n+' to check':'');if(n&&!log.children.length)bubble('assistant',x.briefing.answer,'command');}catch{}finally{loadingSession=false;}
+  }
+
   function refresh(){
     const ready=Boolean(bridge()?.context?.());
-    host.hidden=!ready;if(!ready)panel.hidden=true;
+    const account=String(localStorage.getItem('angermund_token')||'');if(loadedUser&&loadedUser!==account){voice?.stop();window.speechSynthesis?.cancel();loadedUser='';log.replaceChildren();turns.length=0;}
+    host.hidden=!ready;if(!ready){panel.hidden=true;voice?.stop();loadedUser='';log.replaceChildren();turns.length=0}else loadSession();
     const financial=bridge()?.context?.()?.pages?.some(x=>x.id==='monthlyPnl');
     const monthly=host.querySelector('[data-example="Where do I see my monthly income?"]');
     if(monthly)monthly.hidden=!financial;
@@ -40,6 +56,7 @@
   }
   window.angermundAssistantRefresh=refresh;
   function toggle(open){
+    if(!open)voice?.stop();
     panel.hidden=!open;launch.setAttribute('aria-expanded',String(open));
     if(open){
       if(!log.children.length)bubble('assistant','Tell me what to do: record a purchase, capture diesel, attach a POD, prepare an invoice or quotation, edit or delete a record. Include exact truck/trip references. I will ask for missing details and show a preview before saving.');
@@ -52,6 +69,7 @@
   function bubble(who,message,pageId,action,proposal){
     const row=document.createElement('div');row.className='assistant-row assistant-row-'+who;
     const msg=document.createElement('p');msg.textContent=message;row.appendChild(msg);
+    if(who==='assistant'&&window.speechSynthesis){const speak=document.createElement('button');speak.type='button';speak.className='assistant-read';speak.textContent='🔊 Read aloud';speak.onclick=()=>{voice?.stop();speechSynthesis.cancel();const utterance=new SpeechSynthesisUtterance(String(message).slice(0,2500));utterance.lang='en-ZA';speechSynthesis.speak(utterance)};row.appendChild(speak)}
     if(who==='assistant'&&(pageId||action)){
       const ctx=bridge()?.context?.(),info=(ctx?.pages||[]).find(p=>p.id===pageId);
       if(info&&pageId){
@@ -91,7 +109,7 @@
         if(!confirm('Approve and save: '+proposal.description+'?'))return;
         yes.disabled=no.disabled=true;yes.textContent='Saving…';
         try{
-          const result=await post('/api/assistant/approve/'+encodeURIComponent(proposal.id),{confirm:true});
+          const result=await post(proposal.approveUrl||'/api/assistant/approve/'+encodeURIComponent(proposal.id),{confirm:true});
           yes.textContent='✓ Saved';actions.remove();clearAttachment();
           const saved=document.createElement('p');saved.textContent=result.message||'Approved and saved.';box.appendChild(saved);
           try{await bridge()?.reload?.()}catch{}
@@ -110,7 +128,7 @@
       };
       no.onclick=async()=>{
         yes.disabled=no.disabled=true;
-        try{await post('/api/assistant/cancel/'+encodeURIComponent(proposal.id),{})}
+        try{await post(proposal.cancelUrl||'/api/assistant/cancel/'+encodeURIComponent(proposal.id),{})}
         catch(e){const err=document.createElement('p');err.textContent=e.message;box.appendChild(err);yes.disabled=no.disabled=false;return}
         actions.remove();const msg=document.createElement('p');msg.textContent='Draft cancelled. No changes were saved.';box.appendChild(msg);clearAttachment();
       };
@@ -125,10 +143,10 @@
     form.querySelector('button').disabled=true;
     const history=turns.slice(-6);
     try{
-      const file=fileInput.files?.[0];
-      if(file&&file.size>12*1024*1024)throw Error('Choose a file smaller than 12 MB.');
+      voice?.stop();const files=Array.from(fileInput.files||[]);
+      if(files.length>20||files.reduce((n,f)=>n+f.size,0)>60*1024*1024||files.some(f=>f.size>12*1024*1024))throw Error('Choose up to 20 files, each under 12 MB, at most 60 MB in total.');
       let body,headers={'Authorization':'Bearer '+String(localStorage.getItem('angermund_token')||'')};
-      if(file){body=new FormData();body.append('message',text);body.append('context',JSON.stringify(ctx));body.append('history',JSON.stringify(history));body.append('document',file,file.name)}
+      if(files.length){body=new FormData();body.append('message',text);body.append('context',JSON.stringify(ctx));body.append('history',JSON.stringify(history));files.forEach(file=>body.append('document',file,file.name))}
       else{headers['Content-Type']='application/json';body=JSON.stringify({message:text,context:ctx,history})}
       const response=await fetch('/api/assistant/ask',{method:'POST',headers,body});
       const result=await response.json();
@@ -139,10 +157,12 @@
       if(result.proposal)clearAttachment();
     }catch(e){
       const local=window.AngermundSiteAssistant?.answer(text,ctx)||{};
-      bubble('assistant',local.answer||'I could not reach the assistant. Check your connection and try again.',local.page,local.action);
+      bubble('assistant',e.message||local.answer||'I could not reach the assistant. Check your connection and try again.',local.page,local.action);
     }finally{busy=false;form.querySelector('button').disabled=false;input.focus()}
   }
   form.onsubmit=e=>{e.preventDefault();ask(input.value)};
   document.addEventListener('keydown',e=>{if(e.key==='Escape'&&!panel.hidden)toggle(false)});
+  document.addEventListener('visibilitychange',()=>{if(document.hidden){voice?.stop();window.speechSynthesis?.cancel()}});
+  setInterval(()=>{if(!document.hidden&&bridge()?.context?.()){loadedUser='';loadSession()}},5*60*1000);
   refresh();
 })();

@@ -145,23 +145,30 @@ public class MainActivity extends Activity {
 
             @Override
             public void onPermissionRequest(PermissionRequest request) {
-                boolean wantsCamera = false;
-                for (String resource : request.getResources()) {
-                    if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)) {
-                        wantsCamera = true;
-                        break;
-                    }
-                }
-                if (!wantsCamera) {
+                if (!WebMediaPermissions.trusted(request.getOrigin(), BuildConfig.SERVER_URL)) {
                     request.deny();
                     return;
                 }
-                if (checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED) {
-                    request.grant(new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE});
-                } else {
-                    pendingWebPermissionRequest = request;
-                    requestPermissions(new String[]{Manifest.permission.CAMERA}, REQ_CAMERA_WEB);
+                if (pendingWebPermissionRequest != null) pendingWebPermissionRequest.deny();
+                pendingWebPermissionRequest = request;
+                ArrayList<String> needed = new ArrayList<>();
+                for (String resource : request.getResources()) {
+                    if (PermissionRequest.RESOURCE_VIDEO_CAPTURE.equals(resource)
+                            && checkSelfPermission(Manifest.permission.CAMERA) != PackageManager.PERMISSION_GRANTED) {
+                        needed.add(Manifest.permission.CAMERA);
+                    }
+                    if (PermissionRequest.RESOURCE_AUDIO_CAPTURE.equals(resource)
+                            && checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                        needed.add(Manifest.permission.RECORD_AUDIO);
+                    }
                 }
+                if (needed.isEmpty()) finishWebMediaPermission();
+                else requestPermissions(needed.toArray(new String[0]), REQ_CAMERA_WEB);
+            }
+
+            @Override
+            public void onPermissionRequestCanceled(PermissionRequest request) {
+                if (pendingWebPermissionRequest == request) pendingWebPermissionRequest = null;
             }
 
             @Override
@@ -530,16 +537,34 @@ public class MainActivity extends Activity {
             pendingJwt = ""; gpsRequested = false;
             toast("Location permission is needed. Use Tracking setup to allow it.");
         }
-        if (requestCode == REQ_CAMERA_WEB && pendingWebPermissionRequest != null) {
-            PermissionRequest request = pendingWebPermissionRequest;
-            pendingWebPermissionRequest = null;
-            if (grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED) {
-                request.grant(new String[]{PermissionRequest.RESOURCE_VIDEO_CAPTURE});
-            } else {
-                request.deny();
-                toast("Camera permission is required to scan slips");
-            }
+        if (requestCode == REQ_CAMERA_WEB) finishWebMediaPermission();
+    }
+
+    private void finishWebMediaPermission() {
+        PermissionRequest request = pendingWebPermissionRequest;
+        pendingWebPermissionRequest = null;
+        if (request == null) return;
+        if (isFinishing() || isDestroyed()
+                || !WebMediaPermissions.trusted(request.getOrigin(), BuildConfig.SERVER_URL)) {
+            request.deny();
+            return;
         }
+        String[] allowed = WebMediaPermissions.granted(request.getResources(),
+            checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED,
+            checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED);
+        if (allowed.length > 0) request.grant(allowed);
+        else request.deny();
+    }
+
+    @Override
+    protected void onStop() {
+        if (pendingWebPermissionRequest != null) {
+            pendingWebPermissionRequest.deny();
+            pendingWebPermissionRequest = null;
+        }
+        if (webView != null) webView.evaluateJavascript(
+            "window.angermundVoiceStop && window.angermundVoiceStop()", null);
+        super.onStop();
     }
 
     @Override
