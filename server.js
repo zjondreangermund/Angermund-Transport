@@ -1,5 +1,6 @@
 const PhoneTracking=require('./phone-trip-tracking');
 const TestJourney=require('./phone-test-journey');
+const AndroidUpdate=require('./public/android-update');
 const PushDelivery=require('./push-delivery-policy');
 const TripSites=require('./trip-site-geofences');
 const {resolveMobileGps}=require('./mobile-gps');
@@ -3659,6 +3660,32 @@ async function ensureMonthEndPayroll(){
     await mutateOpsState(state=>generatePayrollPeriod(state,period,true))
   }catch(e){console.error('Month-end payroll check failed',e.message)}
 }
+// Self-hosted version discovery for installed APKs. GitHub Actions writes
+// release metadata only AFTER successfully publishing the signed APK asset.
+// Cache to avoid the public GitHub REST API rate limit.
+let androidReleaseCache={at:0,value:{available:false}};
+async function currentAndroidRelease(){
+  if(Date.now()-androidReleaseCache.at<10*60*1000)return androidReleaseCache.value;
+  try{
+    const result=await fetch('https://api.github.com/repos/zjondreangermund/Angermund-Transport/releases/tags/android-latest',{
+      headers:{Accept:'application/vnd.github+json','User-Agent':'Angermund-Transport-Updater'},
+      signal:AbortSignal.timeout(7500)
+    });
+    if(!result.ok)throw Error('Release metadata HTTP '+result.status);
+    const data=AndroidUpdate.releaseDetails(await result.json())||{available:false};
+    androidReleaseCache={at:Date.now(),value:data};
+    return data;
+  }catch(e){
+    console.warn('Android version check unavailable',e.message);
+    // Never claim an unavailable or unpublished APK is a new version.
+    androidReleaseCache={at:Date.now(),value:{available:false}};
+    return androidReleaseCache.value;
+  }
+}
+app.get('/api/android/latest',async(req,res)=>{
+  res.setHeader('Cache-Control','no-store');
+  res.json(await currentAndroidRelease());
+});
 app.get('/download/android',async(req,res)=>{
   const url='https://github.com/zjondreangermund/Angermund-Transport/releases/download/android-latest/Angermund-Transport.apk';
   try{
@@ -3666,7 +3693,9 @@ app.get('/download/android',async(req,res)=>{
     if(!upstream.ok||!upstream.body)throw new Error('APK upstream '+upstream.status);
     res.status(200);
     res.setHeader('Content-Type','application/vnd.android.package-archive');
-    res.setHeader('Content-Disposition','attachment; filename="Angermund-Transport-v1.4.2.apk"');
+    const published=await currentAndroidRelease();
+    const version=published.available?published.version:'latest';
+    res.setHeader('Content-Disposition','attachment; filename="Angermund-Transport-v'+version+'.apk"');
     res.setHeader('Cache-Control','no-store');
     const {Readable}=require('stream');
     Readable.fromWeb(upstream.body).pipe(res)
