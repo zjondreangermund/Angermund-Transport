@@ -42,9 +42,9 @@
         const btn=document.createElement('button');btn.type='button';btn.className='assistant-go';btn.textContent='Open '+info.label+' →';
         btn.onclick=()=>{if(bridge()?.navigate(pageId))toggle(false)};row.appendChild(btn);
       }
-      if(action==='new_trip'){
-        const b=document.createElement('button');b.type='button';b.className='assistant-go';b.textContent='Open new trip form →';
-        b.onclick=()=>{if(bridge()?.openNewTrip())toggle(false)};row.appendChild(b);
+      if(action==='new_trip'||action==='new_task'){
+        const b=document.createElement('button');b.type='button';b.className='assistant-go';b.textContent=action==='new_trip'?'Open new trip form →':'Open new task form →';
+        b.onclick=()=>{const ok=action==='new_trip'?bridge()?.openNewTrip():bridge()?.openNewTask();if(ok)toggle(false)};row.appendChild(b);
       }
     }
     log.appendChild(row);log.scrollTop=log.scrollHeight;
