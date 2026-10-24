@@ -13,7 +13,7 @@ test('payments cannot exceed corrected invoice total',()=>{const s=fixture();s.p
 test('invoiced shunter cannot be silently moved to another day',()=>{const s=fixture(),t=s.trips[0];t.externalTmsId='1';s.shunterRecons=[{invoiceId:'shinv',tmsIds:['1']}];assert.throws(()=>editLoad(s,t,{date:'2026-10-02'},helpers),/invoiced shunter/)});
 test('existing leg edit sync updates invoice snapshots',()=>{const s=fixture(),t=s.trips[0];t.legs[0].agreedAmount=1300;ctx.syncTripFromLegs(s,t);syncLinkedLoad(s,t,t.legs[0]);assert.equal(s.invoices[0].amount,1800)});
 test('legacy client leg IDs resolve to the persisted first leg',()=>{const s=fixture();editLoad(s,s.trips[0],{legId:'legacy_t1',load:'Fixed legacy load'},helpers);assert.equal(s.trips[0].legs[0].load,'Fixed legacy load')});
-test('manual corrections survive stale workbook imports without changing master records',()=>{
+test('undated workbook rows cannot overwrite manual corrections',()=>{
   vm.runInContext(source.slice(source.indexOf('function applyCarrierWorkbookRows'),source.indexOf('function applyInsuranceWorkbookData')),ctx);
   const s=fixture();s.trips[0].externalTmsId='ref1';s.trips[0].loadEditedAt='2026-10-17';const before=JSON.stringify(s);
   const result=ctx.applyCarrierWorkbookRows(s,[{tmsId:'ref1',rate:999,product:'Stale cargo'}],'stale.xlsx','batch1');
