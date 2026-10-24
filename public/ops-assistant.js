@@ -10,7 +10,7 @@
     '<button type="button" data-example="Where do I see unpaid invoices?">Unpaid invoices</button>'+
     '<button type="button" data-example="How do I create a new trip?">Create trip</button></div>'+
     '<form class="assistant-form"><input type="text" maxlength="1200" aria-label="Ask a question" placeholder="Ask anything about this site…" autocomplete="off" required><button type="submit" aria-label="Send question">➤</button></form>'+
-    '<small class="assistant-foot">Read-only guidance. All changes still need your confirmation.</small></section>';
+    '<small class="assistant-foot">Ask me to prepare trip changes. I show a preview and save nothing until you approve.</small></section>';
   document.body.appendChild(host);
   const launch=host.querySelector('.assistant-launch'),panel=host.querySelector('.assistant-panel'),
     log=host.querySelector('.assistant-log'),input=host.querySelector('input'),form=host.querySelector('form');
@@ -33,7 +33,7 @@
   launch.onclick=()=>toggle(panel.hidden);
   host.querySelector('.assistant-close').onclick=()=>toggle(false);
   host.querySelectorAll('[data-example]').forEach(b=>b.onclick=()=>ask(b.dataset.example));
-  function bubble(who,message,pageId,action){
+  function bubble(who,message,pageId,action,proposal){
     const row=document.createElement('div');row.className='assistant-row assistant-row-'+who;
     const msg=document.createElement('p');msg.textContent=message;row.appendChild(msg);
     if(who==='assistant'&&(pageId||action)){
@@ -46,6 +46,52 @@
         const b=document.createElement('button');b.type='button';b.className='assistant-go';b.textContent=action==='new_trip'?'Open new trip form →':'Open new task form →';
         b.onclick=()=>{const ok=action==='new_trip'?bridge()?.openNewTrip():bridge()?.openNewTask();if(ok)toggle(false)};row.appendChild(b);
       }
+    }
+    if(who==='assistant'&&proposal?.id){
+      const box=document.createElement('div');box.className='assistant-approval-card';
+      const title=document.createElement('b');title.textContent='Review change — not saved';box.appendChild(title);
+      for(const [label,value] of [['Trip',proposal.tripNumber],['Change',proposal.description],['Before',proposal.old],['After',proposal.next]]){
+        const line=document.createElement('div');line.className='assistant-review-line';
+        const k=document.createElement('span');k.textContent=label;
+        const v=document.createElement('strong');v.textContent=String(value||'');
+        line.append(k,v);box.appendChild(line);
+      }
+      if(proposal.warning){
+        const warning=document.createElement('p');warning.className='assistant-review-warning';
+        warning.textContent=proposal.warning;box.appendChild(warning);
+      }
+      const actions=document.createElement('div');actions.className='assistant-review-actions';
+      const yes=document.createElement('button');yes.type='button';yes.className='assistant-approve';yes.textContent='✓ Approve & save';
+      const no=document.createElement('button');no.type='button';no.className='assistant-reject';no.textContent='Cancel';
+      actions.append(yes,no);box.appendChild(actions);row.appendChild(box);
+      const post=async (endpoint,data)=>{
+        const token=String(localStorage.getItem('angermund_token')||'');
+        const response=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+token},body:JSON.stringify(data||{})});
+        const result=await response.json();if(!response.ok)throw Error(result.error||'Request failed');
+        return result;
+      };
+      yes.onclick=async()=>{
+        if(!confirm('Approve this exact change to '+proposal.tripNumber+'? This will save it to Angermund Transport.'))return;
+        yes.disabled=no.disabled=true;yes.textContent='Saving…';
+        try{
+          const result=await post('/api/assistant/approve/'+encodeURIComponent(proposal.id),{confirm:true});
+          yes.textContent='✓ Saved';actions.remove();
+          const saved=document.createElement('p');saved.textContent=result.message||'Approved and saved.';box.appendChild(saved);
+          try{await bridge()?.reload?.()}catch{}
+          const open=document.createElement('button');open.type='button';open.className='assistant-go';open.textContent='Open updated trip →';
+          open.onclick=()=>{if(bridge()?.openTrip?.(result.change?.tripId))toggle(false)};
+          box.appendChild(open);
+        }catch(e){
+          yes.disabled=no.disabled=false;yes.textContent='✓ Approve & save';
+          const err=document.createElement('p');err.className='assistant-review-warning';err.textContent=e.message+' Ask me again if the trip changed.';box.appendChild(err);
+        }
+      };
+      no.onclick=async()=>{
+        yes.disabled=no.disabled=true;
+        try{await post('/api/assistant/cancel/'+encodeURIComponent(proposal.id),{})}
+        catch(e){const err=document.createElement('p');err.textContent=e.message;box.appendChild(err)}
+        actions.remove();const msg=document.createElement('p');msg.textContent='Draft cancelled. No changes were saved.';box.appendChild(msg);
+      };
     }
     log.appendChild(row);log.scrollTop=log.scrollHeight;
     while(log.children.length>28)log.firstChild.remove();
@@ -63,7 +109,7 @@
       const result=await response.json();
       if(!response.ok)throw Error(result.error||'Unable to answer');
       const reply=String(result.answer||'No answer available.');
-      bubble('assistant',reply,result.page,result.action);
+      bubble('assistant',reply,result.page,result.action,result.proposal||null);
       turns.push({role:'user',content:text},{role:'assistant',content:reply});
       if(!result.aiEnabled&&result.source==='site-guide')host.querySelector('.assistant-foot').textContent='Site guide mode · enable server AI for deeper questions. No tasks are submitted automatically.';
     }catch(e){

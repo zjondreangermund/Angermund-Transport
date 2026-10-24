@@ -2,6 +2,7 @@ const PhoneTracking=require('./phone-trip-tracking');
 const TestJourney=require('./phone-test-journey');
 const AndroidUpdate=require('./public/android-update');
 const SiteAssistant=require('./public/site-assistant-core');
+const AssistantTripActions=require('./assistant-trip-actions');
 const PushDelivery=require('./push-delivery-policy');
 const TripSites=require('./trip-site-geofences');
 const {resolveMobileGps}=require('./mobile-gps');
@@ -3686,6 +3687,38 @@ async function currentAndroidRelease(){
 // Read-only AI/navigation assistant. No agent-generated writes or automatic
 // financial changes; action buttons only open the same forms users normally use.
 const assistantCalls=new Map();
+const assistantDrafts=new Map(),ASSISTANT_DRAFT_TTL=10*60*1000;
+const assistantCanChangeTrips=u=>['admin','manager','dispatcher'].includes(String(u?.role||''));
+function assistantPublicDraft(d){
+ return{id:d.id,kind:d.plan.kind,tripId:d.plan.tripId,tripNumber:d.plan.tripNumber,
+   description:d.plan.description,old:d.plan.old,next:d.plan.next,warning:d.plan.warning,
+   expiresAt:new Date(d.expiresAt).toISOString()};
+}
+app.post('/api/assistant/approve/:draftId',auth,async(req,res)=>{
+ if(!assistantCanChangeTrips(req.user))return res.status(403).json({error:'Only dispatch management can approve trip changes.'});
+ const id=String(req.params.draftId),d=assistantDrafts.get(id);
+ if(!d||d.userId!==req.user.sub||d.expiresAt<Date.now())return res.status(404).json({error:'This assistant draft expired. Ask the assistant to prepare it again.'});
+ if(req.body?.confirm!==true)return res.status(400).json({error:'Explicit approval is required.'});
+ if(d.inProgress)return res.status(409).json({error:'This change is already being approved.'});
+ d.inProgress=true;
+ try{
+   const actor=req.user.name||req.user.email||req.user.sub;
+   const change=await mutateOpsState(state=>AssistantTripActions.apply(state,d.plan,actor));
+   assistantDrafts.delete(id);
+   res.json({success:true,change:change.result,revision:change.revision,
+     message:d.plan.description+' · Approved and saved.'});
+ }catch(e){
+   // Re-check stale or invalid actions by requesting a new proposal, never re-run.
+   assistantDrafts.delete(id);
+   res.status(e.status||400).json({error:e.message||'Cannot complete this trip change'});
+ }
+});
+app.post('/api/assistant/cancel/:draftId',auth,(req,res)=>{
+ const d=assistantDrafts.get(String(req.params.draftId));
+ if(!d||d.userId!==req.user.sub)return res.status(404).json({error:'Draft not found'});
+ if(d.inProgress)return res.status(409).json({error:'Approval already in progress'});
+ assistantDrafts.delete(d.id);res.json({cancelled:true});
+});
 app.post('/api/assistant/ask',auth,async(req,res)=>{
   try{
     const userId=String(req.user?.sub||''),now=Date.now();
@@ -3694,6 +3727,21 @@ app.post('/api/assistant/ask',auth,async(req,res)=>{
     previous.push(now);assistantCalls.set(userId,previous);
     const message=String(req.body?.message||'').trim();
     if(!message||message.length>1200)return res.status(400).json({error:'Enter a question under 1,200 characters.'});
+    // Never ask the language model to execute operations. The authoritative
+    // database resolves trip identities and a per-user approval token is issued.
+    if(AssistantTripActions.attempt(message)){
+      if(!assistantCanChangeTrips(req.user))
+        return res.json({answer:'Your account can view trips but cannot change trip numbers or departure status. Ask an admin, manager or dispatcher.',page:null,action:null,source:'trip-safety'});
+      const planned=AssistantTripActions.plan(message,await readOpsState());
+      if(planned?.error)return res.json({answer:planned.error,page:'trips',action:null,source:'trip-clarification'});
+      if(planned?.kind){
+        const draft={id:crypto.randomUUID(),userId:req.user.sub,plan:planned,expiresAt:Date.now()+ASSISTANT_DRAFT_TTL,inProgress:false};
+        for(const [id,x] of assistantDrafts)if(x.expiresAt<Date.now()||x.userId===req.user.sub)assistantDrafts.delete(id);
+        assistantDrafts.set(draft.id,draft);
+        return res.json({answer:'I found '+planned.tripNumber+'. I have prepared the following change for your review. No records have been modified yet.',
+          page:'trips',action:null,source:'trip-proposal',proposal:assistantPublicDraft(draft)});
+      }
+    }
     const forbiddenFinance=!['admin','manager','finance'].includes(req.user?.role);
     const forbiddenOps=['driver','site_worker','warehouse'].includes(req.user?.role);
     const pages=(Array.isArray(req.body?.context?.pages)?req.body.context.pages:[])
