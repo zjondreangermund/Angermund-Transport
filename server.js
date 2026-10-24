@@ -3704,7 +3704,9 @@ app.post('/api/assistant/ask',auth,async(req,res)=>{
     const rawFinancials=req.body?.context?.financials;
     const fin=!forbiddenFinance&&rawFinancials&&/^\d{4}-\d{2}$/.test(String(rawFinancials.period||''))
       ?Object.fromEntries(['period','revenue','tripCosts','overheadTotal','net','source'].map(k=>[k,k==='period'||k==='source'?String(rawFinancials[k]||''):Number(rawFinancials[k]||0)])):null;
-    const context={pages,financials:fin,role:req.user.role,currentPage:String(req.body?.context?.currentPage||'')};
+    const financialQuestion=/\b(income|revenue|profit|p[& ]?l|turnover|overhead|expenses|costs|earnings|financials)\b/i.test(message);
+    const context={pages,financials:financialQuestion?fin:null,
+      role:req.user.role,currentPage:String(req.body?.context?.currentPage||'').slice(0,40)};
     const fallback=SiteAssistant.answer(message,context);
     if(!OPENAI_API_KEY)return res.json({...fallback,source:'site-guide',aiEnabled:false});
     try{
