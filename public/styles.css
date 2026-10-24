@@ -1410,3 +1410,28 @@ html.modal-open{overflow:hidden!important}@media(max-width:760px){html:has(#side
 .tracking-status-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
 .tracking-status-actions button{position:relative;z-index:1;min-height:44px;touch-action:manipulation}
 .tracking-status-actions button:disabled{opacity:.65;cursor:progress}
+
+/* Angermund Assistant — persistent and mobile friendly, always below critical dialogs. */
+.angermund-assistant-root{position:fixed;right:18px;bottom:18px;z-index:600;pointer-events:none;font-family:inherit}
+.angermund-assistant-root[hidden]{display:none!important}
+.angermund-assistant-root>*{pointer-events:auto}
+.assistant-launch{border:1px solid #539cff;border-radius:999px;background:linear-gradient(120deg,#146cde,#15477e);color:#fff;box-shadow:0 6px 24px #03182d99;padding:12px 16px;font-weight:750;min-height:46px;cursor:pointer}
+.assistant-panel{position:absolute;bottom:61px;right:0;display:flex;flex-direction:column;width:min(400px,calc(100vw - 28px));height:min(580px,calc(100dvh - 135px));border:1px solid #37628c;border-radius:16px;background:#081a2d;box-shadow:0 14px 42px #010914d9;color:#eaf4ff;overflow:hidden}
+.assistant-panel[hidden]{display:none!important}
+.assistant-head{display:flex;align-items:center;justify-content:space-between;gap:14px;background:#102b48;padding:14px 16px}
+.assistant-head b{display:block;font-size:16px}.assistant-head small{color:#bdcddd;font-size:11px}
+.assistant-close{background:transparent;border:0;color:#fff;font-size:28px;min-width:42px;cursor:pointer}
+.assistant-log{flex:1;min-height:100px;overflow-y:auto;overscroll-behavior:contain;padding:14px;display:flex;flex-direction:column;gap:12px;scrollbar-width:thin}
+.assistant-row{max-width:95%;background:#183650;border:1px solid #2c4a65;border-radius:12px;padding:10px 12px;line-height:1.42;overflow-wrap:anywhere}
+.assistant-row p{margin:0;white-space:pre-wrap;font-size:14px}
+.assistant-row-user{align-self:flex-end;background:#1762ab;border-color:#1762ab;color:#fff}
+.assistant-row-assistant{align-self:flex-start}
+.assistant-go{display:block;width:100%;border:1px solid #4f9fff;border-radius:8px;background:#154c82;color:#fff;margin-top:10px;padding:9px;cursor:pointer;text-align:left;font-size:13px}
+.assistant-suggestions{display:flex;gap:7px;flex-wrap:wrap;padding:4px 13px 12px}
+.assistant-suggestions button{color:#dcefff;background:#123756;border:1px solid #2c679b;border-radius:20px;padding:7px 10px;font-size:12px;cursor:pointer}
+.assistant-suggestions button[hidden]{display:none}
+.assistant-form{display:flex;gap:8px;padding:10px 12px 8px;border-top:1px solid #23435e;background:#0d243a}
+.assistant-form input{flex:1;min-width:0;color:#fff;background:#112f49;border:1px solid #355879;border-radius:10px;padding:12px}
+.assistant-form button{border:0;border-radius:10px;background:#257de7;color:#fff;min-width:46px;cursor:pointer;font-size:19px}
+.assistant-foot{display:block;background:#0d243a;color:#a9c0d4;font-size:10px;padding:0 12px 10px}
+@media(max-width:760px){.angermund-assistant-root{bottom:80px;right:12px}.assistant-panel{bottom:60px;max-height:calc(100dvh - 165px)}.assistant-launch span{font-size:12px}}

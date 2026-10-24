@@ -176,6 +176,30 @@ const navGroups=[
 ];
 const allowed={manager:['command','dispatch','trips','carrierOrders','shunterRecon','tasks','tracking','notifications','driverUploads','fleet','inspections','diesel','workshop','tyres','documents','insurance','incidents','clients','invoices','roadCharges','payroll','loans','imports','rates','reports','monthlyPnl','automation','knowledge','driverAccounts'],driver:['driverPortal','tasks','tracking','notifications','knowledge'],warehouse:['command','dispatch','trips','carrierOrders','tasks','notifications','documents','knowledge'],workshop:['command','fleet','inspections','diesel','workshop','tyres','documents','insurance','tasks','notifications','driverUploads','knowledge'],finance:['command','trips','carrierOrders','shunterRecon','clients','invoices','roadCharges','payroll','loans','imports','insurance','rates','reports','monthlyPnl','tasks','notifications','driverUploads','settings'],dispatcher:['command','dispatch','trips','carrierOrders','shunterRecon','driverPortal','tracking','notifications','driverUploads','fleet','inspections','diesel','documents','insurance','incidents','clients','roadCharges','imports','tasks','automation','knowledge'],site_worker:['tasks','notifications','knowledge']};
 const canView=id=>role==='admin'||(allowed[role]||[]).includes(id);
+function siteAssistantContext(){
+  if(!authToken||!sessionUser)return null;
+  const pages=navGroups.flatMap(group=>group[1]).filter(item=>canView(item[0]))
+    .map(([id,icon,label])=>({id,label,description:hints[id]||''}));
+  let financials=null;
+  if(canView('monthlyPnl')&&['admin','manager','finance'].includes(role)){
+    const period=pnlPeriodFilter||new Date().toISOString().slice(0,7);
+    const snap=pnlSnapshot(period);
+    if(snap)financials={period,source:'imported',revenue:num(snap.truckIncome),
+      tripCosts:num(snap.truckCosts),overheadTotal:num(snap.overheadTotal),net:num(snap.net)};
+    else{
+      const monthly=monthlyLiveFinancials(period);
+      financials={period,source:'live',revenue:monthly.revenue,tripCosts:monthly.tripCosts,
+        overheadTotal:monthly.overheadTotal,net:monthly.net};
+    }
+  }
+  return {role,currentPage:page,pages,financials};
+}
+window.angermundAssistantBridge={
+  context:siteAssistantContext,
+  navigate(id){if(!canView(id))return false;go(id);return true},
+  openNewTrip(){if(!['admin','manager','dispatcher'].includes(role))return false;go('dispatch');openForm('trip');return true},
+  openNewTask(){if(!['admin','manager'].includes(role))return false;go('tasks');openTaskForm();return true}
+};
 const defaultPageForRole=(r=role)=>r==='driver'?'driverPortal':r==='site_worker'?'tasks':'command';
 let navigationReady=false,lastExitBackAt=0,closingModalFromBack=false;
 function go(p){
@@ -266,7 +290,7 @@ function renderNav(){
     });
   });
 }
-function render(){document.body.classList.toggle('ledger-dispatch',page==='dispatch');document.body.dataset.page=page;document.body.classList.toggle('ops-filtered',opsFiltering()&&opsFilterPages.has(page));document.body.classList.toggle('driver-mode',role==='driver');document.body.classList.toggle('staff-mode',!['admin','manager','driver'].includes(role));document.body.dataset.role=role;if($('mobileSidebarRole'))$('mobileSidebarRole').textContent=roleLabel();if(!canView(page))page=defaultPageForRole();renderNav();$('pageTitle').textContent={command:'Command Centre',driverPortal:'Driver Workspace',automation:'Smart Document Inbox',knowledge:'Roles & Requirements',driverAccounts:'Drivers & Staff'}[page]||navGroups.flatMap(x=>x[1]).find(x=>x[0]===page)?.[2]||'Operations';$('pageHint').textContent=hints[page]||'';$('roleSelect').value=role;$('quickTripBtn').style.display=['driver','workshop'].includes(role)?'none':'';if($('globalRecordSlipsBtn'))$('globalRecordSlipsBtn').style.display=role==='admin'?'':'none';if($('backupBtn'))$('backupBtn').style.display=role==='admin'?'':'none';const driverBar=role==='driver'&&page!=='driverPortal'?'<nav class="driver-bottom"><button class="nav-to" data-page="driverPortal">🚛<span>Trip</span></button><button class="nav-to '+(page==='tasks'?'active':'')+'" data-page="tasks">✓<span>Tasks</span></button><button class="nav-to '+(page==='notifications'?'active':'')+'" data-page="notifications">🔔<span>Alerts</span></button><button type="button" id="driverHelpBtn">👤<span>Help</span></button></nav>':'';const searchBar=!['driver','site_worker'].includes(role)&&!['knowledge','driverPortal'].includes(page)?globalFindBar():'';$('globalSearchHost').innerHTML=searchBar;$('app').innerHTML=(opsFilterPanel()?'<details class="ledger-filters"><summary>Truck and date filters · '+esc(opsLabel())+'</summary>'+opsFilterPanel()+'</details>':'')+(views[page]||views.command)()+recordManagementPanel()+driverBar;syncHeaderSearchLayout();wire()}
+function render(){document.body.classList.toggle('ledger-dispatch',page==='dispatch');document.body.dataset.page=page;document.body.classList.toggle('ops-filtered',opsFiltering()&&opsFilterPages.has(page));document.body.classList.toggle('driver-mode',role==='driver');document.body.classList.toggle('staff-mode',!['admin','manager','driver'].includes(role));document.body.dataset.role=role;if($('mobileSidebarRole'))$('mobileSidebarRole').textContent=roleLabel();if(!canView(page))page=defaultPageForRole();renderNav();$('pageTitle').textContent={command:'Command Centre',driverPortal:'Driver Workspace',automation:'Smart Document Inbox',knowledge:'Roles & Requirements',driverAccounts:'Drivers & Staff'}[page]||navGroups.flatMap(x=>x[1]).find(x=>x[0]===page)?.[2]||'Operations';$('pageHint').textContent=hints[page]||'';$('roleSelect').value=role;$('quickTripBtn').style.display=['driver','workshop'].includes(role)?'none':'';if($('globalRecordSlipsBtn'))$('globalRecordSlipsBtn').style.display=role==='admin'?'':'none';if($('backupBtn'))$('backupBtn').style.display=role==='admin'?'':'none';const driverBar=role==='driver'&&page!=='driverPortal'?'<nav class="driver-bottom"><button class="nav-to" data-page="driverPortal">🚛<span>Trip</span></button><button class="nav-to '+(page==='tasks'?'active':'')+'" data-page="tasks">✓<span>Tasks</span></button><button class="nav-to '+(page==='notifications'?'active':'')+'" data-page="notifications">🔔<span>Alerts</span></button><button type="button" id="driverHelpBtn">👤<span>Help</span></button></nav>':'';const searchBar=!['driver','site_worker'].includes(role)&&!['knowledge','driverPortal'].includes(page)?globalFindBar():'';$('globalSearchHost').innerHTML=searchBar;$('app').innerHTML=(opsFilterPanel()?'<details class="ledger-filters"><summary>Truck and date filters · '+esc(opsLabel())+'</summary>'+opsFilterPanel()+'</details>':'')+(views[page]||views.command)()+recordManagementPanel()+driverBar;syncHeaderSearchLayout();wire();window.angermundAssistantRefresh?.()}
 
 let headerLayoutObserver=null;
 function syncHeaderSearchLayout(){
