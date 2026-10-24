@@ -1448,3 +1448,7 @@ html.modal-open{overflow:hidden!important}@media(max-width:760px){html:has(#side
 .assistant-approve{background:#176d43;border:1px solid #3fae70}
 .assistant-reject{background:#1f3b52;border:1px solid #3d6b90}
 .assistant-review-actions button:disabled{opacity:.65;cursor:progress}
+
+/* Approved assistant trip notes are visible on manual and imported loads. */
+.trip-operations-notes{border-left:3px solid #3098e8;overflow-wrap:anywhere}
+.trip-operations-notes-text{white-space:pre-wrap;max-height:260px;overflow:auto;overscroll-behavior:contain}
