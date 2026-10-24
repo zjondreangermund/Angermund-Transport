@@ -1,5 +1,6 @@
 const PhoneTracking=require('./phone-trip-tracking');
 const TestJourney=require('./phone-test-journey');
+const PushDelivery=require('./push-delivery-policy');
 const TripSites=require('./trip-site-geofences');
 const {resolveMobileGps}=require('./mobile-gps');
 const DailyActions=require('./daily-platform-actions');
@@ -693,9 +694,9 @@ async function sendExternal(n){
   }
   if(process.env.VAPID_PUBLIC_KEY&&process.env.VAPID_PRIVATE_KEY){
     for(const row of subs){
-      if(row.nativeActive)continue;
+      if(!PushDelivery.shouldSendWebPush(n,row))continue;
       tasks.push((async()=>{
-      try{return await webpush.sendNotification(row.subscription||row,JSON.stringify({title:n.title,body:n.message,linkedType:n.linked_type,linkedId:n.linked_id,url:'/'}))}
+      try{return await webpush.sendNotification(row.subscription||row,JSON.stringify({title:n.title,body:n.message,linkedType:n.linked_type,linkedId:n.linked_id,url:'/',createdAt:n.created_at}),PushDelivery.pushOptions(n))}
       catch(e){
         const code=num(e.statusCode);
         if(code===404||code===410){
