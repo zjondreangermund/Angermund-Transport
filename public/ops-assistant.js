@@ -4,7 +4,7 @@
   const host=document.createElement('div');host.id='angermundAssistantRoot';host.className='angermund-assistant-root';host.hidden=true;
   host.innerHTML='<button type="button" class="assistant-launch" aria-label="Ask Angermund assistant" title="Ask Angermund assistant">✦ <span>Ask Angermund</span></button>'+
     '<section class="assistant-panel" role="dialog" aria-label="Angermund assistant" aria-modal="false" hidden>'+
-    '<header class="assistant-head"><div><b>✦ Angermund Assistant</b><small>Trips, purchases, diesel, documents & finance</small></div><button type="button" class="assistant-close" aria-label="Close assistant">×</button></header>'+
+    '<div class="assistant-head"><div><b>✦ Angermund Assistant</b><small>Trips, purchases, diesel, documents & finance</small></div><button type="button" class="assistant-close" aria-label="Close assistant">×</button></div>'+
     '<div class="assistant-log" aria-live="polite"></div><div class="assistant-suggestions">'+
     '<button type="button" data-example="Where do I see my monthly income?">Monthly income</button>'+
     '<button type="button" data-example="Where do I see unpaid invoices?">Unpaid invoices</button>'+
