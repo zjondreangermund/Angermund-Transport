@@ -1494,3 +1494,32 @@ html.modal-open{overflow:hidden!important}@media(max-width:760px){html:has(#side
 #angermundAssistantRoot .assistant-suggestions button,#angermundAssistantRoot .assistant-tools button{min-height:32px;padding:4px 8px;font-size:12px;border-radius:8px}
 #angermundAssistantRoot .assistant-compose-actions>button{min-height:32px;padding:4px 7px;font-size:12px}
 #angermundAssistantRoot .assistant-form button{height:38px;min-height:38px;min-width:38px;flex-basis:38px;font-size:18px;border-radius:50%;padding:0}
+
+/* Compact laptop controls leave more room for operational records. */
+@media(min-width:761px){
+ body #sidebar{grid-template-columns:118px minmax(0,1fr);gap:8px;padding:4px 12px!important}
+ #sidebar .brand img{width:110px!important;height:34px!important}
+ .top-nav-groups,.top-nav-items{gap:4px}
+ #sidebar .top-nav-groups>button,#sidebar .top-nav-items>button{min-height:30px!important;padding:5px 8px!important;font-size:12px;gap:5px}
+ #sidebar .top-nav-items{margin-top:3px;padding-top:3px}
+ body>header{min-height:0;padding:7px 12px!important;gap:6px!important}
+ body>header h1{font-size:18px}
+ body>header p{font-size:11px}
+ body>header .header-actions{gap:5px}
+ body>header .header-actions>button{min-height:32px;padding:5px 8px;font-size:12px;border-radius:7px;white-space:nowrap}
+ body>header .role-picker{padding:3px 7px;gap:5px}
+ body>header .role-picker select{min-height:26px;padding:2px 4px;font-size:12px;min-width:140px}
+ .header-search-host .global-find-box{padding:3px 8px;min-height:32px;border-radius:8px}
+ .header-search-host .global-find-box input{font-size:12px;padding:3px 2px!important}
+ .header-search-host .global-find-box>span{font-size:16px}
+ body>main#app{padding-left:12px!important;padding-right:12px!important;padding-top:calc(var(--top-navigation-height,76px) + var(--app-header-height,90px) + 10px)!important}
+ .page-filters{padding:10px 12px;margin-bottom:10px}
+ .page-filter-fields{gap:8px}
+ .page-filter-fields label,.page-date-range label{font-size:11px;gap:3px}
+ .page-filter-fields select,.page-date-range input{min-height:32px;padding:5px 8px;font-size:12px}
+ .page-filter-actions button,.page-date-range button{min-height:32px;padding:5px 8px;font-size:12px}
+ .page-date-range{margin-top:8px;gap:8px}
+ .page-filters p{margin-top:6px;font-size:11px}
+ .ledger-filters>summary{padding:7px 10px;font-size:12px}
+ .toolbar>button,.fleet-card-actions>button,.ledger-tabs>button{min-height:30px;padding:5px 8px;font-size:12px}
+}
