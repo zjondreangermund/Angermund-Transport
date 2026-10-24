@@ -2,11 +2,29 @@
 const number=v=>Number(v)||0;
 const day=now=>new Date(Number(now)+7200000).toISOString().slice(0,10);
 const office=['admin','manager','dispatcher','finance','workshop'];
+const isOpaqueId=value=>/^(?:pay|trip|fuel|inv|doc|loan|task|mnt|ins|ty|exp|id)_[0-9a-f]{8,}(?:-[0-9a-f]+)*$/i.test(String(value||''))||/^[0-9a-f]{8}-[0-9a-f-]{20,}$/i.test(String(value||''));
+function humanRecordTitle(state,record,type){
+ if(type==='payroll'){
+  const person=[...(state.employees||[]),...(state.drivers||[])].find(x=>String(x.id)===String(record.employeeId));
+  const name=person?.name||record.employeeName||record.name||'Employee';
+  return String(name)+' · Payslip '+String(record.period||'');
+ }
+ const labels={
+  truck:'Truck',trailer:'Trailer',driver:'Driver',permit:'Document',
+  invoice:'Invoice',diesel:'Diesel slip',expense:'Expense',trip:'Trip',
+  maintenance:'Workshop job',inspection:'Inspection',tyre:'Tyre',
+  task:'Task',payroll:'Payslip'
+ };
+ const candidates=[record.number,record.registration,record.name,record.title,
+  record.reference,record.supplier,record.serial,record.type];
+ const label=candidates.find(v=>String(v||'').trim()&&!isOpaqueId(v));
+ return label?String(label):(labels[type]||'Record');
+}
 function collect(state,now=Date.now()){
  const date=day(now),groups=new Map(),closed=t=>number(t.stage)>=4||/delivered|closed|invoiced/i.test(t.status||''),cutoff=state.operationalStartDate||'2026-09-20';
  const add=(key,title,roles,record,message,page,type='trip')=>{
   if(!groups.has(key))groups.set(key,{key,title,roles,items:[]});
-  groups.get(key).items.push({id:record.id,title:record.number||record.registration||record.name||record.reference||record.id,message,page,linkedType:type,linkedId:record.id});
+  groups.get(key).items.push({id:record.id,title:humanRecordTitle(state,record,type),message,page,linkedType:type,linkedId:record.id});
  };
  const due=(expiry)=>expiry&&expiry<=new Date(Number(now)+30*86400000+7200000).toISOString().slice(0,10);
  const permits=state.permits||[],trucks=state.trucks||[],drivers=state.drivers||[];
@@ -102,4 +120,4 @@ function reconcile(state,now=Date.now()){
  return state.dailyPlatformTasks.filter(x=>x.date===date);
 }
 const allowed=(group,role)=>['admin','manager'].includes(role)||(group.roles||[]).includes(role);
-module.exports={collect,reconcile,day,allowed,office,reconcileLinkedTasks,taskPriority};
+module.exports={collect,reconcile,day,allowed,office,reconcileLinkedTasks,taskPriority,humanRecordTitle};
