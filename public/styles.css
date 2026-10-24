@@ -1435,3 +1435,16 @@ html.modal-open{overflow:hidden!important}@media(max-width:760px){html:has(#side
 .assistant-form button{border:0;border-radius:10px;background:#257de7;color:#fff;min-width:46px;cursor:pointer;font-size:19px}
 .assistant-foot{display:block;background:#0d243a;color:#a9c0d4;font-size:10px;padding:0 12px 10px}
 @media(max-width:760px){.angermund-assistant-root{bottom:80px;right:12px}.assistant-panel{bottom:60px;max-height:calc(100dvh - 165px)}.assistant-launch span{font-size:12px}}
+
+/* Assistant operation previews stay readable on phones and require explicit consent. */
+.assistant-approval-card{margin-top:12px;padding:12px;border-radius:12px;border:1px solid #3b91e9;background:#0e293f}
+.assistant-approval-card>b{display:block;margin-bottom:12px;color:#c2e5ff}
+.assistant-review-line{display:flex;justify-content:space-between;gap:12px;align-items:baseline;padding:6px 0;border-bottom:1px solid #30516a;font-size:13px}
+.assistant-review-line span{color:#a9c8e0;flex:0 0 55px}
+.assistant-review-line strong{text-align:right;font-size:13px;overflow-wrap:anywhere}
+.assistant-review-warning{color:#ffcf82!important;font-size:12px!important;margin:10px 0!important}
+.assistant-review-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:12px}
+.assistant-review-actions button{border-radius:8px;padding:10px 8px;min-height:44px;cursor:pointer;color:#fff}
+.assistant-approve{background:#176d43;border:1px solid #3fae70}
+.assistant-reject{background:#1f3b52;border:1px solid #3d6b90}
+.assistant-review-actions button:disabled{opacity:.65;cursor:progress}
