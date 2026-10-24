@@ -2,7 +2,7 @@
 (function(){
   const bridge=()=>window.angermundAssistantBridge;
   const host=document.createElement('div');host.id='angermundAssistantRoot';host.className='angermund-assistant-root';host.hidden=true;
-  host.innerHTML=`<button type="button" class="assistant-launch" aria-label="Ask Angermund assistant" title="Ask Angermund assistant">✦ <span>Ask Angermund</span></button>
+  host.innerHTML=`<button type="button" class="assistant-launch" aria-label="Ask Angermund assistant" title="Ask Angermund assistant"><span aria-hidden="true">✦</span></button>
     <section class="assistant-panel" role="dialog" aria-label="Angermund assistant" aria-modal="false" hidden>
       <div class="assistant-head"><div><b>✦ Angermund Assistant</b></div><button type="button" class="assistant-close" aria-label="Close assistant">×</button></div>
       <div class="assistant-log" aria-live="polite"></div>
@@ -58,7 +58,7 @@
   host.querySelector('.assistant-clear-chat').onclick=async()=>{try{const r=await fetch('/api/assistant/session',{method:'DELETE',headers:{Authorization:'Bearer '+String(localStorage.getItem('angermund_token')||'')}});if(!r.ok)throw Error('Could not clear conversation');log.replaceChildren();turns.length=0;voiceStatus.textContent='Conversation cleared.';voiceStatus.hidden=false;collapseMenus();}catch(e){voiceStatus.textContent=e.message;voiceStatus.hidden=false}};
   async function loadSession(){
     const sessionKey=String(localStorage.getItem('angermund_token')||'');if(!sessionKey||loadingSession||loadedUser===sessionKey)return;
-    loadingSession=true;const beforeTurns=turns.length;try{const r=await fetch('/api/assistant/session',{headers:{Authorization:'Bearer '+sessionKey}});if(!r.ok)return;const x=await r.json();if(sessionKey!==String(localStorage.getItem('angermund_token')||''))return;if(turns.length!==beforeTurns||log.querySelector('.assistant-approval-card')){loadedUser=sessionKey;return}log.replaceChildren();turns.length=0;for(const t of x.turns||[]){bubble(t.role,t.content);turns.push(t)}loadedUser=sessionKey;const n=x.briefing?.count||0;launch.title=n?n+' items need attention':'Ask Angermund assistant';const label=launch.querySelector('span');if(label)label.textContent='Ask Angermund'+(n?' · '+n+' to check':'');if(n&&!log.children.length)bubble('assistant',x.briefing.answer,'command');}catch{}finally{loadingSession=false;}
+    loadingSession=true;const beforeTurns=turns.length;try{const r=await fetch('/api/assistant/session',{headers:{Authorization:'Bearer '+sessionKey}});if(!r.ok)return;const x=await r.json();if(sessionKey!==String(localStorage.getItem('angermund_token')||''))return;if(turns.length!==beforeTurns||log.querySelector('.assistant-approval-card')){loadedUser=sessionKey;return}log.replaceChildren();turns.length=0;for(const t of x.turns||[]){bubble(t.role,t.content);turns.push(t)}loadedUser=sessionKey;const n=x.briefing?.count||0;launch.title=n?n+' items need attention':'Ask Angermund assistant';launch.setAttribute('aria-label',n?'Ask Angermund assistant, '+n+' items need attention':'Ask Angermund assistant');if(n&&!log.children.length)bubble('assistant',x.briefing.answer,'command');}catch{}finally{loadingSession=false;}
   }
 
   function refresh(){

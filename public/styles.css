@@ -1486,3 +1486,11 @@ html.modal-open{overflow:hidden!important}@media(max-width:760px){html:has(#side
  .assistant-head{min-height:52px;padding:6px 12px}.assistant-log{padding:12px;min-height:0}.assistant-row{padding:10px 12px}.assistant-suggestions{max-height:25dvh}
  .assistant-composer{padding-left:10px;padding-right:10px}.assistant-tools button{font-size:12px;min-height:38px}
 }
+
+/* Compact assistant controls and icon-only floating launcher. */
+#angermundAssistantRoot>.assistant-launch{box-sizing:border-box;width:48px;height:48px;min-width:48px;min-height:48px;padding:0;display:grid;place-items:center;border-radius:50%;line-height:1}
+#angermundAssistantRoot>.assistant-launch span{font-size:26px;line-height:1}
+#angermundAssistantRoot.is-open>.assistant-launch{display:none}
+#angermundAssistantRoot .assistant-suggestions button,#angermundAssistantRoot .assistant-tools button{min-height:32px;padding:4px 8px;font-size:12px;border-radius:8px}
+#angermundAssistantRoot .assistant-compose-actions>button{min-height:32px;padding:4px 7px;font-size:12px}
+#angermundAssistantRoot .assistant-form button{height:38px;min-height:38px;min-width:38px;flex-basis:38px;font-size:18px;border-radius:50%;padding:0}
