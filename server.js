@@ -3687,6 +3687,28 @@ async function currentAndroidRelease(){
 }
 // Read-only AI/navigation assistant. No agent-generated writes or automatic
 // financial changes; action buttons only open the same forms users normally use.
+async function assistantNaturalCommand(text){
+  if(!OPENAI_API_KEY)return text;
+  // AI only translates the user's phrasing into a constrained canonical request.
+  // The DB resolver, role gate and explicit approval are enforced separately.
+  try{
+    const system='Rewrite this employee request for the Angermund Transport assistant into one concise canonical command if it explicitly requests an operation. Never change a question into an instruction. Do not invent missing people, amounts, trip numbers or dates. Available patterns: (1) Add loan to PERSON for N$AMOUNT monthly deduction N$AMOUNT; (2) Pause PERSON loan; (3) Change PERSON loan monthly deduction to N$AMOUNT; (4) Create task to DESCRIPTION tomorrow high priority; (5) Assign driver PERSON to trip TRIPNUMBER; (6) Assign truck FLEETNUMBER to trip TRIPNUMBER; (7) Record toll/parking/permit fee expense N$AMOUNT for trip TRIPNUMBER; (8) Change trip OLDNUMBER number to NEWNUMBER; (9) Switch truck FLEET from planned to departing. For unsupported or incomplete requests, preserve the original text unchanged. Never include details the user did not say. Return JSON only.';
+    const response=await fetch('https://api.openai.com/v1/responses',{
+      method:'POST',signal:AbortSignal.timeout(9500),
+      headers:{Authorization:'Bearer '+OPENAI_API_KEY,'Content-Type':'application/json'},
+      body:JSON.stringify({model:process.env.SITE_ASSISTANT_MODEL||'gpt-6-luna',store:false,max_output_tokens:230,
+        input:[{role:'system',content:system},{role:'user',content:String(text).slice(0,1200)}],
+        text:{format:{type:'json_schema',name:'operation_translation',strict:true,
+          schema:{type:'object',properties:{command:{type:'string'},complete:{type:'boolean'}},required:['command','complete'],additionalProperties:false}}}
+      })
+    });
+    if(!response.ok)return text;
+    const result=await response.json();
+    const output=(result.output||[]).flatMap(x=>x.content||[]).find(x=>x.type==='output_text')?.text||result.output_text;
+    const translated=JSON.parse(String(output||'{}'));
+    return translated.complete&&typeof translated.command==='string'&&translated.command.length<1100?translated.command:text;
+  }catch(e){console.warn('Natural-language command fallback:',e.message);return text}
+}
 const assistantCalls=new Map();
 const assistantDrafts=new Map(),ASSISTANT_DRAFT_TTL=10*60*1000;
 const assistantCanChangeTrips=u=>['admin','manager','dispatcher'].includes(String(u?.role||''));
@@ -3748,13 +3770,31 @@ app.post('/api/assistant/ask',auth,async(req,res)=>{
     previous.push(now);assistantCalls.set(userId,previous);
     const message=String(req.body?.message||'').trim();
     if(!message||message.length>1200)return res.status(400).json({error:'Enter a question under 1,200 characters.'});
-    // The server (not AI-generated code) resolves real records and stages
-    // proposed operations behind one-use, per-user approval.
-    const opsKind=AssistantOps.kind(message);
+    // Interpret natural phrasing only if needed. AI never writes to the database.
+    // All canonical commands still pass through strict record and role validation.
+    let command=message,opsKind=AssistantOps.kind(command);
+    const actionable=/\b(add|give|create|record|change|set|update|edit|switch|assign|pause|resume|capture|reassign)\b/i.test(message)&&
+      /\b(loan|repayment|employee|driver|truck|trip|task|expense|toll|parking|permit)\b/i.test(message);
+    let opsSnapshot=null,prepared=null;
+    if(actionable&&opsKind){
+      opsSnapshot=await readOpsState();
+      prepared=AssistantOps.plan(command,opsSnapshot);
+    }
+    if(actionable&&(!opsKind||prepared?.error)&&OPENAI_API_KEY){
+      const translated=await assistantNaturalCommand(message);
+      if(translated!==message){
+        const normalizedKind=AssistantOps.kind(translated);
+        if(normalizedKind){
+          if(!opsSnapshot)opsSnapshot=await readOpsState();
+          const proposed=AssistantOps.plan(translated,opsSnapshot);
+          if(proposed?.kind){command=translated;opsKind=normalizedKind;prepared=proposed}
+        }else if(AssistantTripActions.attempt(translated))command=translated;
+      }
+    }
     if(opsKind){
       if(!assistantCanPerform(req.user,opsKind))
         return res.json({answer:'Your role cannot change these records. Ask an administrator or the responsible manager.',page:null,source:'operation-permission'});
-      const plan=AssistantOps.plan(message,await readOpsState());
+      const plan=prepared||AssistantOps.plan(command,opsSnapshot||await readOpsState());
       if(plan?.error)return res.json({answer:plan.error,page:opsKind.startsWith('loan')?'loans':opsKind.startsWith('task')?'tasks':'trips',source:'operation-clarification'});
       if(plan?.kind){
         plan.actorRole=req.user.role;
@@ -3766,10 +3806,10 @@ app.post('/api/assistant/ask',auth,async(req,res)=>{
       }
     }
     // Preserve the existing approved trip-number and departure workflows.
-    if(AssistantTripActions.attempt(message)){
+    if(AssistantTripActions.attempt(command)){
       if(!assistantCanChangeTrips(req.user))
         return res.json({answer:'Your account can view trips but cannot change trip numbers or departure status. Ask an admin, manager or dispatcher.',page:null,action:null,source:'trip-safety'});
-      const planned=AssistantTripActions.plan(message,await readOpsState());
+      const planned=AssistantTripActions.plan(command,await readOpsState());
       if(planned?.error)return res.json({answer:planned.error,page:'trips',action:null,source:'trip-clarification'});
       if(planned?.kind){
         const draft={id:crypto.randomUUID(),userId:req.user.sub,plan:planned,expiresAt:Date.now()+ASSISTANT_DRAFT_TTL,inProgress:false};
