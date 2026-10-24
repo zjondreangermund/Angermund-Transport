@@ -3614,6 +3614,7 @@ function nativeGpsStatus(){
   try{return typeof window.AngermundNative?.getGpsStatus==='function'?JSON.parse(window.AngermundNative.getGpsStatus()):null}catch{return null}
 }
 function phoneGpsTestActive(){const s=nativeGpsStatus();return nativePhoneGpsTestAvailable()?(s&&typeof s.testMode==='boolean'?Boolean(s.enabled&&s.testMode):Boolean(s?.enabled&&appLocalStorage.getItem(PHONE_GPS_TEST_KEY)==='1')):phoneGpsTestWatchId!==null}
+let manualTrackingStatusCheckedAt=null,trackingStatusRefreshBusy=false;
 function nativeGpsStatusContent(){
   const s=nativeGpsStatus();if(!s)return '';
   const time=n=>n?new Date(n).toLocaleString():'Not yet';
@@ -3629,11 +3630,57 @@ function nativeGpsStatusContent(){
     +'<p>'+esc(s.status||'Open Tracking setup to check permissions')+'</p>'
     +'<small>Last location: '+esc(time(s.lastCapturedAt))+' · Last server contact: '+esc(time(s.lastUploadedAt))+' · Saved offline: '+num(s.pendingCount)+'</small>'
     +(needs.length?'<p>'+needs.map(esc).join(' · ')+'</p>':'')
-    +'<div><button type="button" class="ghost small" data-tracking-settings>Tracking setup</button> <button type="button" class="ghost small" data-tracking-status>Refresh status</button></div>';
+    +(manualTrackingStatusCheckedAt?'<small class="muted-copy" role="status">Status checked: '+esc(new Date(manualTrackingStatusCheckedAt).toLocaleTimeString())+' · '+(fresh?'Recent GPS upload found':'GPS upload is not recent; check permissions and signal')+'</small>':'')
+    +'<div class="tracking-status-actions"><button type="button" class="ghost small" data-tracking-settings>⚙ Tracking setup</button> <button type="button" class="ghost small" data-tracking-status '+(trackingStatusRefreshBusy?'disabled':'')+'>↻ '+(trackingStatusRefreshBusy?'Checking…':'Refresh status')+'</button></div>';
 }
 function nativeGpsStatusPanel(){return nativeGpsStatus()?'<section class="panel" id="nativeGpsStatus">'+nativeGpsStatusContent()+'</section>':''}
+function wireTrackingStatusButtons(){
+  document.querySelectorAll('[data-tracking-settings]').forEach(b=>b.onclick=e=>{
+    e.preventDefault();e.stopPropagation();openNativeTrackingSetup();
+  });
+  document.querySelectorAll('[data-tracking-status]').forEach(b=>b.onclick=e=>{
+    e.preventDefault();e.stopPropagation();refreshTrackingStatusFromButton();
+  });
+}
+function openNativeTrackingSetup(){
+  const bridge=window.AngermundNative;
+  if(typeof bridge?.openTrackingSettings==='function'){
+    try{
+      bridge.openTrackingSettings();
+      return;
+    }catch(e){notify('Could not open tracking setup: '+(e.message||e));return}
+  }
+  if(runningInsideAndroidApp()){
+    notify('This installed Android version cannot open tracking setup. Install the latest Angermund Transport APK.');
+    return;
+  }
+  notify('Tracking setup is only available inside the installed Android app. In Android settings, allow precise background location, notifications and unrestricted battery usage.');
+}
+async function refreshTrackingStatusFromButton(){
+  if(trackingStatusRefreshBusy)return;
+  trackingStatusRefreshBusy=true;
+  refreshNativeGpsStatus();
+  try{
+    const bridge=window.AngermundNative;
+    if(typeof bridge?.refreshTrackingStatus==='function')bridge.refreshTrackingStatus();
+    else if(typeof bridge?.getGpsStatus!=='function')throw Error('Native GPS controls are unavailable in this browser');
+    manualTrackingStatusCheckedAt=Date.now();
+    if(page==='tracking')await loadTracking();
+    refreshNativeGpsStatus();
+    const s=nativeGpsStatus();
+    notify('Tracking checked · '+(s?.enabled?(s.serviceRunning?'background service running':'background service not running'):'GPS currently stopped')+(s?.lastUploadedAt?' · latest upload '+new Date(s.lastUploadedAt).toLocaleTimeString():' · no GPS upload yet'));
+    setTimeout(refreshNativeGpsStatus,1200);
+  }catch(e){
+    manualTrackingStatusCheckedAt=Date.now();
+    notify('Could not refresh tracking: '+(e.message||e));
+  }finally{
+    trackingStatusRefreshBusy=false;
+    refreshNativeGpsStatus();
+  }
+}
 function refreshNativeGpsStatus(){
   const el=$('nativeGpsStatus');if(el)el.innerHTML=nativeGpsStatusContent();
+  wireTrackingStatusButtons();
   if(page!=='tracking'||!nativePhoneGpsTestAvailable())return;
   const active=phoneGpsTestActive(),state=document.querySelector('.gps-test-state');
   if(state){state.textContent=active?'● TEST GPS ACTIVE':'● TEST GPS OFF';state.classList.toggle('on',active)}
@@ -3641,16 +3688,13 @@ function refreshNativeGpsStatus(){
   if($('startPhoneGpsTest'))$('startPhoneGpsTest').textContent=active?'Restart test GPS':'Start background GPS test';
 }
 setInterval(()=>{if(!document.hidden)refreshNativeGpsStatus()},10000);
-document.addEventListener('click',e=>{
-  if(e.target.closest('[data-tracking-settings]'))window.AngermundNative?.openTrackingSettings?.();
-  if(e.target.closest('[data-tracking-status]'))refreshNativeGpsStatus();
-});
-function forceAndroidInstallPrompt(message='Latest Android app: v1.4.2'){
+// Native GPS status buttons are wired directly after every render or status update.
+function forceAndroidInstallPrompt(message='Latest Android app: v1.4.3'){
   if(!$('appInstallPrompt'))return;
   if($('appInstallStatus'))$('appInstallStatus').innerHTML='<b>'+esc(message)+'</b><br><span>Download and install the APK. Android may ask you to allow installs from this browser.</span>';
   $('appInstallPrompt').classList.remove('hidden')
 }
-function openAndroidInstallPrompt(){forceAndroidInstallPrompt('Angermund Transport Android v1.4.2 is ready to install.')}
+function openAndroidInstallPrompt(){forceAndroidInstallPrompt('Angermund Transport Android v1.4.3 is ready to install.')}
 async function postBrowserPhoneGps(position,label){
   const now=Date.now();if(now-lastPhoneGpsTestSentAt<15000)return;lastPhoneGpsTestSentAt=now;
   try{
@@ -3712,14 +3756,14 @@ function downloadAndroidApp(){
   sessionStorage.setItem(ANDROID_APP_SKIP_KEY,'1');
   if(runningInsideAndroidApp()){
     if(typeof window.AngermundNative?.openAndroidInstaller==='function'){
-      hideAndroidAppPrompt();window.AngermundNative.openAndroidInstaller();notify('Opening Chrome to download Android v1.4.2');return
+      hideAndroidAppPrompt();window.AngermundNative.openAndroidInstaller();notify('Opening Chrome to download Android v1.4.3');return
     }
     forceAndroidInstallPrompt('To update the old installed app, open this website in Chrome and tap Install App. The old WebView cannot install APK files directly.');
     return
   }
   hideAndroidAppPrompt();
-  const a=document.createElement('a');a.href='/download/android?v=1.4.2&ts='+Date.now();a.download='Angermund-Transport-v1.4.2.apk';
-  document.body.appendChild(a);a.click();a.remove();notify('Downloading the newest Android APK v1.4.2…')
+  const a=document.createElement('a');a.href='/download/android?v=1.4.3&ts='+Date.now();a.download='Angermund-Transport-v1.4.3.apk';
+  document.body.appendChild(a);a.click();a.remove();notify('Downloading the newest Android APK v1.4.3…')
 }
 function installLatestAndroidApp(){if(/Android/i.test(navigator.userAgent))downloadAndroidApp();else openAndroidInstallPrompt()}
 function startNativeBackgroundAlerts(){if(!authToken||!runningInsideAndroidApp()||typeof window.AngermundNative?.startBackgroundAlerts!=='function')return false;try{window.AngermundNative.startBackgroundAlerts(authToken);return true}catch{return false}}
@@ -4059,6 +4103,7 @@ if($('siteEntry')){
 }
 
 function wire(){
+ wireTrackingStatusButtons();
  document.querySelectorAll('.open-daily-action').forEach(b=>b.onclick=async()=>{const n=serverNotifications.find(n=>(n.linkedId||n.linked_id)===b.dataset.id);if(n&&!n.read)await api('/api/notifications/'+n.id+'/read',{method:'PATCH'});openDailyAction(b.dataset.id)});
  if($('refreshPlatformActions'))$('refreshPlatformActions').onclick=async()=>{try{await loadNotifications();render()}catch(e){notify(e.message)}};
  if($('markAllNotificationsRead'))$('markAllNotificationsRead').onclick=async()=>{try{await api('/api/notifications/read-all',{method:'PATCH'});await loadNotifications();notify('All notifications marked read')}catch(e){notify(e.message)}};

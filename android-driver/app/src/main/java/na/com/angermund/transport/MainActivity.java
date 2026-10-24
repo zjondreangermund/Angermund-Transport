@@ -112,7 +112,7 @@ public class MainActivity extends Activity {
         settings.setGeolocationEnabled(true);
         settings.setAllowFileAccess(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " AngermundTransportNative/1.4.2");
+        settings.setUserAgentString(settings.getUserAgentString() + " AngermundTransportNative/" + BuildConfig.VERSION_NAME);
 
         webView.addJavascriptInterface(new NativeBridge(), "AngermundNative");
         webView.setWebViewClient(new WebViewClient() {
@@ -583,7 +583,7 @@ public class MainActivity extends Activity {
             // Hand the current APK to the phone browser after a deliberate user tap.
             runOnUiThread(() -> {
                 try {
-                    Uri uri = Uri.parse(BuildConfig.SERVER_URL + "/download/android?v=1.4.2&ts=" + System.currentTimeMillis());
+                    Uri uri = Uri.parse(BuildConfig.SERVER_URL + "/download/android?v=" + BuildConfig.VERSION_NAME + "&ts=" + System.currentTimeMillis());
                     Intent browser = new Intent(Intent.ACTION_VIEW, uri);
                     browser.addCategory(Intent.CATEGORY_BROWSABLE);
                     startActivity(browser);
@@ -682,7 +682,28 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
-        public void openTrackingSettings() { runOnUiThread(MainActivity.this::openGpsSetup); }
+        public void openTrackingSettings() {
+            runOnUiThread(() -> {
+                try { openGpsSetup(); }
+                catch (Exception e) {
+                    toast("Opening Android app settings");
+                    try { startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:" + getPackageName()))); }
+                    catch (Exception ignored) { toast("Open Angermund Transport permissions from Android Settings"); }
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void refreshTrackingStatus() {
+            // Run on the main thread: a minimized app may have a stopped GPS
+            // service even while tracking is still enabled in preferences.
+            runOnUiThread(() -> {
+                if (prefs().getBoolean("gps_enabled", false) && hasForegroundLocation()) {
+                    startStoredServiceIfEnabled();
+                }
+            });
+        }
 
         @JavascriptInterface
         public String getGpsStatus() {
