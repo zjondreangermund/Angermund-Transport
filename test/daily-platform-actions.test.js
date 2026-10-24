@@ -39,3 +39,28 @@ test('expired compliance is critical while renewed compliance becomes completed'
  const state={permits:[{id:'p',expiry:'2026-10-01'}]};let group=D.reconcile(state,now).find(g=>g.key==='document-renewal');assert.equal(group.priority,'Critical');
  state.permits[0].expiry='2028-01-01';group=D.reconcile(state,now).find(g=>g.key==='document-renewal');assert.equal(group.status,'Completed');assert.equal(group.priority,'Completed');
 });
+
+test('payroll review identifies workers and month, not internal UUIDs',()=>{
+ const state={
+  employees:[{id:'emp_keshia',name:'Keshia Employee'}],
+  drivers:[{id:'drv_elia',name:'Elia Driver'}],
+  payroll:[
+   {id:'pay_558ad200-9e83-47ef-a7bb-29c7ed702e58',employeeId:'emp_keshia',period:'2026-10',status:'Draft'},
+   {id:'pay_1b70fa58-540c-4772-987d-ab84acb66251',employeeId:'drv_elia',period:'2026-10',status:'Draft'},
+   {id:'pay_53ce0d1e-8e03-4900-b7e1-e0de728654cb',employeeId:'missing_worker',period:'2026-10',status:'Draft'}
+  ]
+ };
+ const group=D.reconcile(state,now).find(g=>g.key==='payroll-review');
+ assert.equal(group.items.length,3);
+ assert.deepEqual(group.items.map(x=>x.title),[
+  'Keshia Employee · Payslip 2026-10','Elia Driver · Payslip 2026-10','Employee · Payslip 2026-10'
+ ]);
+ assert.equal(group.items[0].linkedId,'pay_558ad200-9e83-47ef-a7bb-29c7ed702e58');
+ assert.ok(group.items.every(x=>!x.title.includes('pay_')));
+});
+test('opaque internal record references stay as linked IDs and not visible titles',()=>{
+ const state={expenses:[{id:'exp_1a2b3c4d-55ff-66dd-77bb-88bb99aa00cc',status:'Pending',category:'Meals'}]};
+ const group=D.collect(state,now).find(g=>g.key==='expense-review');
+ assert.ok(group);assert.equal(group.items[0].title,'Expense');
+ assert.equal(group.items[0].linkedId,state.expenses[0].id);
+});

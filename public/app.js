@@ -2437,13 +2437,31 @@ function dailyTasksPanel(taskRows='',canManage=false){
  (groups.length?'<h3 class="task-section-label">Platform checks</h3>'+groups.map(g=>'<div class="task-row task-state-'+taskTone(g.status,g.priority)+'"><div><b>'+esc(g.title)+'</b><p>'+g.items.filter(x=>!x.completed).length+' remaining · '+g.items.filter(x=>x.completed).length+' completed</p></div><div>'+taskStatusBadge(g.status,g.priority)+' <button class="link-button open-daily-action" data-id="'+esc(g.id)+'">Open affected records</button></div></div>').join(''):'')+
  '<h3 class="task-section-label">Assigned tasks</h3>'+(taskRows||'<div class="empty">No assigned tasks.</div>')+'</section>';
 }
+function dailyActionReadableTitle(item){
+  if(item.linkedType==='payroll'){
+    const pay=(db.payroll||[]).find(p=>String(p.id)===String(item.linkedId||item.id));
+    if(pay){
+      const worker=employeeRecord(pay.employeeId);
+      return (worker?.name||'Employee')+' · Payslip '+String(pay.period||'');
+    }
+    // Historical review may outlive an erased payslip; do not expose opaque IDs.
+    if(/^pay_[\da-f-]+$/i.test(String(item.title||'')))return 'Employee payslip';
+  }
+  const title=String(item.title||'').trim();
+  if(/^(?:pay|trip|fuel|inv|doc|loan|task|mnt|ins|ty|exp|id)_[0-9a-f]{8,}(?:-[0-9a-f]+)*$/i.test(title)
+     ||/^[0-9a-f]{8}-[0-9a-f-]{20,}$/i.test(title)){
+    const type=String(item.linkedType||'record').replace(/[_-]/g,' ');
+    return type.charAt(0).toUpperCase()+type.slice(1)+' record';
+  }
+  return title||'Record requiring review';
+}
 async function openDailyAction(id){
  try{
  await loadPlatformActions();
  const group=platformActionGroups.find(x=>x.id===id)||((db.dailyPlatformTasks||[]).find(x=>x.id===id));
  if(!group)return notify('This daily review is no longer available. Open Tasks for today’s review.');
  $('modalTitle').textContent=group.title;
- $('entryForm').innerHTML='<p>'+esc(group.date)+' · '+esc(group.status)+'</p>'+group.items.map(x=>'<div class="policy task-state-'+taskTone(x.completed?'Completed':'Open',group.priority)+'"><b>'+esc(x.title)+'</b><p>'+esc(x.message)+'</p>'+taskStatusBadge(x.completed?'Completed':'Open',group.priority)+(!x.completed?'<button type="button" class="link-button daily-record" data-type="'+esc(x.linkedType)+'" data-id="'+esc(x.linkedId)+'" data-page="'+esc(x.page)+'">Open record</button>':'')+'</div>').join('')+'<div class="form-actions"><button type="button" class="ghost" id="closeDailyAction">Close</button><button type="button" class="primary" id="recheckDailyAction">Check completed changes</button></div>';
+ $('entryForm').innerHTML='<p>'+esc(group.date)+' · '+esc(group.status)+'</p>'+group.items.map(x=>'<div class="policy task-state-'+taskTone(x.completed?'Completed':'Open',group.priority)+'"><b>'+esc(dailyActionReadableTitle(x))+'</b><p>'+esc(x.message)+'</p>'+taskStatusBadge(x.completed?'Completed':'Open',group.priority)+(!x.completed?'<button type="button" class="link-button daily-record" data-type="'+esc(x.linkedType)+'" data-id="'+esc(x.linkedId)+'" data-page="'+esc(x.page)+'">Open record</button>':'')+'</div>').join('')+'<div class="form-actions"><button type="button" class="ghost" id="closeDailyAction">Close</button><button type="button" class="primary" id="recheckDailyAction">Check completed changes</button></div>';
  $('entryForm').onsubmit=e=>e.preventDefault();$('modal').classList.remove('hidden');
  $('closeDailyAction').onclick=()=>$('modal').classList.add('hidden');
  $('recheckDailyAction').onclick=()=>openDailyAction(id);
