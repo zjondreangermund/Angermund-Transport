@@ -115,7 +115,7 @@ function apply(s,p,actor='Staff approval',now=new Date().toISOString()){
   }else{
    if(String(t.sourceOrderRef||'')!==p.expected.oldRef)reject('Order reference changed; ask again.');
    if(!/^[a-zA-Z0-9][A-Za-z0-9._/-]{1,99}$/.test(p.value))reject('Invalid order reference');
-   t.sourceOrderRef=p.value;
+   t.sourceOrderRef=p.value;t.loadEditedAt=now;
   }
   t.updatedAt=now;t.updatedBy=actor;linkType='trip';linkId=t.id;
   result={tripId:t.id,entityId:t.id,recordType:'trip'};
