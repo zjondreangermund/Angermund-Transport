@@ -200,7 +200,13 @@ window.angermundAssistantBridge={
   openNewTrip(){if(!['admin','manager','dispatcher'].includes(role))return false;go('dispatch');openForm('trip');return true},
   openNewTask(){if(!['admin','manager'].includes(role))return false;go('tasks');openTaskForm();return true},
   async reload(){return refreshCentralState(false)},
-  openTrip(id){if(!canView('trips')||!get('trips',id).id)return false;go('trips');openTrip(id);return true}
+  openTrip(id){if(!canView('trips')||!get('trips',id).id)return false;go('trips');openTrip(id);return true},
+  openRecord(kind,id){
+    if(kind==='loan'&&canView('loans')&&(db.loans||[]).some(x=>x.id===id)){go('loans');openEmployeeLoan(id);return true}
+    if(kind==='task'&&canView('tasks')&&(db.tasks||[]).some(x=>x.id===id)){go('tasks');openTaskForm(id);return true}
+    if(kind==='expense'&&canView('roadCharges')){go('roadCharges');return true}
+    return false
+  }
 };
 const defaultPageForRole=(r=role)=>r==='driver'?'driverPortal':r==='site_worker'?'tasks':'command';
 let navigationReady=false,lastExitBackAt=0,closingModalFromBack=false;
