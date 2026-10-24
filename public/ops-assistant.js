@@ -8,6 +8,8 @@
     '<div class="assistant-log" aria-live="polite"></div><div class="assistant-suggestions">'+
     '<button type="button" data-example="Where do I see my monthly income?">Monthly income</button>'+
     '<button type="button" data-example="Where do I see unpaid invoices?">Unpaid invoices</button>'+
+ '<button type="button" data-example="Which trucks are available?">Available trucks</button>'+
+ '<button type="button" data-example="Show overdue tasks">Overdue tasks</button>'+
     '<button type="button" data-example="How do I create a new trip?">Create trip</button>'+
  '<button type="button" data-example="Add loan to Josef for N$2000 monthly deduction N$200">Employee loan</button>'+
  '<button type="button" data-example="Create task to check ANG 12 tomorrow, high priority">Create task</button>'+
