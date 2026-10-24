@@ -62,7 +62,7 @@ function plan(message,s,now=Date.now()){
   const m=/\b(?:create|add|record|remind(?: me to)?)\s+(?:a\s+)?task\s*(?:to|:|-)?\s*(.+)$/i.exec(q);
   if(!m)return err('Try: Create task to check ANG 12 tomorrow, high priority.');
   const due=/\b(?:due|on)\s+(20\d{2}-\d{2}-\d{2})\b/i.exec(q)?.[1]||(/tomorrow/i.test(q)?new Date(now+7200000+86400000).toISOString().slice(0,10):/\btoday\b/i.test(q)?new Date(now+7200000).toISOString().slice(0,10):'');
-  if(due&&new Date(due+'T12:00:00Z').toISOString().slice(0,10)!==due)return err('Invalid task due date.');
+  if(due&&(!Number.isFinite(Date.parse(due+'T12:00:00Z'))||new Date(due+'T12:00:00Z').toISOString().slice(0,10)!==due))return err('Invalid task due date.');
   let title=m[1].replace(/\b(?:due|on)\s+20\d{2}-\d{2}-\d{2}\b/ig,'').replace(/\b(?:tomorrow|today)\b/ig,'').replace(/[,.;]?\s*(?:high|critical|normal|low)\s*(?:priority)?\b/ig,'').trim().replace(/[,;:.\s]+$/,'');
   if(title.length<5||title.length>180)return err('Provide a task description between 5 and 180 characters.');
   const priority=/\bcritical\b/i.test(q)?'Critical':/\bhigh\b/i.test(q)?'High':/\blow\b/i.test(q)?'Low':'Normal';
