@@ -4,6 +4,8 @@ const AndroidUpdate=require('./public/android-update');
 const SiteAssistant=require('./public/site-assistant-core');
 const AssistantTripActions=require('./assistant-trip-actions');
 const AssistantOps=require('./assistant-operations');
+const AssistantExtra=require('./assistant-extra-actions');
+const AssistantInsights=require('./assistant-live-insights');
 const PushDelivery=require('./push-delivery-policy');
 const TripSites=require('./trip-site-geofences');
 const {resolveMobileGps}=require('./mobile-gps');
@@ -3692,7 +3694,7 @@ async function assistantNaturalCommand(text){
   // AI only translates the user's phrasing into a constrained canonical request.
   // The DB resolver, role gate and explicit approval are enforced separately.
   try{
-    const system='Rewrite this employee request for the Angermund Transport assistant into one concise canonical command if it explicitly requests an operation. Never change a question into an instruction. Do not invent missing people, amounts, trip numbers or dates. Available patterns: (1) Add loan to PERSON for N$AMOUNT monthly deduction N$AMOUNT; (2) Pause PERSON loan; (3) Change PERSON loan monthly deduction to N$AMOUNT; (4) Create task to DESCRIPTION tomorrow high priority; (5) Assign driver PERSON to trip TRIPNUMBER; (6) Assign truck FLEETNUMBER to trip TRIPNUMBER; (7) Record toll/parking/permit fee expense N$AMOUNT for trip TRIPNUMBER; (8) Change trip OLDNUMBER number to NEWNUMBER; (9) Switch truck FLEET from planned to departing. For unsupported or incomplete requests, preserve the original text unchanged. Never include details the user did not say. Return JSON only.';
+    const system='Rewrite this employee request for the Angermund Transport assistant into one concise canonical command if it explicitly requests an operation. Never change a question into an instruction. Do not invent missing people, amounts, trip numbers or dates. Available patterns: (1) Add loan to PERSON for N$AMOUNT monthly deduction N$AMOUNT; (2) Pause PERSON loan; (3) Change PERSON loan monthly deduction to N$AMOUNT; (4) Create task to DESCRIPTION tomorrow high priority; (5) Assign driver PERSON to trip TRIPNUMBER; (6) Assign truck FLEETNUMBER to trip TRIPNUMBER; (7) Record toll/parking/permit fee expense N$AMOUNT for trip TRIPNUMBER; (8) Change trip OLDNUMBER number to NEWNUMBER; (9) Switch truck FLEET from planned to departing; (10) Set task "EXACT TITLE" priority to High; (11) Set task "EXACT TITLE" due YYYY-MM-DD; (12) Mark task "EXACT TITLE" in progress; (13) Assign task "EXACT TITLE" to driver PERSON; (14) Add note to trip TRIPNUMBER: NOTE; (15) Set order reference for trip TRIPNUMBER to REFERENCE. For unsupported or incomplete requests, preserve the original text unchanged. Never include details the user did not say. Return JSON only.';
     const response=await fetch('https://api.openai.com/v1/responses',{
       method:'POST',signal:AbortSignal.timeout(9500),
       headers:{Authorization:'Bearer '+OPENAI_API_KEY,'Content-Type':'application/json'},
@@ -3712,7 +3714,8 @@ async function assistantNaturalCommand(text){
 const assistantCalls=new Map();
 const assistantDrafts=new Map(),ASSISTANT_DRAFT_TTL=10*60*1000;
 const assistantCanChangeTrips=u=>['admin','manager','dispatcher'].includes(String(u?.role||''));
-const assistantCanPerform=(u,kind)=>['trip_rename','trip_depart'].includes(kind)?assistantCanChangeTrips(u):AssistantOps.roleCan(u?.role,kind);
+const assistantCanPerform=(u,kind)=>['trip_rename','trip_depart'].includes(kind)?assistantCanChangeTrips(u):
+   (AssistantExtra.can(u?.role,kind)||AssistantOps.roleCan(u?.role,kind));
 function assistantPublicDraft(d){
  return{id:d.id,kind:d.plan.kind,tripId:d.plan.tripId||null,tripNumber:d.plan.tripNumber||null,
    entityId:d.plan.entityId||null,page:d.plan.page||'trips',
@@ -3732,7 +3735,9 @@ app.post('/api/assistant/approve/:draftId',auth,async(req,res)=>{
    const change=await mutateOpsState(state=>{
      const outcome=['trip_rename','trip_depart'].includes(d.plan.kind)?
        AssistantTripActions.apply(state,d.plan,actor):
-       AssistantOps.apply(state,d.plan,actor);
+       AssistantExtra.can(d.plan.actorRole,d.plan.kind)?
+         AssistantExtra.apply(state,d.plan,actor):
+         AssistantOps.apply(state,d.plan,actor);
      if(d.plan.kind==='expense_create'){
        const trip=(state.trips||[]).find(x=>x.id===d.plan.tripId);
        if(trip)recalcTripCosts(state,trip);
@@ -3740,10 +3745,10 @@ app.post('/api/assistant/approve/:draftId',auth,async(req,res)=>{
      return outcome;
    });
    assistantDrafts.delete(id);
-   if(d.plan.kind==='task_create')try{
+   if(['task_create','task_update'].includes(d.plan.kind))try{
      const newState=await readOpsState();
      const task=(newState.tasks||[]).find(x=>x.id===change.result.entityId);
-     if(task)await notifyTask(task,'New task: '+task.title,
+     if(task)await notifyTask(task,(d.plan.kind==='task_create'?'New task: ':'Task updated: ')+task.title,
        (task.due?'Due '+task.due+' · ':'')+task.priority+' priority',
        task.priority==='Critical'?'critical':task.priority==='High'?'warning':'info');
    }catch(e){console.warn('Assistant task saved but notification was delayed:',e.message)}
@@ -3770,6 +3775,37 @@ app.post('/api/assistant/ask',auth,async(req,res)=>{
     previous.push(now);assistantCalls.set(userId,previous);
     const message=String(req.body?.message||'').trim();
     if(!message||message.length>1200)return res.status(400).json({error:'Enter a question under 1,200 characters.'});
+    // Questions use fresh server-side records, rather than browser-cache values
+    // or invented positions / financial numbers.
+    if(AssistantInsights.promptKind(message)){
+      const response=AssistantInsights.summary(message,await readOpsState(),req.user,new Date().toISOString());
+      if(response)return res.json({...response,action:null,aiEnabled:false});
+    }
+    // More direct operations: task priority/due/assignment, internal trip notes
+    // and customer/order references. Approval is still mandatory.
+    const extraKind=AssistantExtra.kind(message);
+    if(extraKind){
+      if(!assistantCanPerform(req.user,extraKind))
+        return res.json({answer:'Your account cannot make this type of change.',page:null,source:'operation-permission'});
+      const liveState=await readOpsState();
+      let prepared=AssistantExtra.plan(message,liveState);
+      if(prepared?.error&&OPENAI_API_KEY){
+        const normalized=await assistantNaturalCommand(message);
+        if(normalized!==message&&AssistantExtra.kind(normalized)===extraKind){
+          const retry=AssistantExtra.plan(normalized,liveState);
+          if(retry?.kind)prepared=retry;
+        }
+      }
+      if(prepared?.error)return res.json({answer:prepared.error,page:extraKind==='task_update'?'tasks':'trips',source:'operation-clarification'});
+      if(prepared?.kind){
+        prepared.actorRole=req.user.role;
+        const draft={id:crypto.randomUUID(),userId:req.user.sub,plan:prepared,expiresAt:Date.now()+ASSISTANT_DRAFT_TTL,inProgress:false};
+        for(const [id,existing] of assistantDrafts)if(existing.expiresAt<Date.now()||existing.userId===req.user.sub)assistantDrafts.delete(id);
+        assistantDrafts.set(draft.id,draft);
+        return res.json({answer:'I prepared '+prepared.description+'. Review this before saving. Nothing has changed yet.',
+          page:prepared.page,source:'operation-proposal',proposal:assistantPublicDraft(draft)});
+      }
+    }
     // Interpret natural phrasing only if needed. AI never writes to the database.
     // All canonical commands still pass through strict record and role validation.
     let command=message,opsKind=AssistantOps.kind(command);
