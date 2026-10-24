@@ -46,7 +46,7 @@
  function answer(message,context){
   const q=String(message||''),pages=context?.pages||[],p=findPage(q,pages);
   if(/\b(what can you do|help me with tasks|what tasks|commands|how do you work)\b/i.test(q))
-    return {answer:'I can look up pages and prepare changes for approval: employee loans and repayments, new tasks, truck/driver assignments, trip number changes, departure status, and toll/parking/permit expenses. Example: Add loan to Josef for N$2000 monthly deduction N$200. I show the exact change before saving; tap Approve & Save or Cancel. Actions depend on your account permissions.',page:null,action:null};
+    return {answer:'I can look up live fleet records and prepare approved changes: employee loans and repayments, tasks (including due dates, priorities and driver assignment), trip numbers, order references, internal trip notes, departure status, truck/driver assignments and toll/parking/permit expenses. Ask which trucks are available, which trips are planned, which PODs are missing or which tasks are overdue. Example: Add loan to Josef for N$2000 monthly deduction N$200. I show the exact change before saving; tap Approve & Save or Cancel. Actions depend on your account permissions.',page:null,action:null};
   if(!p)return{answer:'I can guide you through Angermund Transport. Ask about monthly income, invoices, GPS, diesel, trips or another page. I will only open pages your account can access.',page:null,action:null};
   let explanation='Open '+p.label+' from the navigation menu. '+String(p.description||'').replace(/\.$/,'')+'.';
   const finance=context?.financials;
