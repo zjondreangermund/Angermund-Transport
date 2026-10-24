@@ -9,8 +9,10 @@ async function deleteManagedRecord(kind,id){
  const x=get(kind,id);if(!x.id)return notify('Record not found. Refresh the page.');
  let effect='Delete this '+(managedKinds[kind]||'record')+' record: '+(x.number||x.reference||x.id)+'?';
  if(kind==='trips'){
-  const dieselCount=(db.diesel||[]).filter(item=>item.tripId===id).length;
-  const expenseCount=(db.expenses||[]).filter(item=>item.tripId===id).length;
+  const legIds=new Set((x.legs||[]).map(l=>String(l.id||'')).filter(Boolean));
+  const isLinked=item=>item.tripId===id||(!item.tripId&&item.legId&&legIds.has(String(item.legId)));
+  const dieselCount=(db.diesel||[]).filter(isLinked).length;
+  const expenseCount=(db.expenses||[]).filter(isLinked).length;
   effect='Permanently delete trip '+(x.number||x.id)+' and all its linked records?'
     +'\n\nThis will also delete:'
     +'\n• '+dieselCount+' diesel record(s)'
