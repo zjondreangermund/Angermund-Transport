@@ -58,8 +58,11 @@ function summary(query,s,user,now=new Date().toISOString()){
   const partial=target.length?target:employees.filter(e=>e.name&&(' '+key(query)+' ').includes(' '+key(e.name).split(/\s+/)[0]+' '));
   if(partial.length>1)return{answer:'Multiple employees match. Include the full employee name.',page:'loans',source:'live-records'};
   if(!partial.length)return{answer:'Give the name of the employee whose loan balance you want to check.',page:'loans',source:'live-records'};
-  const employee=partial[0],rows=(s.loans||[]).filter(l=>l.employeeId===employee.id).map(l=>
-    'Loan '+(l.reference||l.id)+' · balance '+fmt(l.balance)+' · '+fmt(l.monthlyDeduction)+'/month · '+l.status);
+  const employee=partial[0],rows=(s.loans||[]).filter(l=>l.employeeId===employee.id).map(l=>{
+    const reference=String(l.reference||'').trim();
+    const label=reference&&!/^loan_[0-9a-f-]{8,}$/i.test(reference)?reference:'started '+String(l.startPeriod||l.date||'unknown');
+    return 'Loan '+label+' · balance '+fmt(l.balance)+' · '+fmt(l.monthlyDeduction)+'/month · '+l.status;
+  });
   return list('Loan records for '+employee.name+':',rows,'loans');
  }
  if(k==='expenses'){
