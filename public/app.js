@@ -3476,6 +3476,10 @@ function openTrip(id){
     <div class="journey-summary-bar"><div><b>${esc(truck(t.truckId))}</b><span>${esc(trailer(t.trailerId))}</span></div><div><b>${t.driverId?esc(driver(t.driverId)):'Driver unassigned'}</b><span>${esc(t.date)}</span></div><div><b>${legs.length} priced leg${legs.length===1?'':'s'}</b><span>${legs.filter(x=>x.invoiceId).length} invoiced</span></div></div>
     ${['admin','manager','dispatcher','finance'].includes(role)?'<div class="form-actions"><button type="button" class="primary" id="editLoadDetails">Edit load</button>'+tripDeleteButton(t)+'</div>':''}
     ${tripDriverAssignment(t)}
+    ${(t.sourceOrderRef||t.notes)?'<section class="panel trip-operations-notes"><h3>Trip reference & operations notes</h3>'+
+      (t.sourceOrderRef?'<p><b>Order reference:</b> '+esc(t.sourceOrderRef)+'</p>':'')+
+      (t.notes?'<p class="trip-operations-notes-text">'+esc(t.notes)+'</p>':'')+
+      '</section>':''}
     ${carrierOrderPanel(t)}
     ${historicalTripSourcePanel(t)}
     ${tripRequirementsPanel(t)}
