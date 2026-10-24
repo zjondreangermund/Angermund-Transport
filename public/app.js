@@ -3180,9 +3180,47 @@ function entrySuggestions(type,key){
   const map={trip:'trips',diesel:'diesel',inspection:'inspections',incident:'incidents',permit:'permits',maintenance:'maintenance',tyre:'tyres',invoice:'invoices',advance:'advances',payroll:'payroll',client:'clients',route:'routes',expense:'expenses',tripIssue:'tripIssues',payment:'payments'};
   return [...new Set((db[map[type]]||[]).map(row=>String(row[key]??'').trim()).filter(Boolean))].slice(0,10)
 }
-function openForm(type,prefill={}){$('entryForm').onsubmit=saveForm;formType=type;const list=forms[type];if(!list)return notify(`Open ${type} from its linked workflow`);$('modalTitle').textContent=`Add ${type}`;$('entryForm').innerHTML=`<div class="form-grid">${list.map(([key,label,kind,def,vals])=>{const value=prefill[key]??def??'',opts=kind==='select'?(vals||[]).map(v=>[String(v),String(v)]):(type==='maintenance'&&key==='truckId'?workshopVehicleChoices().map(x=>[x.id,workshopVehicleLabel(x)]):options(kind));if(opts.length)return `<div class="field"><label>${label}</label><select name="${key}"><option value="">Select…</option>${opts.map(([v,l])=>`<option value="${esc(v)}" ${String(v)===String(value)?'selected':''}>${esc(l)}</option>`).join('')}</select></div>`;if(kind==='textarea')return `<div class="field full"><label>${label}</label><textarea name="${key}" rows="3">${esc(value)}</textarea></div>`;const suggestions=['text','number'].includes(kind)?entrySuggestions(type,key):[],listId=`suggest-${type}-${key}`;return `<div class="field"><label>${label}</label><input name="${key}" type="${kind}" step="any" value="${esc(value)}" ${suggestions.length?`list="${listId}"`:''} autocomplete="on">${suggestions.length?`<datalist id="${listId}">${suggestions.map(v=>`<option value="${esc(v)}"></option>`).join('')}</datalist>`:''}</div>`}).join('')}<div class="form-actions"><button type="button" class="ghost" id="cancelForm">Cancel</button><button class="primary">Save & link record</button></div></div>`;$('modal').classList.remove('hidden');$('cancelForm').onclick=()=>$('modal').classList.add('hidden');
+function manualTripRoutePickerHtml(){
+  return `<div class="field full trip-route-entry-switch">
+    <button type="button" class="ghost" id="tripRouteMode" aria-controls="tripManualRouteFields" aria-expanded="false">✎ Enter route manually instead</button>
+    <small>You can type a route that is not in the saved route list. It will be saved with the trip.</small>
+  </div>
+  <div class="form-grid trip-manual-route-fields" id="tripManualRouteFields" hidden>
+    <div class="field full"><label>New route name *</label><input name="manualRouteName" maxlength="120" placeholder="e.g. Windhoek → Tsandi" disabled autocomplete="off"></div>
+    <div class="field"><label>Loading location (optional)</label><input name="manualRouteFrom" maxlength="100" placeholder="e.g. Windhoek" disabled></div>
+    <div class="field"><label>Offloading location (optional)</label><input name="manualRouteTo" maxlength="100" placeholder="e.g. Tsandi" disabled></div>
+    <div class="field"><label>Total distance (km)</label><input type="number" name="manualRouteDistance" min="0" max="100000" step="0.01" placeholder="Enter if known" disabled></div>
+    <div class="field"><label>Namibia road km (for MDC)</label><input type="number" name="manualRouteNamibiaKm" min="0" max="100000" step="0.01" placeholder="Enter if known" disabled></div>
+    <div class="field"><label>Trip direction</label><select name="manualRouteRoundTrip" disabled><option value="false">One way</option><option value="true">Return trip / round trip</option></select></div>
+    <div class="field"><label>Cross-border route</label><select name="manualRouteCrossBorder" disabled><option value="false">No</option><option value="true">Yes</option></select></div>
+    <p class="field full trip-manual-help">If distance is unknown, you can add it later under Clients & Routes. MDC and route costing require accurate Namibia km.</p>
+  </div>`;
+}
+function openForm(type,prefill={}){$('entryForm').onsubmit=saveForm;formType=type;const list=forms[type];if(!list)return notify(`Open ${type} from its linked workflow`);$('modalTitle').textContent=`Add ${type}`;$('entryForm').innerHTML=`<div class="form-grid">${list.map(([key,label,kind,def,vals])=>{const value=prefill[key]??def??'',opts=kind==='select'?(vals||[]).map(v=>[String(v),String(v)]):(type==='maintenance'&&key==='truckId'?workshopVehicleChoices().map(x=>[x.id,workshopVehicleLabel(x)]):options(kind));if(opts.length)return `<div class="field"><label>${label}</label><select name="${key}"><option value="">Select…</option>${type==='trip'&&key==='routeId'?'<option value="__manual__">✎ Enter a new route manually…</option>':''}${opts.map(([v,l])=>`<option value="${esc(v)}" ${String(v)===String(value)?'selected':''}>${esc(l)}</option>`).join('')}</select></div>${type==='trip'&&key==='routeId'?manualTripRoutePickerHtml():''}`;if(kind==='textarea')return `<div class="field full"><label>${label}</label><textarea name="${key}" rows="3">${esc(value)}</textarea></div>`;const suggestions=['text','number'].includes(kind)?entrySuggestions(type,key):[],listId=`suggest-${type}-${key}`;return `<div class="field"><label>${label}</label><input name="${key}" type="${kind}" step="any" value="${esc(value)}" ${suggestions.length?`list="${listId}"`:''} autocomplete="on">${suggestions.length?`<datalist id="${listId}">${suggestions.map(v=>`<option value="${esc(v)}"></option>`).join('')}</datalist>`:''}</div>`}).join('')}<div class="form-actions"><button type="button" class="ghost" id="cancelForm">Cancel</button><button class="primary">Save & link record</button></div></div>`;$('modal').classList.remove('hidden');$('cancelForm').onclick=()=>$('modal').classList.add('hidden');
   if(type==='trip'){
-    const f=$('entryForm');f.elements.truckId.onchange=()=>{const truck=get('trucks',f.elements.truckId.value);f.elements.driverId.value=truck.defaultDriverId||''};
+    const f=$('entryForm'),routeSelect=f.elements.routeId,
+      modeButton=$('tripRouteMode'),panel=$('tripManualRouteFields');
+    const toggleManualRoute=enabled=>{
+      const manual=Boolean(enabled);
+      if(manual)routeSelect.value='__manual__';
+      else if(routeSelect.value==='__manual__')routeSelect.value='';
+      routeSelect.closest('.field').hidden=manual;
+      panel.hidden=!manual;
+      panel.querySelectorAll('input,select').forEach(el=>el.disabled=!manual);
+      f.elements.manualRouteName.required=manual;
+      modeButton.textContent=manual?'↩ Choose from saved routes':'✎ Enter route manually instead';
+      modeButton.setAttribute('aria-expanded',String(manual));
+      if(manual)f.elements.manualRouteName.focus();
+    };
+    modeButton.onclick=()=>toggleManualRoute(routeSelect.value!=='__manual__');
+    routeSelect.onchange=()=>toggleManualRoute(routeSelect.value==='__manual__');
+    if(prefill.routeId==='__manual__'||prefill.manualRouteName){
+      toggleManualRoute(true);
+      ['manualRouteName','manualRouteFrom','manualRouteTo','manualRouteDistance','manualRouteNamibiaKm'].forEach(key=>{
+        if(prefill[key]!==undefined)f.elements[key].value=prefill[key];
+      });
+    }
+    f.elements.truckId.onchange=()=>{const truck=get('trucks',f.elements.truckId.value);f.elements.driverId.value=truck.defaultDriverId||''};
     if(prefill.truckId&&!prefill.driverId)f.elements.truckId.onchange();
   }
   if(type==='expense'){

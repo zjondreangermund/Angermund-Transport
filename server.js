@@ -5,6 +5,7 @@ const SiteAssistant=require('./public/site-assistant-core');
 const AssistantTripActions=require('./assistant-trip-actions');
 const AssistantOps=require('./assistant-operations');
 const AssistantExtra=require('./assistant-extra-actions');
+const ManualTripRoute=require('./manual-trip-route');
 const AssistantPlatform=require('./assistant-platform');
 const AssistantJobs=require('./assistant-jobs');
 const AssistantBusiness=require('./assistant-business');
@@ -2705,12 +2706,17 @@ app.patch('/api/payroll/:id',auth,roles('admin','manager','finance'),async(req,r
 });
 async function buildPlannedTrip(state,body,actor){
       state.trips??=[];state.trucks??=[];state.drivers??=[];state.routes??=[];
-      const route=state.routes.find(x=>x.id===body.routeId);
+      const useManualRoute=body.routeId===ManualTripRoute.MANUAL_ROUTE_ID;
+      const route=useManualRoute?ManualTripRoute.manualRoute(body,state.routes):
+        state.routes.find(x=>x.id===body.routeId);
       if(!route){const e=Error('Selected route was not found');e.status=400;throw e}
       const truck=state.trucks.find(x=>x.id===body.truckId);
       const driver=state.drivers.find(x=>x.id===body.driverId);
       if(!truck){const e=Error('Selected truck was not found');e.status=400;throw e}
       if(!driver){const e=Error('Selected driver was not found');e.status=400;throw e}
+      // Create the new route in the SAME transaction as the trip so that a
+      // failed trip save never leaves a partial route in the database.
+      if(useManualRoute)state.routes.push(route);
       const highest=state.trips.reduce((m,t)=>{const n=Number(String(t.number||'').match(/AT-(\d+)/)?.[1]||0);return Math.max(m,n)},999);
       const status=['Planned','Loading','In transit','Delivered'].includes(body.status)?body.status:'Planned';
       const stage={Planned:1,Loading:2,'In transit':3,Delivered:4}[status]||1;
@@ -2718,7 +2724,7 @@ async function buildPlannedTrip(state,body,actor){
         id:'trip_'+crypto.randomUUID(),
         number:'AT-'+(highest+1),
         date:String(body.date),
-        routeId:String(body.routeId),
+        routeId:String(route.id),
         clientId:String(body.clientId),
         truckId:String(body.truckId),
         trailerId:body.trailerId?String(body.trailerId):'',
@@ -2730,7 +2736,7 @@ async function buildPlannedTrip(state,body,actor){
         income:num(body.income),
         distance:num(route.distance),
         legs:[{
-          id:'leg_'+crypto.randomUUID(),sequence:1,label:'Outbound / Load 1',routeId:String(body.routeId),clientId:String(body.clientId),
+          id:'leg_'+crypto.randomUUID(),sequence:1,label:'Outbound / Load 1',routeId:String(route.id),clientId:String(body.clientId),
           load:String(body.load||''),tons:num(body.tons),pallets:num(body.pallets),distance:num(route.distance),namibiaKm:num(route.namibiaKm),
           pricingMethod:legPricingMethod(body.pricingMethod||'Manual negotiated'),unitRate:num(body.unitRate),
           agreedAmount:num(body.income),income:num(body.income),status, pod:false,invoiceId:''
@@ -2754,8 +2760,9 @@ app.post('/api/admin/trips',auth,roles('admin','manager','dispatcher'),async(req
   try{
     const body=req.body&&typeof req.body==='object'?req.body:{};
     if(!body.driverId&&body.truckId){const state=await readOpsState();configureTruckDriverDefaults(state);body.driverId=defaultDriverId(state,body.truckId)}
-    const required=['date','routeId','clientId','truckId','driverId'];
-    if(required.some(k=>!body[k]))return res.status(400).json({error:'Date, route, client, truck and driver are required'});
+    const required=['date','clientId','truckId','driverId'];
+    if(required.some(k=>!body[k])||!body.routeId)
+      return res.status(400).json({error:'Date, route (saved or manually entered), client, truck and driver are required'});
     const changed=await mutateOpsState(async state=>{
       return buildPlannedTrip(state,body,req.user.name||req.user.email||req.user.sub);
     });

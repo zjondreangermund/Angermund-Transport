@@ -28,6 +28,8 @@ on:
       - 'record-management.js'
       - 'public/record-manager.js'
       - 'test/record-management.test.js'
+      - 'manual-trip-route.js'
+      - 'test/manual-trip-route.test.js'
       - 'server.js'
       - 'public/app.js'
       - '.github/workflows/test-phone-journey.yml'
@@ -59,6 +61,8 @@ on:
       - 'record-management.js'
       - 'public/record-manager.js'
       - 'test/record-management.test.js'
+      - 'manual-trip-route.js'
+      - 'test/manual-trip-route.test.js'
       - 'server.js'
       - 'public/app.js'
       - '.github/workflows/test-phone-journey.yml'
@@ -74,4 +78,4 @@ jobs:
       - name: Check JavaScript syntax
         run: npm run check
       - name: Test isolated phone milestones and existing driver tracking
-        run: node --test test/phone-test-journey.test.js test/phone-trip-tracking.test.js test/push-delivery-policy.test.js test/android-update.test.js test/site-assistant.test.js test/daily-platform-actions.test.js test/assistant-trip-actions.test.js test/assistant-operations.test.js test/assistant-extra-actions.test.js test/record-management.test.js test/desktop-install.test.js
+        run: node --test test/phone-test-journey.test.js test/phone-trip-tracking.test.js test/push-delivery-policy.test.js test/android-update.test.js test/site-assistant.test.js test/daily-platform-actions.test.js test/assistant-trip-actions.test.js test/assistant-operations.test.js test/assistant-extra-actions.test.js test/record-management.test.js test/desktop-install.test.js test/manual-trip-route.test.js
