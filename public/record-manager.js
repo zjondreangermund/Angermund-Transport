@@ -6,8 +6,27 @@ function managedButtons(kind,id){if(!canManageKind(kind))return'';return '<butto
 function managedRows(kind){let rows=(db[kind]||[]).slice();if(kind==='payroll'&&page==='payroll')rows=rows.filter(x=>x.period===payrollPeriodFilter);if(kind==='shunterRecons'&&page==='shunterRecon')rows=rows.filter(x=>x.period===shunterReconPeriod);if(opsFilterPages.has(page)&&opsFiltering())rows=rows.filter(x=>{if(kind==='payments'){const i=get('invoices',x.invoiceId);return RecordFilters.matches({...x,tripId:i.tripId,lines:i.lines},db,opsSelection)}return RecordFilters.matches(x,db,opsSelection)});return rows.sort((a,b)=>String(b.date||b.period||b.createdAt||'').localeCompare(String(a.date||a.period||a.createdAt||'')))}
 function recordManagementPanel(){const kinds=(managedPages[page]||[]).filter(canManageKind);if(!kinds.length)return'';let kind=managedSelection[page];if(!kinds.includes(kind))kind=kinds[0];const rows=managedRows(kind);return '<details class="panel record-management"><summary><b>Manage records · Edit / Delete</b></summary><div class="toolbar"><label>Record type<select id="managedKind">'+kinds.map(k=>'<option value="'+k+'" '+(kind===k?'selected':'')+'>'+esc(managedKinds[k])+'</option>').join('')+'</select></label><span>'+rows.length+' record(s)</span></div><div class="table-wrap"><table><thead><tr><th>Record</th><th>Date / period</th><th>Status</th><th>Amount</th><th>Actions</th></tr></thead><tbody>'+(rows.length?rows.map(x=>'<tr><td>'+esc(x.number||x.reference||x.description||x.serial||x.sourceSheet||x.period&&x.employeeId&&employeeName(x.employeeId)||x.id)+'</td><td>'+esc(x.date||x.period||'—')+'</td><td>'+esc(x.status||'—')+'</td><td>'+money(x.amount??x.total??x.quotedIncome??x.net??x.charge??x.cost??0)+'</td><td>'+managedButtons(kind,x.id)+'</td></tr>').join(''):'<tr><td colspan="5">No records in this selection.</td></tr>')+'</tbody></table></div><p class="muted-copy">Deleting asks for confirmation. Linked invoice payments must be removed first. A deletion history is kept.</p></details>'}
 async function deleteManagedRecord(kind,id){
- const x=get(kind,id);if(!x.id)return notify('Record not found. Refresh the page.');let effect='Delete this '+(managedKinds[kind]||'record')+' record: '+(x.number||x.reference||x.id)+'?';if(kind==='trips')effect+=' This removes the trip and its loads. Linked invoices, costs and shunter recon references must be removed first. A deletion history is kept.';if(kind==='invoices')effect+=' Linked loads and shunter lines will be released for invoicing again. Recorded payments must be removed first.';if(kind==='payroll')effect+=' Posted loan deductions will be reversed in the loan balance. This does not reverse an actual bank transfer.';if(kind==='payments')effect+=' The invoice outstanding balance will increase. This does not reverse an actual bank transfer.';if(!confirm(effect))return;
- try{await api('/api/records/'+kind+'/'+encodeURIComponent(id),{method:'DELETE'});$('modal').classList.add('hidden');await refreshCentralState(false);notify('Record deleted; linked totals updated')}catch(e){notify(e.message)}
+ const x=get(kind,id);if(!x.id)return notify('Record not found. Refresh the page.');
+ let effect='Delete this '+(managedKinds[kind]||'record')+' record: '+(x.number||x.reference||x.id)+'?';
+ if(kind==='trips'){
+  const dieselCount=(db.diesel||[]).filter(item=>item.tripId===id).length;
+  const expenseCount=(db.expenses||[]).filter(item=>item.tripId===id).length;
+  effect='Permanently delete trip '+(x.number||x.id)+' and all its linked records?'
+    +'\n\nThis will also delete:'
+    +'\n• '+dieselCount+' diesel record(s)'
+    +'\n• '+expenseCount+' expense / MDC record(s)'
+    +'\n\nLinked invoices or shunter reconciliation references must be removed first. Other linked advances, inspections, incidents and issues also require resolution.'
+    +'\n\nA deletion history is retained. This cannot be undone from this screen.';
+ }
+ if(kind==='invoices')effect+=' Linked loads and shunter lines will be released for invoicing again. Recorded payments must be removed first.';
+ if(kind==='payroll')effect+=' Posted loan deductions will be reversed in the loan balance. This does not reverse an actual bank transfer.';
+ if(kind==='payments')effect+=' The invoice outstanding balance will increase. This does not reverse an actual bank transfer.';
+ if(!confirm(effect))return;
+ try{
+  const result=await api('/api/records/'+kind+'/'+encodeURIComponent(id),{method:'DELETE'});
+  $('modal').classList.add('hidden');await refreshCentralState(false);
+  notify(kind==='trips'?'Trip deleted · '+(result.removedDiesel||0)+' diesel and '+(result.removedExpenses||0)+' expense records removed':'Record deleted; linked totals updated');
+ }catch(e){notify(e.message)}
 }
 const recordEditFields={quotes:['number','date','status','notes'],diesel:['date','supplier','litres','total','odometer','truckId','driverId','tripId','notes','receiptStatus'],expenses:['date','supplier','category','amount','truckId','driverId','tripId','notes','status','mdcKm','mdcRatePer100km'],monthlyPnlSnapshots:['period','sourceSheet','notes'],maintenance:['date','truckId','type','supplier','odometer','cost','nextService','status','notes'],tyres:['serial','truckId','position','brand','fittedKm','currentKm','cost','status'],inspections:['date','truckId','driverId','tripId','type','score','defects','status'],incidents:['date','truckId','driverId','tripId','type','severity','description','status','action'],advances:['date','driverId','tripId','type','amount','status'],payments:['date','amount','method','reference','proof'],tripIssues:['date','truckId','driverId','tripId','description','status']};
 function editManagedRecord(kind,id){
