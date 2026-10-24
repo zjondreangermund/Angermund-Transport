@@ -26,11 +26,11 @@ function plan(input,state){
  if(isRename(q)){
   const oldMatches=matchesTrip(q.split(/\b(?:to|as|into)\b/i)[0],trips).sort((a,b)=>String(b.number).length-String(a.number).length);
   // The source trip must be clear, and a destination cannot be another existing trip.
-  if(oldMatches.length!==1)return{error:'Please give the exact existing trip reference (for example: Change trip AT-1001 number to AT-1201).'};
-  const trip=oldMatches[0];
+  let trip=oldMatches[0];
+  if(oldMatches.length!==1){try{trip=require('./assistant-trip-resolver').resolve(state,q.split(/\b(?:to|as|into)\b/i)[0])}catch(e){return{error:e.message}}}
   const re=new RegExp('(?:\\bto\\b|\\bas\\b|\\binto\\b)\\s+(?:trip\\s+)?(?:number\\s+)?([A-Z0-9][A-Z0-9._/-]{1,39})\\b','ig');
   const candidates=[...q.matchAll(re)];
-  if(candidates.length!==1)return{error:'Please give the new trip number after “to”, for example: Change trip '+trip.number+' number to AT-1201.'};
+  if(candidates.length!==1)return{error:'Give the new load reference after “to”, using the actual reference you want for this trip.'};
   const next=candidates[0][1].trim().toUpperCase();
   if(!/^[A-Z0-9][A-Z0-9._/-]{1,39}$/.test(next))return{error:'The new trip number is invalid.'};
   if(clean(next)===clean(trip.number))return{error:'That trip already has this number.'};

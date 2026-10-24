@@ -1,6 +1,7 @@
 'use strict';
 // Plans contain data only. The server owns permissions, resolution and execution.
 const crypto=require('node:crypto');
+const TruckTrip=require('./assistant-trip-resolver');
 const Records=require('./record-management');
 const Diesel=require('./manual-diesel');
 const Costing=require('./public/quote-costing');
@@ -35,9 +36,10 @@ function catalog(role){
  ].filter(([o,c])=>can(role,o,c)&&(o!=='edit'||Records.schema[c]||['invoices','trips'].includes(c))).map(([operation,collection,description])=>({operation,collection,page:pages[collection],description}));
 }
 function resolve(state,collection,text){
+ if(collection==='trips')return TruckTrip.resolve(state,text);
  const rows=state[collection]||[],s=key(text);
  if(!s)fail('Specify the exact '+collection+' reference or record ID.');
- const matches=rows.filter(r=>[r.id,r.number,r.slip,r.receiptNo,r.reference,r.fleetName,r.registration,r.name,r.serial].some(v=>v&&(key(v)===s||(collection==='trucks'&&key(v).replace(/[^a-z0-9]/g,'')===s.replace(/[^a-z0-9]/g,'')))));
+ const matches=rows.filter(r=>[r.id,r.number,r.slip,r.receiptNo,r.reference,r.fleetName,r.registration,r.name,r.serial].some(v=>v&&(key(v)===s||(collection==='trucks'&&(key(v).replace(/[^a-z0-9]/g,'')===s.replace(/[^a-z0-9]/g,'')||/^\d+$/.test(s)&&/^ang[\s-]*\d+$/i.test(String(v))&&Number(String(v).match(/\d+/)[0])===Number(s))))));
  if(matches.length!==1)fail(matches.length?'More than one record matches '+text+'. Use its exact record ID.':'No '+collection+' record matches '+text+'. Use the exact saved reference or record ID.');
  return matches[0];
 }
@@ -55,8 +57,9 @@ function linked(s,v){
 function parse(text){
  const q=String(text||'').trim();let m;
  if(m=/^(?:delete|remove)\s+(quotation|quote|invoice|diesel|fuel|expense|maintenance|trip|loan|payroll|tyre|inspection|incident|payment|overhead)\s+(.+)$/i.exec(q))return{operation:'delete',collection:singular[key(m[1])],target:m[2].trim(),values:{}};
- if(m=/^(?:edit|change|set|update)\s+(quotation|quote|invoice|diesel|fuel|expense|maintenance|trip|tyre|inspection|incident|payment|overhead)\s+(\S+)\s+(date|due|notes|supplier|litres|total|amount|odometer|reference|number|description|cost|load|tons|pallets|distance|namibiaKm|agreedAmount)\s+(?:to\s+)?(.+)$/i.exec(q))return{operation:'edit',collection:singular[key(m[1])],target:m[2],values:{[key(m[3])]:m[4]}};
- if(m=/^(?:create|generate|make)\s+(?:an?\s+)?invoice\s+(?:for\s+)?trip\s+(\S+)(?:\s+leg\s+(\S+))?$/i.exec(q))return{operation:'invoice',collection:'invoices',target:m[1],values:{leg:m[2]||''}};
+ if(m=/^(?:edit|change|set|update)\s+(quotation|quote|invoice|diesel|fuel|expense|maintenance|trip|tyre|inspection|incident|payment|overhead)\s+(.+?)\s+(date|due|notes|supplier|litres|total|amount|odometer|reference|number|description|cost|load|tons|pallets|distance|namibiaKm|agreedAmount)\s+(?:to\s+)?(.+)$/i.exec(q))return key(m[1])==='trip'&&key(m[3])==='number'?null:{operation:'edit',collection:singular[key(m[1])],target:m[2],values:{[key(m[3])]:m[4]}};
+ if(m=/^invoice\s+(?:for\s+)?(?:truck\s+)?(ANG[\s-]*\d+)(?:\s+leg\s+(\d+))?$/i.exec(q))return{operation:'invoice',collection:'invoices',target:m[1],values:{leg:m[2]||''}};
+ if(m=/^(?:create|generate|make)\s+(?:an?\s+)?invoice\s+(?:for\s+)?(?:trip|truck)\s+(.+?)(?:\s+leg\s+(\S+))?$/i.exec(q))return{operation:'invoice',collection:'invoices',target:m[1],values:{leg:m[2]||''}};
  if(m=/^(?:create|generate|make)\s+NBL\s+(consolidated|shunter)\s+invoice\s+(?:for\s+)?(20\d{2}-\d{2})$/i.exec(q))return{operation:m[1].toLowerCase()==='shunter'?'shunter_invoice':'nbl_invoice',collection:'invoices',values:{period:m[2],cycleMonth:m[2]}};
  if(m=/^(?:assign|move|link)\s+(?:slip|receipt)\s+(\S+)\s+to\s+(truck|trip)\s+(.+)$/i.exec(q))return{operation:'receipt_assign',collection:'expenses',target:m[1],values:{[key(m[2])]:m[3]}};
  const target=/\b(truck|trip)\s+([A-Za-z0-9][A-Za-z0-9 ._/-]*?)(?=\s+(?:on|date|for|from|supplier|odometer|total|litres|at|slip|leg)\b|[,;]|$)/i.exec(q);
@@ -69,7 +72,7 @@ function parse(text){
  if(/\b(?:create|generate|make)\b/i.test(q)&&/\b(?:quote|quotation|tender)\b/i.test(q)){
   return{operation:'quote',collection:'quotes',values:{...values,client:/\bclient\s+"([^"]+)"/i.exec(q)?.[1],route:/\broute\s+"([^"]+)"/i.exec(q)?.[1]}};
  }
- if(/\b(?:attach|upload|link|assign|add)\b/i.test(q)&&/\bPOD\b/i.test(q))return{operation:'pod',collection:'trips',target:values.trip,values:{...values,leg:/\bleg\s+(\S+)/i.exec(q)?.[1]||''}};
+ if(/\b(?:attach|upload|link|assign|add)\b/i.test(q)&&/\bPOD\b/i.test(q))return{operation:'pod',collection:'trips',target:values.trip||values.truck,values:{...values,leg:/\bleg\s+(\S+)/i.exec(q)?.[1]||''}};
  if(/\b(?:record|capture|add|bought|filled)\b/i.test(q)&&/\b(?:diesel|disel|fuel)\b/i.test(q)){
   values.litres=Number(/\b(\d+(?:\.\d+)?)\s*(?:L\b|litres?\b|liters?\b)/i.exec(q)?.[1]||0);if(values.litres===0)delete values.litres;values.total=values.amount;delete values.amount;if(values.total===undefined)delete values.total;
   values.slip=/\bslip\s+(\S+)/i.exec(q)?.[1]||'';
@@ -88,7 +91,7 @@ function plan(request,s,role,attachment=false){
  if(canonical&&c!==canonical)fail('Unsupported record type for '+op+'.');
  if(!can(role,op,c))fail('Your account cannot perform this operation.',403);
  const v=safeValues(request.values);
- const fields={trip:['route','client','truck','driver','date','income','load','tons','pallets','startKm'],maintenance:['truck','date','type','supplier','cost','odometer','notes'],expense:['trip','truck','date','amount','category','supplier','receiptNo','notes'],diesel:['trip','truck','date','litres','total','price','odometer','supplier','slip','receiptNo','notes'],pod:['trip','leg'],receipt_assign:['trip','truck'],invoice:['trip','leg'],nbl_invoice:['cycleMonth','period','periodStart','periodEnd'],shunter_invoice:['period','cycleMonth'],quote:['route','client','date','amount','actualKm','namibiaKm','tenderKm','load','costInputs']};
+ const fields={trip:['route','client','truck','driver','date','income','load','tons','pallets','startKm'],maintenance:['truck','date','type','supplier','cost','odometer','notes'],expense:['trip','truck','date','amount','category','supplier','receiptNo','notes'],diesel:['trip','truck','date','litres','total','price','odometer','supplier','slip','receiptNo','notes'],pod:['trip','truck','date','leg'],receipt_assign:['trip','truck'],invoice:['trip','truck','date','leg'],nbl_invoice:['cycleMonth','period','periodStart','periodEnd'],shunter_invoice:['period','cycleMonth'],quote:['route','client','date','amount','actualKm','namibiaKm','tenderKm','load','costInputs']};
  if(fields[op]&&Object.keys(v).some(k=>!fields[op].includes(k)))fail('Unsupported input for '+op+'.');
  const p={kind:'platform',operation:op,collection:c,actorRole:role,page:pages[c],values:v,checks:[],old:'No record',next:'New record',warning:'Review all details before saving. Nothing is saved until approval.'};
  const check=(collection,row)=>{p.checks.push({collection,id:row.id,hash:snapshot(row)});return row};
@@ -128,11 +131,11 @@ function plan(request,s,role,attachment=false){
   p.warning='Captured as '+(attachment?'Review with attached slip.':'Receipt missing; attach proof later.')+' This does not approve spending or make a payment.';
  }else if(op==='pod'){
   if(!attachment)fail('Attach the POD photo or PDF in chat.');
-  const t=check('trips',resolve(s,'trips',request.target||v.trip));p.tripId=t.id;
+  const t=check('trips',TruckTrip.resolve(s,(request.target||v.trip||v.truck||'')+(v.date?' on '+v.date:''),'pod'));p.tripId=t.id;
   const ls=t.legs||[];const l=v.leg?ls.find(l=>[l.id,String(l.sequence),l.label].some(x=>key(x)===key(v.leg))):ls.length===1?ls[0]:null;
   if(ls.length>1&&!l)fail('This trip has multiple loads. Include leg number or exact leg ID.');
   if(t.pod&&!ls.length||l?.pod)fail('POD already recorded. Use the trip document editor to replace it.');
-  p.values={legId:l?.id||''};p.description='Attach POD to '+t.number+(l?' · '+l.label:'');p.warning='Records delivery evidence. Trip completion still requires arrival at Angermund depot.';
+  p.values={legId:l?.id||''};p.description='Attach POD to '+((s.trucks||[]).find(x=>x.id===t.truckId)?.fleetName||t.number)+' · '+(t.date||'')+(l?' · '+l.label:'');p.warning='Records delivery evidence. Trip completion still requires arrival at Angermund depot.';
  }else if(op==='receipt_assign'){
   const matches=['diesel','expenses'].flatMap(c=>(s[c]||[]).filter(r=>[r.id,r.slip,r.receiptNo].some(x=>x&&key(x)===key(request.target))).map(row=>({c,row})));
   if(matches.length!==1)fail('Specify one exact posted slip/receipt number or record ID.');
@@ -140,10 +143,10 @@ function plan(request,s,role,attachment=false){
   if(row.mdc)fail('Use the MDC workflow for this receipt.');
   check(source,row);const ctx=link();if(ctx.trip?.legs?.length>1)fail('Select the exact destination load in the slip editor for a multi-load trip.');p.collection=source;p.entityId=row.id;p.values={tripId:ctx.tripId,truckId:ctx.truckId,driverId:ctx.driverId};p.description='Assign '+(row.slip||row.receiptNo||row.id)+' to '+(v.trip||v.truck);p.old=row.tripId||row.truckId;p.next=v.trip||v.truck;
  }else if(op==='invoice'){
-  const t=check('trips',resolve(s,'trips',request.target||v.trip));const ls=t.legs||[];
+  const t=check('trips',TruckTrip.resolve(s,(request.target||v.trip||v.truck||'')+(v.date?' on '+v.date:''),'invoice'));const ls=t.legs||[];
   const l=v.leg?ls.find(l=>[l.id,String(l.sequence),l.label].some(x=>key(x)===key(v.leg))):ls.length===1?ls[0]:null;
   if(ls.length>1&&!l)fail('Specify the journey leg number for this multi-load trip.');
-  p.tripId=t.id;p.values={legId:l?.id||''};p.description='Generate invoice for '+t.number+(l?' · '+l.label:'');
+  p.tripId=t.id;p.values={legId:l?.id||''};p.description='Generate invoice for '+((s.trucks||[]).find(x=>x.id===t.truckId)?.fleetName||t.number)+' · '+(t.date||'')+(l?' · '+l.label:'');
  }else if(op==='nbl_invoice'||op==='shunter_invoice'){
   if(op==='shunter_invoice'&&!/^20\d{2}-(0[1-9]|1[0-2])$/.test(v.period||''))fail('Specify shunter billing period YYYY-MM.');
   if(op==='nbl_invoice'&&!/^20\d{2}-(0[1-9]|1[0-2])$/.test(v.cycleMonth||'')){date(v.periodStart);date(v.periodEnd);if(v.periodStart>v.periodEnd)fail('Invalid billing range.');}
@@ -223,6 +226,7 @@ function read(message,s,role){
  const noun=m?key(m[1]).replace(/s$/,''):'quote',c=singular[noun]||({maintenance:'maintenance',payroll:'payroll',diesel:'diesel'})[noun];
  if(!c||!Records.allowed(c,role))return{answer:'Your account cannot view those records.',page:null,source:'record-permission'};
  const term=key(m?.[2]||'');
+ if(c==='trips'&&/\bang[\s-]*\d+\b|\btruck\b/i.test(term)){try{const t=TruckTrip.resolve(s,term),truck=(s.trucks||[]).find(x=>x.id===t.truckId),route=(s.routes||[]).find(x=>x.id===t.routeId);return{answer:[truck?.fleetName,t.date,route?.name||t.load,t.status].filter(Boolean).join(' · '),page:'trips',source:'live-records'}}catch(e){return{answer:e.message,page:'trips',source:'operation-clarification'}}}
  const rows=(s[c]||[]).filter(r=>!term||[r.id,r.number,r.slip,r.receiptNo,r.reference,r.supplier,r.status,r.date,r.period].some(v=>key(v).includes(term))).slice(0,12);
  const lines=rows.map(r=>[r.number||r.slip||r.receiptNo||r.id,r.date||r.period,r.status,r.supplier,r.amount!==undefined?'N$ '+r.amount:r.quotedIncome!==undefined?'Quote N$ '+r.quotedIncome:r.litres!==undefined?r.litres+' L':'',r.costing?'Cost N$ '+r.estimatedCost+'; profit N$ '+r.expectedProfit+'; '+r.distance+' actual km':'',r.id].filter(Boolean).join(' · '));
  return{answer:(tender?'Tender pricing uses saved route quotations with diesel, Namibia MDC, driver, maintenance, tyres, overhead and margin breakdowns. Confirm distances, empty travel and costs before submission. Saved quotations:\n':'Current '+c+':\n')+(lines.join('\n')||'No matching records.')+'\nUse an exact reference or ID when requesting a change.',page:pages[c],source:'live-records'};

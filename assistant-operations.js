@@ -14,7 +14,7 @@ function person(s,q,kind='employee'){
  const found=full.length?full:rows.filter(x=>x.name&&has(q,String(x.name).trim().split(/\s+/)[0]));
  return found.length===1?{row:found[0]}:{error:found.length?'More than one person matched. Specify the full name.':'No unique '+kind+' found. Enter the exact name used in Angermund.'};
 }
-function ref(s,q){const found=(s.trips||[]).filter(x=>x.number&&T.tokenPresent(q,x.number));return found.length===1?{row:found[0]}:{error:found.length?'Multiple trip numbers detected. Specify one trip.':'Enter the exact trip number.'}}
+function ref(s,q){try{return{row:require('./assistant-trip-resolver').resolve(s,q)}}catch(e){return{error:e.message}}}
 function truck(s,q){const found=(s.trucks||[]).filter(x=>x.fleetName&&T.tokenPresent(q,x.fleetName)||x.registration&&T.tokenPresent(q,x.registration));return found.length===1?{row:found[0]}:{error:found.length?'Multiple trucks detected. Specify one truck.':'Enter a fleet number, for example ANG 12.'}}
 function kind(q){
  if(/\b(?:loan|advance)\b/i.test(q)){
@@ -22,7 +22,7 @@ function kind(q){
   if(/\b(?:add|create|give|record|new|issue)\b/i.test(q))return'loan_create';
  }
  if(/\b(?:create|add|record|remind)\b/i.test(q)&&/\btask\b/i.test(q))return'task_create';
- if(/\b(?:assign|reassign|change|switch|replace)\b/i.test(q)&&/\bdriver\b/i.test(q)&&/\btrip\b/i.test(q))return'trip_driver';
+ if(/\b(?:assign|reassign|change|switch|replace)\b/i.test(q)&&/\bdriver\b/i.test(q)&&/\b(?:trip|truck)\b/i.test(q))return'trip_driver';
  if(/\b(?:assign|reassign|change|switch|replace)\b/i.test(q)&&/\btruck\b/i.test(q)&&/\btrip\b/i.test(q))return'trip_truck';
  if(/\b(?:record|add|create|capture)\b/i.test(q)&&/\b(?:expense|cost|toll|parking|permit fee)\b/i.test(q))return'expense_create';
  return null;
@@ -88,7 +88,7 @@ function plan(message,s,now=Date.now()){
  }
  if(k==='expense_create'){
   const tr=ref(s,q);if(tr.error)return tr;const am=moneyAmounts(q);
-  if(am.length!==1)return err('Include one amount: Record toll expense N$450 for trip AT-101.');
+  if(am.length!==1)return err('Include one amount: Record toll expense N$450 for truck ANG 12.');
   const category=/\btolls?\b/i.test(q)?'Toll':/\bparking\b/i.test(q)?'Parking':/\b(?:permit fee|border permit)\b/i.test(q)?'Border permit':null;
   if(!category)return err('For expense entry, specify toll, parking, or permit fee.');
   return{kind:k,tripId:tr.row.id,tripNumber:tr.row.number,old:'No expense',next:'N$'+am[0]+' '+category,

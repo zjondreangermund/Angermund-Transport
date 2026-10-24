@@ -26,9 +26,9 @@ Use real references and dates from your data; test in a safe environment before 
 2. `I bought parts for truck ANG 12 on 2026-10-24 for N$1200`. Review truck/date/category/amount, cancel and verify no record. Repeat and approve; check Expenses, truck link and Receipt missing status.
 3. Attach a slip with the same request; check extracted values and filename. Approve and open the receipt. Repeat a known supplier receipt reference; it should reject a duplicate.
 4. `Record diesel 100 litres total N$2700 for truck ANG 12 on 2026-10-24 odometer 123456`. Verify cost N$2700, price N$27/L and no fabricated proof.
-5. `Assign slip PART-77 to truck ANG 12` or `Assign slip PART-77 to trip AT-101`. Confirm the old/new trip costs refresh and proof remains accessible.
-6. Attach a POD: `Attach POD to trip AT-101 leg 1`. Check the selected load, actual document and delivery state. Depot completion must not be inferred from the upload.
-7. `Create invoice for trip AT-101 leg 1`. Missing billing evidence/MDC must be explained before a preview. Approve a valid preview; reopen the invoice and check VAT/MDC.
+5. `Assign slip PART-77 to truck ANG 12` or `Assign slip PART-77 to truck ANG 12`. Confirm the old/new trip costs refresh and proof remains accessible.
+6. Attach a POD: `Attach POD to truck ANG 12 leg 1`. Check the selected load, actual document and delivery state. Depot completion must not be inferred from the upload.
+7. `Create invoice for truck ANG 12 leg 1`. Missing billing evidence/MDC must be explained before a preview. Approve a valid preview; reopen the invoice and check VAT/MDC.
 8. `Generate NBL consolidated invoice for 2026-10` and `Generate NBL shunter invoice for 2026-10`. Verify period, eligible loads and amounts.
 9. `Create quotation client "EXACT CLIENT" route "EXACT ROUTE" for N$20000 on 2026-10-24`. Save operating-cost defaults in Rates & Quotations first. Verify per-km breakdown, margin and VAT; open the saved quotation.
 10. `Edit quotation Q-1001 amount to 22000`. Verify saved selling price, expected profit, VAT and total update together. Multi-leg/legacy quotation amount changes use the quotation editor.
@@ -53,8 +53,8 @@ Grouped jobs can be written as semicolon-separated commands; natural compound in
 Batch capture accepts up to twenty images/PDFs, 12 MB each and 60 MB total. Use numbered lines such as:
 
 ```
-1: POD trip AT-101 leg 1
-2: POD trip AT-102 leg 1
+1: POD truck ANG 12 leg 1
+2: POD truck ANG 10 leg 1
 3: diesel truck ANG 12
 ```
 
@@ -78,3 +78,5 @@ Voice:
 - Android APK 1.4.5 / code 22 requests RECORD_AUDIO and grants microphone/camera only to the configured HTTPS server origin, only after Android permission approval. Old APKs need updating for the recording fallback.
 
 Additional tests cover grouped job cancellation/replay/staleness, batch POD proof, role restrictions, session separation, payment baselines, payroll delegation, master record validation, undo, profit comparison, microphone denial and cancellation during a pending permission prompt. Android unit tests cover exact-origin media permissions and resource filtering. A real microphone/browser speech service, live model/OCR round trip and physical Android permission flow remain device checks.
+
+Truck numbers are the preferred chatbot identifiers. Invoice/POD/assignment/note actions resolve a real load from the fleet number; if several loads match, supply its date or an actual saved load reference. Existing saved load references are preserved. No example AT-101 record is assumed.

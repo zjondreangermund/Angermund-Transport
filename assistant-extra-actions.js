@@ -11,15 +11,13 @@ const can=(role,kind)=>(perms[kind]||[]).includes(role);
 function kind(text){
  const q=String(text||'');
  if(/\b(?:mark|set|move|change|update|assign)\b/i.test(q)&&/\btask\b/i.test(q))return'task_update';
- if(/\b(?:add|append|record)\b/i.test(q)&&/\bnote\b/i.test(q)&&/\btrip\b/i.test(q))return'trip_note';
- if(/\b(?:set|change|update|add)\b/i.test(q)&&/\b(?:order|customer|source)\s+(?:reference|ref)\b/i.test(q)&&/\btrip\b/i.test(q))return'trip_reference';
+ if(/\b(?:add|append|record)\b/i.test(q)&&/\bnote\b/i.test(q)&&/\b(?:trip|truck)\b/i.test(q))return'trip_note';
+ if(/\b(?:set|change|update|add)\b/i.test(q)&&/\b(?:order|customer|source)\s+(?:reference|ref)\b/i.test(q)&&/\b(?:trip|truck)\b/i.test(q))return'trip_reference';
  return null;
 }
 function fail(s){return{error:s}}
-function trip(s,q){
- const xs=(s.trips||[]).filter(t=>t.number&&Trip.tokenPresent(q,t.number));
- return xs.length===1?{row:xs[0]}:{error:xs.length?'Multiple trip numbers detected; mention one trip.':'Include the exact trip number.'};
-}
+function trip(s,q){try{return{row:require('./assistant-trip-resolver').resolve(s,q)}}catch(e){return{error:e.message}}}
+
 function task(s,q){
  const quoted=/"([^"]{3,180})"/.exec(q)?.[1];
  const xs=(s.tasks||[]).filter(t=>t.title&&(quoted?key(t.title)===key(quoted):(' '+key(q)+' ').includes(' '+key(t.title)+' ')));
@@ -65,8 +63,8 @@ function plan(query,s){
  }
  const found=trip(s,q);if(found.error)return found;const t=found.row;
  if(k==='trip_note'){
-  const match=/\b(?:add|append|record)\s+(?:a\s+)?note\s+(?:to|for)\s+trip\s+[^:]+:\s*(.+)$/i.exec(q);
-  if(!match)return fail('Use: Add note to trip AT-101: Driver expects arrival at 14:00.');
+  const match=/\b(?:add|append|record)\s+(?:a\s+)?note\s+(?:to|for)\s+(?:trip|truck)\s+[^:]+:\s*(.+)$/i.exec(q);
+  if(!match)return fail('Use: Add note to truck ANG 12: Driver expects arrival at 14:00.');
   const note=match[1].trim();
   if(note.length<4||note.length>400)return fail('Trip note must be between 4 and 400 characters.');
   const old=String(t.notes||'');
@@ -79,7 +77,7 @@ function plan(query,s){
  }
  if(k==='trip_reference'){
   const m=/\b(?:to|as|:)\s*([A-Za-z0-9][A-Za-z0-9._/-]{1,99})\s*$/i.exec(q);
-  if(!m)return fail('Use: Set order reference for trip AT-101 to NBL-12345.');
+  if(!m)return fail('Use: Set order reference for truck ANG 12 to YOUR-ORDER-REF.');
   const value=m[1].trim();if(!/^[a-zA-Z0-9][A-Za-z0-9._/-]{1,99}$/.test(value))return fail('Invalid order reference.');
   const old=String(t.sourceOrderRef||'');
   if(key(old)===key(value))return fail('Trip already has that order reference.');

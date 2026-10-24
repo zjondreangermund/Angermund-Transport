@@ -156,7 +156,7 @@ function install(app,h){
    try{
     if(!/^(image\/(jpeg|png|webp)|application\/pdf)$/.test(file.mimetype))fail('Unsupported document type.');
     if(/\bPOD\b/i.test(mapping)){
-     const found=(state.trips||[]).filter(t=>T.tokenPresent(mapping+' '+file.originalname,t.number));if(found.length!==1)fail('Specify one exact trip for this POD (use numbered lines).');const leg=/\bleg\s+(\d+)\b/i.exec(mapping)?.[1]||'';requests.push({operation:'pod',collection:'trips',target:found[0].number,values:{leg},document:file,fingerprint});
+     const found=[require('./assistant-trip-resolver').resolve(state,mapping+' '+file.originalname,'pod')];const leg=/\bleg\s+(\d+)\b/i.exec(mapping)?.[1]||'';requests.push({operation:'pod',collection:'trips',target:found[0].number,values:{leg},document:file,fingerprint});
     }else{
      const scan=await h.scan(file.buffer,file.mimetype,state),x=scan.extracted||{},fuel=x.category==='Diesel'||/\b(?:diesel|disel|fuel)\b/i.test(mapping),trips=(state.trips||[]).filter(t=>T.tokenPresent(mapping+' '+file.originalname,t.number)),trucks=(state.trucks||[]).filter(t=>[t.fleetName,t.registration].some(v=>v&&(T.tokenPresent(mapping,v)||x.registration&&keyPlate(x.registration)===keyPlate(v))));
      if(trips.length>1||trucks.length>1||!trips.length&&!trucks.length)fail('No unique truck/trip match. Add a numbered line with its exact reference.');
@@ -168,7 +168,7 @@ function install(app,h){
    }catch(e){errors.push(file.originalname+': '+e.message);}
   }
   // Do not silently save only part of a mixed/ambiguous batch.
-  if(errors.length)fail('Batch needs review; nothing saved:\n'+errors.join('\n')+'\nUse lines like “1: POD trip AT-101 leg 1” and “2: diesel truck ANG 12”.');
+  if(errors.length)fail('Batch needs review; nothing saved:\n'+errors.join('\n')+'\nUse lines like “1: POD truck ANG 12 leg 1” and “2: diesel truck ANG 12”.');
   await stage(req,res,requests,'Capture '+requests.length+' documents');
  }
  const keyPlate=x=>String(x||'').toUpperCase().replace(/[^A-Z0-9]/g,'');
