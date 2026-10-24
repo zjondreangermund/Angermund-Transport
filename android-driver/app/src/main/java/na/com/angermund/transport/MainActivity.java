@@ -682,7 +682,28 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
-        public void openTrackingSettings() { runOnUiThread(MainActivity.this::openGpsSetup); }
+        public void openTrackingSettings() {
+            runOnUiThread(() -> {
+                try { openGpsSetup(); }
+                catch (Exception e) {
+                    toast("Opening Android app settings");
+                    try { startActivity(new Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:" + getPackageName()))); }
+                    catch (Exception ignored) { toast("Open Angermund Transport permissions from Android Settings"); }
+                }
+            });
+        }
+
+        @JavascriptInterface
+        public void refreshTrackingStatus() {
+            // Run on the main thread: a minimized app may have a stopped GPS
+            // service even while tracking is still enabled in preferences.
+            runOnUiThread(() -> {
+                if (prefs().getBoolean("gps_enabled", false) && hasForegroundLocation()) {
+                    startStoredServiceIfEnabled();
+                }
+            });
+        }
 
         @JavascriptInterface
         public String getGpsStatus() {
