@@ -1549,3 +1549,13 @@ html.modal-open{overflow:hidden!important}@media(max-width:760px){html:has(#side
 html:fullscreen{height:100%;background:#07111f}
 html:fullscreen body{min-height:100%;width:100%}
 html:fullscreen body>main#app{width:100%!important;max-width:100vw!important}
+
+/* Create-trip manual route option (keeps Android's long native route picker optional). */
+.trip-route-entry-switch{display:flex;flex-direction:column;align-items:flex-start;gap:6px}
+.trip-route-entry-switch button{min-height:44px;padding:11px 15px;touch-action:manipulation}
+.trip-route-entry-switch small{color:var(--muted,#adc3d7);line-height:1.5}
+.trip-manual-route-fields{grid-column:1/-1;width:100%;padding:14px;border:1px solid #30628c;border-radius:12px;background:rgba(28,77,117,.15);gap:12px}
+.trip-manual-route-fields[hidden],.form-grid>.field[hidden]{display:none!important}
+.trip-manual-route-fields>.field.full,.trip-manual-help{grid-column:1/-1}
+.trip-manual-help{margin:0;color:var(--muted,#b7cddd);font-size:12px;line-height:1.5}
+@media(max-width:640px){.trip-manual-route-fields{grid-template-columns:1fr!important;padding:12px}.trip-manual-route-fields>.field{grid-column:1/-1}}
