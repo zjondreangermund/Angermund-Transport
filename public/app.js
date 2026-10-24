@@ -3689,7 +3689,7 @@ function refreshNativeGpsStatus(){
 }
 setInterval(()=>{if(!document.hidden)refreshNativeGpsStatus()},10000);
 // Native GPS status buttons are wired directly after every render or status update.
-function forceAndroidInstallPrompt(message='Latest Android app: v1.4.3'){
+function forceAndroidInstallPrompt(message='Latest Android app: v1.4.4'){
   if(!$('appInstallPrompt'))return;
   if($('appInstallStatus'))$('appInstallStatus').innerHTML='<b>'+esc(message)+'</b><br><span>Download and install the APK. Android may ask you to allow installs from this browser.</span>';
   $('appInstallPrompt').classList.remove('hidden')
