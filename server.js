@@ -1429,7 +1429,7 @@ app.put('/api/state',auth,roles('admin','manager','dispatcher','workshop','finan
 
 app.delete('/api/records/:kind/:id',auth,async(req,res)=>{
  if(!canManageRecord(req.params.kind,req.user.role))return res.status(403).json({error:'You do not have permission to delete this record'});
- try{const changed=await mutateOpsState(state=>{const result=deleteRecord(state,req.params.kind,req.params.id,req.user.name||req.user.email||req.user.role);if(result.tripId){const trip=(state.trips||[]).find(t=>t.id===result.tripId);if(trip)recalcTripCosts(state,trip)}return{deleted:result.deleted,kind:result.kind,id:result.id}});res.json(changed.result)}catch(e){res.status(e.status||500).json({error:e.message})}
+ try{const changed=await mutateOpsState(state=>{const result=deleteRecord(state,req.params.kind,req.params.id,req.user.name||req.user.email||req.user.role);if(result.tripId){const trip=(state.trips||[]).find(t=>t.id===result.tripId);if(trip)recalcTripCosts(state,trip)}return{deleted:result.deleted,kind:result.kind,id:result.id,removedDiesel:result.removedDiesel||0,removedExpenses:result.removedExpenses||0}});res.json(changed.result)}catch(e){res.status(e.status||500).json({error:e.message})}
 });
 app.patch('/api/records/:kind/:id',auth,async(req,res)=>{
  if(!canManageRecord(req.params.kind,req.user.role))return res.status(403).json({error:'You do not have permission to edit this record'});

@@ -18,11 +18,50 @@ function deleteRecord(state,kind,id,actor='Admin'){
   for(const r of state.shunterRecons||[])if(r.invoiceId===id){related.push({kind:'shunterRecons',record:structuredClone(r)});r.invoiceId=''}
  }
  if(kind==='trips'){
-  if(row.invoiceId||(row.invoiceIds||[]).length||(row.legs||[]).some(l=>l.invoiceId)||(state.invoices||[]).some(i=>i.tripId===id||(i.tripIds||[]).includes(id)||(i.lines||[]).some(l=>l.tripId===id)))fail('Delete the linked invoice first; its loads will be released.');
-  for(const key of ['diesel','expenses','advances','inspections','incidents','tripIssues'])if((state[key]||[]).some(x=>x.tripId===id))fail('Remove linked '+key+' records before deleting this trip.');
+  // Protect invoices before removing any costs. Invoiced MDC rows can be
+  // referenced through mdcLines rather than the main invoice tripId.
+  if(row.invoiceId||(row.invoiceIds||[]).length||(row.legs||[]).some(l=>l.invoiceId)||
+    (state.invoices||[]).some(i=>i.tripId===id||(i.tripIds||[]).includes(id)||
+      (i.lines||[]).some(l=>l.tripId===id)||(i.mdcLines||[]).some(l=>l.tripId===id)))
+    fail('Delete the linked invoice first; its loads and invoiced road charges will be released.');
+  // Keep existing protections for other business records outside this
+  // request. They must be resolved before the trip can be removed.
+  for(const key of ['advances','inspections','incidents','tripIssues'])
+    if((state[key]||[]).some(x=>x.tripId===id))fail('Remove linked '+key+' records before deleting this trip.');
   const refs=[row.externalTmsId,row.sourceTmsId,row.carrierDetails?.tmsId,String(row.number||'').replace(/^NBL[-\s]*/i,'')].filter(Boolean).map(String);
-  if((state.shunterRecons||[]).some(r=>(r.id===row.shunterReconId)||((!r.truckId||r.truckId===row.truckId)&&(r.tmsIds||[]).some(ref=>refs.includes(String(ref))))))fail('Remove this trip reference from Shunter Recon first, so its charges are not left behind.');
-  for(const r of state.tasks||[])if(r.linkedType==='trip'&&r.linkedId===id){r.linkedType='';r.linkedId=''}
+  if((state.shunterRecons||[]).some(r=>(r.id===row.shunterReconId)||((!r.truckId||r.truckId===row.truckId)&&(r.tmsIds||[]).some(ref=>refs.includes(String(ref))))))
+    fail('Remove this trip reference from Shunter Recon first, so its charges are not left behind.');
+
+  // Atomic cascade: all matching diesel/expense/MDC records disappear with
+  // the trip; unaffected trips retain their own records. Keep full snapshots
+  // in recordHistory for an accountable deletion trail.
+  const legIds=new Set((row.legs||[]).map(leg=>String(leg.id||'')).filter(Boolean));
+  const belongsToTrip=x=>x.tripId===id||(!x.tripId&&x.legId&&legIds.has(String(x.legId)));
+  const deletedDiesel=(state.diesel||[]).filter(belongsToTrip);
+  const deletedExpenses=(state.expenses||[]).filter(belongsToTrip);
+  const deletedExpenseIds=new Set(deletedExpenses.map(x=>x.id));
+  for(const item of deletedDiesel)related.push({kind:'diesel',record:structuredClone(item)});
+  for(const item of deletedExpenses)related.push({kind:'expenses',record:structuredClone(item)});
+  state.diesel=(state.diesel||[]).filter(x=>!belongsToTrip(x));
+  state.expenses=(state.expenses||[]).filter(x=>!belongsToTrip(x));
+  // The related expense may originate from a task or approval; clear any
+  // links which would otherwise point to a now-deleted expense.
+  for(const task of state.tasks||[]){
+    if(deletedExpenseIds.has(task.expenseId)){
+      related.push({kind:'task',record:structuredClone(task)});
+      task.expenseId='';task.expenseAmount=0;task.fundsUsed=false;
+    }
+    if(task.linkedType==='trip'&&task.linkedId===id){task.linkedType='';task.linkedId=''}
+  }
+  if(Array.isArray(state.approvals)){
+    for(const approval of state.approvals){
+      if(approval.linkedType==='expense'&&deletedExpenseIds.has(approval.linkedId)){
+        related.push({kind:'approval',record:structuredClone(approval)});
+        approval.linkedType='';approval.linkedId='';
+        if(approval.status==='Pending')approval.status='Cancelled';
+      }
+    }
+  }
  }
  if(kind==='shunterRecons'&&(row.invoiceId||(state.invoices||[]).some(i=>(i.lines||[]).some(l=>l.shunterReconId===id))))fail('Delete the linked shunter invoice first.');
  if(kind==='shunterRecons')for(const trip of state.trips||[])if(trip.shunterReconId===id)delete trip.shunterReconId;
@@ -37,7 +76,7 @@ function deleteRecord(state,kind,id,actor='Admin'){
  if(kind==='diesel'){const t=(state.trips||[]).find(t=>t.id===row.tripId);if(t&&!(state.diesel||[]).some(f=>f.tripId===t.id))t.dieselCost=0}
  for(const task of state.tasks||[])if(task.expenseId===id&&kind==='expenses'){task.expenseId='';task.expenseAmount=0;task.fundsUsed=false}
  state.recordDeletionVersion=require('node:crypto').randomUUID();
- return{deleted:true,kind,id,tripId:row.tripId||'',record:row};
+ return{deleted:true,kind,id,tripId:row.tripId||'',record:row,removedDiesel:kind==='trips'?related.filter(x=>x.kind==='diesel').length:0,removedExpenses:kind==='trips'?related.filter(x=>x.kind==='expenses').length:0};
 }
 function editRecord(state,kind,id,body,actor='Admin'){
  const row=find(state,kind,id);if(!schema[kind])fail('Use the linked record editor for this item.');
