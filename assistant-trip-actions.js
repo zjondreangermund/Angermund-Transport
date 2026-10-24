@@ -24,7 +24,7 @@ function plan(input,state){
  const q=String(input||'').trim(),trips=state?.trips||[],trucks=state?.trucks||[];
  if(!attempt(q))return null;
  if(isRename(q)){
-  const oldMatches=matchesTrip(q,trips).sort((a,b)=>String(b.number).length-String(a.number).length);
+  const oldMatches=matchesTrip(q.split(/\b(?:to|as|into)\b/i)[0],trips).sort((a,b)=>String(b.number).length-String(a.number).length);
   // The source trip must be clear, and a destination cannot be another existing trip.
   if(oldMatches.length!==1)return{error:'Please give the exact existing trip reference (for example: Change trip AT-1001 number to AT-1201).'};
   const trip=oldMatches[0];
