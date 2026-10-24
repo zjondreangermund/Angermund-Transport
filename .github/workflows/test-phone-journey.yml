@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - 'phone-test-journey.js'
+      - 'public/android-update.js'
+      - 'test/android-update.test.js'
       - 'push-delivery-policy.js'
       - 'test/push-delivery-policy.test.js'
       - 'test/phone-test-journey.test.js'
@@ -14,6 +16,8 @@ on:
     branches: [main]
     paths:
       - 'phone-test-journey.js'
+      - 'public/android-update.js'
+      - 'test/android-update.test.js'
       - 'push-delivery-policy.js'
       - 'test/push-delivery-policy.test.js'
       - 'test/phone-test-journey.test.js'
@@ -32,4 +36,4 @@ jobs:
       - name: Check JavaScript syntax
         run: npm run check
       - name: Test isolated phone milestones and existing driver tracking
-        run: node --test test/phone-test-journey.test.js test/phone-trip-tracking.test.js test/push-delivery-policy.test.js
+        run: node --test test/phone-test-journey.test.js test/phone-trip-tracking.test.js test/push-delivery-policy.test.js test/android-update.test.js
