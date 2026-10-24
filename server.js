@@ -5,6 +5,7 @@ const SiteAssistant=require('./public/site-assistant-core');
 const AssistantTripActions=require('./assistant-trip-actions');
 const AssistantOps=require('./assistant-operations');
 const AssistantExtra=require('./assistant-extra-actions');
+const AssistantPlatform=require('./assistant-platform');
 const AssistantInsights=require('./assistant-live-insights');
 const PushDelivery=require('./push-delivery-policy');
 const TripSites=require('./trip-site-geofences');
@@ -1642,7 +1643,7 @@ async function repairEditedLoadWorkflow(){
 }
 async function readOpsState(){if(pool){const row=(await q('SELECT payload FROM app_state WHERE id=1'))[0];return row?.payload||{}}return memory.state||{}}
 function driverTrip(state,req){const did=req.user.driverId;if(!did){const e=Error('Driver account is not linked to a driver profile');e.status=400;throw e}const trip=(state.trips||[]).find(x=>x.id===req.params.tripId);if(!trip){const e=Error('Trip not found');e.status=404;throw e}if(trip.driverId!==did){const e=Error('This trip is not assigned to you');e.status=403;throw e}return{trip,did}}
-async function mutateOpsState(mutator){if(pool){const c=await pool.connect();try{await c.query('BEGIN');const row=(await c.query('SELECT payload,revision FROM app_state WHERE id=1 FOR UPDATE')).rows[0]||{payload:{},revision:0};const state=row.payload||{};const result=await mutator(state);if(state.operationalCutoffVersion===OPS_CUTOFF_VERSION)pruneOperationalHistory(state);const updated=(await c.query('UPDATE app_state SET payload=$1,revision=revision+1,updated_at=now() WHERE id=1 RETURNING revision,updated_at',[state])).rows[0];await c.query('COMMIT');emit('state',{revision:updated.revision,updatedAt:updated.updated_at});return{result,revision:updated.revision}}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}const state=structuredClone(memory.state||{});const result=await mutator(state);if(state.operationalCutoffVersion===OPS_CUTOFF_VERSION)pruneOperationalHistory(state);memory.state=state;const revision=Date.now();emit('state',{revision});return{result,revision}}
+async function mutateOpsState(mutator){if(pool){const c=await pool.connect();try{await c.query('BEGIN');const row=(await c.query('SELECT payload,revision FROM app_state WHERE id=1 FOR UPDATE')).rows[0]||{payload:{},revision:0};const state=row.payload||{};const result=await mutator(state,c);if(state.operationalCutoffVersion===OPS_CUTOFF_VERSION)pruneOperationalHistory(state);const updated=(await c.query('UPDATE app_state SET payload=$1,revision=revision+1,updated_at=now() WHERE id=1 RETURNING revision,updated_at',[state])).rows[0];await c.query('COMMIT');emit('state',{revision:updated.revision,updatedAt:updated.updated_at});return{result,revision:updated.revision}}catch(e){await c.query('ROLLBACK');throw e}finally{c.release()}}const state=structuredClone(memory.state||{});const result=await mutator(state);if(state.operationalCutoffVersion===OPS_CUTOFF_VERSION)pruneOperationalHistory(state);memory.state=state;const revision=Date.now();emit('state',{revision});return{result,revision}}
 
 
 
@@ -2697,13 +2698,7 @@ app.patch('/api/payroll/:id',auth,roles('admin','manager','finance'),async(req,r
     res.json(changed.result)
   }catch(e){res.status(e.status||500).json({error:e.message})}
 });
-app.post('/api/admin/trips',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
-  try{
-    const body=req.body&&typeof req.body==='object'?req.body:{};
-    if(!body.driverId&&body.truckId){const state=await readOpsState();configureTruckDriverDefaults(state);body.driverId=defaultDriverId(state,body.truckId)}
-    const required=['date','routeId','clientId','truckId','driverId'];
-    if(required.some(k=>!body[k]))return res.status(400).json({error:'Date, route, client, truck and driver are required'});
-    const changed=await mutateOpsState(async state=>{
+async function buildPlannedTrip(state,body,actor){
       state.trips??=[];state.trucks??=[];state.drivers??=[];state.routes??=[];
       const route=state.routes.find(x=>x.id===body.routeId);
       if(!route){const e=Error('Selected route was not found');e.status=400;throw e}
@@ -2739,16 +2734,25 @@ app.post('/api/admin/trips',auth,roles('admin','manager','dispatcher'),async(req
         dieselCost:0,tolls:0,allowance:0,other:0,
         status,stage,pod:false,approved:false,settlementStatus:'Pending',
         shunter:isShunterTruckId(body.truckId),tripType:isShunterTruckId(body.truckId)?'Shunter':'Transport',
-        createdAt:new Date().toISOString(),createdBy:req.user.sub
+        createdAt:new Date().toISOString(),createdBy:actor
       };
       syncTripFromLegs(state,trip);recalcTripCosts(state,trip);
       state.trips.unshift(trip);
       truck.status=stage>=3?'On trip':'Reserved';
       driver.status=stage>=3?'On trip':'Assigned';
       state.audit??=[];
-      state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:req.user.name||req.user.email||req.user.role,action:'trip record created',linkedType:'trip',linkedId:trip.id});
+      state.audit.unshift({id:'log_'+crypto.randomUUID(),at:new Date().toISOString(),actor:actor,action:'trip record created',linkedType:'trip',linkedId:trip.id});
       state.audit=state.audit.slice(0,100);
       return trip;
+}
+app.post('/api/admin/trips',auth,roles('admin','manager','dispatcher'),async(req,res)=>{
+  try{
+    const body=req.body&&typeof req.body==='object'?req.body:{};
+    if(!body.driverId&&body.truckId){const state=await readOpsState();configureTruckDriverDefaults(state);body.driverId=defaultDriverId(state,body.truckId)}
+    const required=['date','routeId','clientId','truckId','driverId'];
+    if(required.some(k=>!body[k]))return res.status(400).json({error:'Date, route, client, truck and driver are required'});
+    const changed=await mutateOpsState(async state=>{
+      return buildPlannedTrip(state,body,req.user.name||req.user.email||req.user.sub);
     });
     const geo=await linkTripLegGeofences(changed.result.id,changed.result.legs?.[0]?.id);
     const latest=await readOpsState(),trip=(latest.trips||[]).find(x=>x.id===changed.result.id)||changed.result;
@@ -2894,12 +2898,10 @@ function buildNblShunterInvoice(state,period,custom={}){
 }
 app.post('/api/invoices/nbl/shunter',auth,roles('admin','manager','finance'),async(req,res)=>{try{const changed=await mutateOpsState(state=>buildNblShunterInvoice(state,String((req.body&&req.body.period)||''),req.body||{}));res.status(changed.result.existing?200:201).json(changed.result)}catch(e){res.status(e.status||500).json({error:e.message})}});
 
-app.post('/api/admin/trips/:tripId/legs/:legId/invoice',auth,roles('admin','manager','finance'),async(req,res)=>{
-  try{
-    const changed=await mutateOpsState(async state=>{
+function buildJourneyLegInvoice(state,tripId,legId){
       state.invoices??=[];
-      const t=(state.trips||[]).find(x=>x.id===req.params.tripId);if(!t){const e=Error('Trip not found');e.status=404;throw e}
-      const invoiceLegs=ensureTripLegs(state,t),leg=String(req.params.legId).startsWith('legacy_')?invoiceLegs[0]:invoiceLegs.find(x=>x.id===req.params.legId);if(!leg){const e=Error('Journey leg not found');e.status=404;throw e}
+      const t=(state.trips||[]).find(x=>x.id===tripId);if(!t){const e=Error('Trip not found');e.status=404;throw e}
+      const invoiceLegs=ensureTripLegs(state,t),leg=String(legId).startsWith('legacy_')?invoiceLegs[0]:invoiceLegs.find(x=>x.id===legId);if(!leg){const e=Error('Journey leg not found');e.status=404;throw e}
       if(!tripReadyForBilling(t,leg)){const e=Error('POD is required before invoicing this journey leg');e.status=409;throw e}
       const mdc=serverMdcRequirement(state,t);if(mdc.required&&!mdc.ready){const e=Error(serverMdcMissingMessage(mdc)+' before invoicing');e.status=409;throw e}
       const legClient=(state.clients||[]).find(x=>x.id===leg.clientId);
@@ -2911,6 +2913,11 @@ app.post('/api/admin/trips/:tripId/legs/:legId/invoice',auth,roles('admin','mana
       calculateInvoiceCharges(state,inv,{newInvoice:true});state.invoices.unshift(inv);leg.invoiceId=inv.id;leg.invoiceStatus='Unpaid';
       const legs=ensureTripLegs(state,t);if(legs.every(x=>x.invoiceId)){t.stage=Math.max(num(t.stage),5);t.status='Invoiced';t.invoiceIds=legs.map(x=>x.invoiceId);const tr=(state.trucks||[]).find(x=>x.id===t.truckId);if(tr)tr.status='Available';const dr=(state.drivers||[]).find(x=>x.id===t.driverId);if(dr)dr.status='Available'}
       return{invoice:inv,trip:t,leg,existing:false}
+}
+app.post('/api/admin/trips/:tripId/legs/:legId/invoice',auth,roles('admin','manager','finance'),async(req,res)=>{
+  try{
+    const changed=await mutateOpsState(async state=>{
+      return buildJourneyLegInvoice(state,req.params.tripId,req.params.legId);
     });
     res.status(changed.result.existing?200:201).json(changed.result)
   }catch(e){res.status(e.status||500).json({error:e.message})}
@@ -3687,8 +3694,7 @@ async function currentAndroidRelease(){
     return androidReleaseCache.value;
   }
 }
-// Read-only AI/navigation assistant. No agent-generated writes or automatic
-// financial changes; action buttons only open the same forms users normally use.
+// Constrained assistant plans; all writes require a role-checked approval.
 async function assistantNaturalCommand(text){
   if(!OPENAI_API_KEY)return text;
   // AI only translates the user's phrasing into a constrained canonical request.
@@ -3711,11 +3717,40 @@ async function assistantNaturalCommand(text){
     return translated.complete&&typeof translated.command==='string'&&translated.command.length<1100?translated.command:text;
   }catch(e){console.warn('Natural-language command fallback:',e.message);return text}
 }
-const assistantCalls=new Map();
+const assistantPlatformHelpers={
+ recalc:recalcTripCosts,trip:buildPlannedTrip,
+ editLoad(state,t,v){return editLoad(state,t,v,{ensureTripLegs,syncTripFromLegs,recalcTripCosts,isShunterTruckId,upsertImportedShunterRecon})},
+ invoice(state,tripId,legId){const t=(state.trips||[]).find(t=>t.id===tripId);const legs=ensureTripLegs(state,t);return buildJourneyLegInvoice(state,tripId,legId||legs[0]?.id)},
+ nblInvoice:buildNblConsolidatedInvoice,shunterInvoice:buildNblShunterInvoice,
+ editInvoice(state,inv,values){return editInvoice(state,inv,values,{ensureTripLegs,syncTripFromLegs,recalcTripCosts,syncJourneyWorkflow,collectNblInvoiceLines,linkNblInvoiceLines})},
+ pod(state,p,document,at){
+  const t=state.trips.find(t=>t.id===p.tripId),ls=ensureTripLegs(state,t),target=p.values.legId?ls.find(l=>l.id===p.values.legId):ls[0];
+  if(!target)throw Error('Journey leg no longer exists.');
+  if(target.legacy){t.pod=true;t.podDocumentId=document.id;t.podAt=at;}
+  else{target.pod=true;target.podDocumentId=document.id;target.podAt=at;if(!['Invoiced','Closed'].includes(target.status))target.status='Delivered';}
+  t.pod=ls.every(l=>l.legacy?Boolean(t.pod):Boolean(l.pod));
+  if(t.pod&&num(t.stage)<4){t.stage=4;t.status='Delivered';}
+  t.updatedAt=at;
+  (state.tasks||[]).filter(x=>x.linkedId===t.id&&/POD/i.test(String(x.title||''))&&(!x.legId||x.legId===target.id)).forEach(x=>{x.status='Completed';x.completedAt=at;x.completedBy='Assistant-approved';});
+  return{tripId:t.id};
+ }
+};
+async function assistantPlatformRequest(message,capabilities,pending=null){
+ try{
+  const response=await fetch('https://api.openai.com/v1/responses',{method:'POST',signal:AbortSignal.timeout(15000),headers:{Authorization:'Bearer '+OPENAI_API_KEY,'Content-Type':'application/json'},body:JSON.stringify({model:process.env.SITE_ASSISTANT_MODEL||'gpt-6-luna',store:false,max_output_tokens:900,input:[{role:'system',content:'Extract one explicitly requested platform operation as JSON, or operation unsupported for questions. Today in Namibia is '+new Date(Date.now()+7200000).toISOString().slice(0,10)+'. Resolve today/tomorrow only when explicitly stated by the user. Never invent dates, entities, amounts, references, tax rates or missing details. Resolve no IDs: use exact names/references supplied by the user. Only operations in this catalog: '+JSON.stringify(capabilities)+'. values is a JSON string object containing user-supplied fields only. Supported keys: driver,income,tons,pallets,startKm,type,cost,trip,truck,date,amount,litres,total,price,odometer,supplier,slip,receiptNo,category,notes,leg,route,client,actualKm,namibiaKm,tenderKm,load,costInputs,period,cycleMonth,periodStart,periodEnd. Edit may instead use a supported field name. For quote amount means selling price excluding VAT; costInputs optional overrides of saved costing defaults. Delete/edit target is exact record reference, invoice or quote number, receipt number or ID. Invoice target is trip reference. receipt_assign target is posted slip reference. POD requires trip reference. No arbitrary code, API URLs, IDs, status approvals or payments. If unsupported return unsupported. Do not turn a question into a command.'},{role:'user',content:(pending?'Unfinished user request: '+JSON.stringify(pending)+'\nUser clarification: ':'')+message}],text:{format:{type:'json_schema',name:'platform_request',strict:true,schema:{type:'object',properties:{operation:{type:'string'},collection:{type:'string'},target:{type:'string'},values:{type:'string'}},required:['operation','collection','target','values'],additionalProperties:false}}}})});
+  if(!response.ok)return null;
+  const data=await response.json(),output=(data.output||[]).flatMap(x=>x.content||[]).find(x=>x.type==='output_text')?.text||data.output_text;
+  const request=JSON.parse(output||'{}');if(request.operation==='unsupported')return null;
+  if(!capabilities.some(c=>c.operation===request.operation&&c.collection===request.collection))return null;
+  request.values=JSON.parse(request.values||'{}');return request;
+ }catch(e){console.warn('Platform request interpretation:',e.message);return null;}
+}
+const assistantCalls=new Map(),assistantPending=new Map();
 const assistantDrafts=new Map(),ASSISTANT_DRAFT_TTL=10*60*1000;
+setInterval(()=>{for(const [id,d] of assistantDrafts)if(d.expiresAt<Date.now()&&!d.inProgress)assistantDrafts.delete(id);for(const [id,d] of assistantPending)if(d.expiresAt<Date.now())assistantPending.delete(id)},60_000).unref();
 const assistantCanChangeTrips=u=>['admin','manager','dispatcher'].includes(String(u?.role||''));
 const assistantCanPerform=(u,kind)=>['trip_rename','trip_depart'].includes(kind)?assistantCanChangeTrips(u):
-   (AssistantExtra.can(u?.role,kind)||AssistantOps.roleCan(u?.role,kind));
+   (kind==='platform'?AssistantPlatform.catalog(u?.role).length>0:(AssistantExtra.can(u?.role,kind)||AssistantOps.roleCan(u?.role,kind)));
 function assistantPublicDraft(d){
  return{id:d.id,kind:d.plan.kind,tripId:d.plan.tripId||null,tripNumber:d.plan.tripNumber||null,
    entityId:d.plan.entityId||null,page:d.plan.page||'trips',
@@ -3725,6 +3760,7 @@ function assistantPublicDraft(d){
 }
 app.post('/api/assistant/approve/:draftId',auth,async(req,res)=>{
  const id=String(req.params.draftId),d=assistantDrafts.get(id);
+ if(d?.plan.kind==='platform'&&!AssistantPlatform.can(req.user.role,d.plan.operation,d.plan.collection))return res.status(403).json({error:'Your role cannot perform this operation.'});
  if(d&&!assistantCanPerform(req.user,d.plan.kind))return res.status(403).json({error:'You do not have permission to approve this operation.'});
  if(!d||d.userId!==req.user.sub||d.expiresAt<Date.now())return res.status(404).json({error:'This assistant draft expired. Ask the assistant to prepare it again.'});
  if(req.body?.confirm!==true)return res.status(400).json({error:'Explicit approval is required.'});
@@ -3732,7 +3768,25 @@ app.post('/api/assistant/approve/:draftId',auth,async(req,res)=>{
  d.inProgress=true;
  try{
    const actor=req.user.name||req.user.email||req.user.sub;
-   const change=await mutateOpsState(state=>{
+   const archived=d.file?archiveStoredFile(d.file):null;
+   const document=archived?{id:crypto.randomUUID(),...archived}:null;
+   const change=await mutateOpsState(async(state,connection)=>{
+     if(d.plan.kind==='platform'){
+       const outcome=await AssistantPlatform.apply(state,d.plan,actor,req.user.role,assistantPlatformHelpers,document);
+       if(document){
+         const at=new Date().toISOString(),pod=d.plan.operation==='pod',plan=d.plan;
+         if(pod){
+           const vals=[document.id,req.user.sub,plan.tripId,plan.values.legId||null,'POD','Assistant-approved POD',document.filename,document.mimeType,document.buffer,at];
+           if(connection)await connection.query('INSERT INTO trip_documents(id,user_id,trip_id,leg_id,kind,reference,filename,mime_type,content,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',vals);
+           else memory.tripDocuments.push({id:document.id,userId:req.user.sub,tripId:plan.tripId,legId:plan.values.legId||'',kind:'POD',reference:vals[5],filename:document.filename,mimeType:document.mimeType,content:document.buffer,createdAt:at});
+         }else{
+           const type=plan.operation==='diesel'?'fuel':'expense';
+           if(connection)await connection.query('INSERT INTO company_receipts(id,user_id,linked_type,linked_id,kind,filename,mime_type,content,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[document.id,req.user.sub,type,outcome.entityId,'assistant-slip',document.filename,document.mimeType,document.buffer,at]);
+           else memory.companyReceipts.push({id:document.id,userId:req.user.sub,linkedType:type,linkedId:outcome.entityId,kind:'assistant-slip',filename:document.filename,mimeType:document.mimeType,content:document.buffer,createdAt:at});
+         }
+       }
+       return outcome;
+     }
      const outcome=['trip_rename','trip_depart'].includes(d.plan.kind)?
        AssistantTripActions.apply(state,d.plan,actor):
        AssistantExtra.can(d.plan.actorRole,d.plan.kind)?
@@ -3745,6 +3799,7 @@ app.post('/api/assistant/approve/:draftId',auth,async(req,res)=>{
      return outcome;
    });
    assistantDrafts.delete(id);
+   if(d.plan.kind==='platform'&&d.plan.operation==='trip')try{await linkTripLegGeofences(change.result.entityId)}catch(e){console.warn('Trip saved; geofence linking needs retry:',e.message)}
    if(['task_create','task_update'].includes(d.plan.kind))try{
      const newState=await readOpsState();
      const task=(newState.tasks||[]).find(x=>x.id===change.result.entityId);
@@ -3767,14 +3822,67 @@ app.post('/api/assistant/cancel/:draftId',auth,(req,res)=>{
  if(d.inProgress)return res.status(409).json({error:'Approval already in progress'});
  assistantDrafts.delete(d.id);res.json({cancelled:true});
 });
-app.post('/api/assistant/ask',auth,async(req,res)=>{
+app.post('/api/assistant/ask',auth,upload.single('document'),async(req,res)=>{
   try{
     const userId=String(req.user?.sub||''),now=Date.now();
     const previous=(assistantCalls.get(userId)||[]).filter(t=>now-t<60_000);
     if(previous.length>=12)return res.status(429).json({error:'Assistant limit reached. Try again shortly.'});
     previous.push(now);assistantCalls.set(userId,previous);
+    if(typeof req.body?.context==='string'){try{req.body.context=JSON.parse(req.body.context)}catch{req.body.context={}}}
+    if(typeof req.body?.history==='string'){try{req.body.history=JSON.parse(req.body.history)}catch{req.body.history=[]}}
     const message=String(req.body?.message||'').trim();
+    if(req.file&&!/^(?:image\/(?:jpeg|png|webp)|application\/pdf)$/.test(req.file.mimetype))return res.status(400).json({error:'Attach a JPG, PNG, WebP or PDF document.'});
     if(!message||message.length>1200)return res.status(400).json({error:'Enter a question under 1,200 characters.'});
+
+    // Permission-scoped capability list comes from the server, never the browser.
+    const capabilities=AssistantPlatform.catalog(req.user.role);
+    if(/^(?:help|what can you do|show capabilities|list actions)[?.! ]*$/i.test(message))return res.json({answer:'I can prepare approved changes for: '+capabilities.map(x=>x.operation+' '+x.collection).join(', ')+'. Also loans, tasks, driver/truck assignment, trip numbers and departure. Attach a slip or POD with your instruction. Use exact references; missing details are requested before saving.',source:'capabilities',capabilities});
+    const recordReply=AssistantPlatform.read(message,await readOpsState(),req.user.role);
+    if(recordReply)return res.json(recordReply);
+    let platformRequest=AssistantPlatform.parse(message);
+    const wantsPlatform=/\b(delete|remove|edit|change|update|set|create|generate|make|bought|purchased|record|capture|add|assign|move|link|attach|upload|filled)\b/i.test(message)&&/\b(invoice|quotation|quote|tender|part|parts|repair|repairs|expense|diesel|disel|fuel|POD|slip|receipt|overhead|maintenance|tyre|inspection|incident|payment|payroll|trip|workshop)\b/i.test(message);
+    const unfinished=assistantPending.get(req.user.sub);
+    if(!platformRequest&&unfinished&&unfinished.expiresAt>now&&!wantsPlatform){
+      if(/^cancel[.! ]*$/i.test(message)){assistantPending.delete(req.user.sub);return res.json({answer:'Unfinished request cancelled. Nothing was saved.',source:'operation-cancelled'});}
+      const clarificationDate=/^(?:on |date )?(20\d{2}-\d{2}-\d{2})[.! ]*$/i.exec(message)?.[1];
+      if(clarificationDate)platformRequest={...unfinished.request,values:{...unfinished.request.values,date:clarificationDate}};
+      else if(OPENAI_API_KEY&&message.length<500)platformRequest=await assistantPlatformRequest(message,capabilities,unfinished.request);
+    }
+    if(wantsPlatform&&OPENAI_API_KEY&&capabilities.length&&(!platformRequest||platformRequest.operation==='quote'&&(!platformRequest.values.client||!platformRequest.values.route))){const interpreted=await assistantPlatformRequest(message,capabilities);if(interpreted)platformRequest=interpreted;}
+
+    if(platformRequest){
+      try{
+        const sourceState=await readOpsState();
+        if(req.file&&['expense','diesel'].includes(platformRequest.operation)){
+          if(!AssistantPlatform.can(req.user.role,platformRequest.operation,platformRequest.collection))throw Object.assign(Error('Your role cannot capture this document.'),{status:403});
+          const scan=await analyzeReceiptHybrid(req.file.buffer,req.file.mimetype,sourceState),x=scan.extracted||{};
+          const extracted={date:x.date,supplier:x.supplier,odometer:x.odometer,receiptNo:x.documentNumber||x.slip||x.receiptNo};
+          if(platformRequest.operation==='diesel')Object.assign(extracted,{litres:x.litres,total:x.printedTotal||x.total||x.suggestedAmount||x.amount,price:x.pricePerLitre||x.price,slip:x.documentNumber||x.slip||x.receiptNo});
+          else Object.assign(extracted,{amount:x.printedTotal||x.total||x.suggestedAmount||x.amount,category:x.category});
+          const present=Object.fromEntries(Object.entries(extracted).filter(([,v])=>v!==undefined&&v!==null&&v!==''&&v!==0));
+          // User-entered values take precedence; OCR is evidence shown in the preview.
+          platformRequest.values={...present,...platformRequest.values};
+        }
+        const plan=AssistantPlatform.plan(platformRequest,sourceState,req.user.role,Boolean(req.file));
+        if(['expense','diesel'].includes(plan.operation))plan.checks.push({collection:plan.collection,hash:AssistantPlatform.snapshot(sourceState[plan.collection]||[])});
+        if(req.file&&!['pod','expense','diesel'].includes(plan.operation))return res.json({answer:'Attach files when capturing diesel, a purchase/expense or a POD. For an existing posted slip, use Assign slip REFERENCE to truck/trip NAME.',source:'operation-clarification'});
+        // Dry-run uses the same executor and helpers; catches billing/linked-record blockers before approval.
+        const previewState=structuredClone(sourceState);
+        const preview=await AssistantPlatform.apply(previewState,plan,req.user.name||req.user.sub,req.user.role,assistantPlatformHelpers,req.file?{id:'preview'}:null);
+        if(['invoice','nbl_invoice','shunter_invoice'].includes(plan.operation)){
+          const invoice=previewState.invoices.find(i=>i.id===preview.entityId);
+          if(invoice)plan.lines.push(['Invoice total',String(invoice.amount)],['VAT',String(invoice.vatAmount||0)],['Due',invoice.due||'']);
+          // Freeze all dependencies used by the existing billing calculations.
+          for(const collection of ['trips','invoices','expenses','clients','settings'])if(!plan.checks.some(c=>c.collection===collection&&!c.id))plan.checks.push({collection,hash:AssistantPlatform.snapshot(sourceState[collection]||[])});
+        }
+        assistantPending.delete(req.user.sub);
+        for(const [id,x] of assistantDrafts)if(x.expiresAt<Date.now()||x.userId===req.user.sub)assistantDrafts.delete(id);
+        const draft={id:crypto.randomUUID(),userId:req.user.sub,plan,file:req.file||null,expiresAt:Date.now()+ASSISTANT_DRAFT_TTL,inProgress:false};assistantDrafts.set(draft.id,draft);
+        if(req.file)plan.lines.push(['Attached file',req.file.originalname]);
+        return res.json({answer:'I prepared '+plan.description+'. Check the details and approve to save.',page:plan.page,source:'operation-proposal',proposal:assistantPublicDraft(draft)});
+      }catch(e){if(e.status!==403)assistantPending.set(req.user.sub,{request:platformRequest,expiresAt:Date.now()+ASSISTANT_DRAFT_TTL});return res.status(e.status===403?403:200).json({answer:e.message,error:e.status===403?e.message:undefined,source:'operation-clarification'});}
+    }
+    if(req.file)return res.json({answer:'Tell me where to assign this document: attach POD to trip REFERENCE, or record parts/diesel with truck, date and amount.',source:'operation-clarification'});
     // Questions use fresh server-side records, rather than browser-cache values
     // or invented positions / financial numbers.
     if(AssistantInsights.promptKind(message)){
@@ -3855,6 +3963,7 @@ app.post('/api/assistant/ask',auth,async(req,res)=>{
           page:'trips',action:null,source:'trip-proposal',proposal:assistantPublicDraft(draft)});
       }
     }
+    if(wantsPlatform)return res.json({answer:'I need a supported operation and exact details. Try: Record parts expense N$1200 for truck ANG 12 on 2026-10-24; Create invoice for trip AT-101 leg 1; Delete quotation Q-1001; or ask “What can you do?”. For tender pricing, I can save route quotations with a cost breakdown; I cannot submit an external tender.',source:'operation-clarification'});
     const forbiddenFinance=!['admin','manager','finance'].includes(req.user?.role);
     const forbiddenOps=['driver','site_worker','warehouse'].includes(req.user?.role);
     const pages=(Array.isArray(req.body?.context?.pages)?req.body.context.pages:[])

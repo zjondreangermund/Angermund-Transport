@@ -202,6 +202,9 @@ window.angermundAssistantBridge={
   async reload(){return refreshCentralState(false)},
   openTrip(id){if(!canView('trips')||!get('trips',id).id)return false;go('trips');openTrip(id);return true},
   openRecord(kind,id){
+    if(kind==='invoice'&&canView('invoices')){go('invoices');openInvoice(id);return true}
+    if(kind==='quote'&&canView('rates')){go('rates');openSavedQuotation(id);return true}
+    if(kind==='diesel'&&canView('diesel')){go('diesel');openDieselReview(id);return true}
     if(kind==='loan'&&canView('loans')&&(db.loans||[]).some(x=>x.id===id)){go('loans');openEmployeeLoan(id);return true}
     if(kind==='task'&&canView('tasks')&&(db.tasks||[]).some(x=>x.id===id)){go('tasks');openTaskForm(id);return true}
     if(kind==='expense'&&canView('roadCharges')){go('roadCharges');return true}
