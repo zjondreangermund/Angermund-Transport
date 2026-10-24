@@ -112,7 +112,7 @@ public class MainActivity extends Activity {
         settings.setGeolocationEnabled(true);
         settings.setAllowFileAccess(true);
         settings.setMediaPlaybackRequiresUserGesture(false);
-        settings.setUserAgentString(settings.getUserAgentString() + " AngermundTransportNative/1.4.2");
+        settings.setUserAgentString(settings.getUserAgentString() + " AngermundTransportNative/" + BuildConfig.VERSION_NAME);
 
         webView.addJavascriptInterface(new NativeBridge(), "AngermundNative");
         webView.setWebViewClient(new WebViewClient() {
@@ -583,7 +583,7 @@ public class MainActivity extends Activity {
             // Hand the current APK to the phone browser after a deliberate user tap.
             runOnUiThread(() -> {
                 try {
-                    Uri uri = Uri.parse(BuildConfig.SERVER_URL + "/download/android?v=1.4.2&ts=" + System.currentTimeMillis());
+                    Uri uri = Uri.parse(BuildConfig.SERVER_URL + "/download/android?v=" + BuildConfig.VERSION_NAME + "&ts=" + System.currentTimeMillis());
                     Intent browser = new Intent(Intent.ACTION_VIEW, uri);
                     browser.addCategory(Intent.CATEGORY_BROWSABLE);
                     startActivity(browser);
