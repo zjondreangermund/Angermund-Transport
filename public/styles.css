@@ -1405,3 +1405,8 @@ html.modal-open{overflow:hidden!important}@media(max-width:760px){html:has(#side
   body>main#app{margin-left:0!important;width:100%!important;max-width:100vw!important;padding-left:20px!important;padding-right:20px!important;padding-top:calc(var(--top-navigation-height,98px) + var(--app-header-height,82px) + 16px)!important}
   body>header #menuBtn{display:none!important}
 }
+
+/* Native GPS controls must remain visible and independently tappable on phones. */
+.tracking-status-actions{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}
+.tracking-status-actions button{position:relative;z-index:1;min-height:44px;touch-action:manipulation}
+.tracking-status-actions button:disabled{opacity:.65;cursor:progress}
