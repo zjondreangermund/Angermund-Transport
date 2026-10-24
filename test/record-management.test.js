@@ -48,3 +48,12 @@ test('unrelated record deletion retains existing behavior and does not cascade t
  const result=deleteRecord(state,'diesel','f');
  assert.equal(result.removedDiesel,0);assert.equal(state.expenses.length,1);assert.equal(state.trips.length,1);
 });
+
+test('trip deletion includes fuel and expense records linked only by one of its leg IDs',()=>{
+ const state={trips:[{id:'t',number:'AT-700',legs:[{id:'leg-a'},{id:'leg-b'}]},{id:'other',number:'AT-701',legs:[{id:'leg-c'}]}],
+  diesel:[{id:'f-leg',legId:'leg-a'},{id:'f-other',tripId:'other',legId:'leg-c'}],
+  expenses:[{id:'e-leg',legId:'leg-b'},{id:'e-other',tripId:'other',legId:'leg-c'}]};
+ const result=deleteRecord(state,'trips','t');
+ assert.equal(result.removedDiesel,1);assert.equal(result.removedExpenses,1);
+ assert.deepEqual(state.diesel.map(x=>x.id),['f-other']);assert.deepEqual(state.expenses.map(x=>x.id),['e-other']);
+});
