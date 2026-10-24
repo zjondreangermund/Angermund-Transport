@@ -57,9 +57,12 @@
   }else if(p.id==='invoices')explanation='Open Finance & Invoicing → Invoices & Payments to see invoices, customer payments, unpaid balances and debtors.';
   else if(p.id==='tracking')explanation='Open Tracking → Live GPS & Geofences for truck positions, saved geofences and GPS test journeys.';
   else if(p.id==='reports')explanation='Open Admin → Reports & P&L for all-time revenue and performance. For a specific month choose Monthly P&L & Overheads instead.';
-  const action=/\b(create|add|new|start|enter|record)\b/i.test(q)&&p.id==='trips'&&pages.some(p=>p.id==='dispatch')?'new_trip':null;
-  if(action)explanation='Open the new trip form; select route, truck, driver and client, then review details before saving.';
-  return {answer:explanation,page:action?'dispatch':p.id,action};
+  const creating=/\b(create|add|new|start|enter|record)\b/i.test(q);
+  const action=creating&&p.id==='trips'&&pages.some(p=>p.id==='dispatch')?'new_trip':
+    creating&&p.id==='tasks'?'new_task':null;
+  if(action==='new_trip')explanation='Open the new trip form; select route, truck, driver and client, then review details before saving.';
+  if(action==='new_task')explanation='Open Tasks & Approvals, select Add Task, enter the owner, due date and priority, and review before saving.';
+  return {answer:explanation,page:action==='new_trip'?'dispatch':p.id,action};
  }
  return {findPage,answer};
 });
