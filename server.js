@@ -1533,7 +1533,7 @@ function payrollProfile(state,employeeId){
   return p
 }
 function employeeLoanDeduction(state,employeeId,period,existing=null){
-  const loans=(state.loans||[]).filter(l=>l.employeeId===employeeId&&l.status!=='Cancelled'&&l.status!=='Paid'&&num(l.balance)>0&&(!l.startPeriod||String(l.startPeriod)<=String(period)));
+  const loans=(state.loans||[]).filter(l=>l.employeeId===employeeId&&!['Cancelled','Paid','Paused'].includes(l.status)&&num(l.balance)>0&&(!l.startPeriod||String(l.startPeriod)<=String(period)));
   const prior=Array.isArray(existing?.loanBreakdown)?existing.loanBreakdown:[];
   const breakdown=loans.map(l=>{const saved=prior.find(x=>x.loanId===l.id);const scheduled=saved&&existing?.status==='Paid'?num(saved.amount):Math.min(num(l.balance),num(l.monthlyDeduction));return{loanId:l.id,reference:l.reference||'',amount:Number(Math.max(0,scheduled).toFixed(2)),balanceBefore:Number(num(l.balance).toFixed(2))}}).filter(x=>x.amount>0);
   return{amount:Number(breakdown.reduce((a,x)=>a+num(x.amount),0).toFixed(2)),breakdown}
@@ -3707,11 +3707,16 @@ app.post('/api/assistant/approve/:draftId',auth,async(req,res)=>{
  d.inProgress=true;
  try{
    const actor=req.user.name||req.user.email||req.user.sub;
-   const change=await mutateOpsState(state=>
-     ['trip_rename','trip_depart'].includes(d.plan.kind)?
+   const change=await mutateOpsState(state=>{
+     const outcome=['trip_rename','trip_depart'].includes(d.plan.kind)?
        AssistantTripActions.apply(state,d.plan,actor):
-       AssistantOps.apply(state,d.plan,actor)
-   );
+       AssistantOps.apply(state,d.plan,actor);
+     if(d.plan.kind==='expense_create'){
+       const trip=(state.trips||[]).find(x=>x.id===d.plan.tripId);
+       if(trip)recalcTripCosts(state,trip);
+     }
+     return outcome;
+   });
    assistantDrafts.delete(id);
    if(d.plan.kind==='task_create')try{
      const newState=await readOpsState();
