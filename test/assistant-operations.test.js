@@ -61,3 +61,19 @@ test('never guess which employee or trip if ambiguous or incomplete',()=>{
  assert.match(O.plan('Record toll expense N$50',s).error,/trip/);
  assert.equal(O.plan('Where do I see monthly profit?',s),null);
 });
+
+test('recognises unique first names but does not guess when two workers share the name',()=>{
+ const s=make();
+ assert.equal(O.plan('Add loan to Josef for N$2000 monthly deduction N$200',s).kind,'loan_create');
+ s.employees.push({id:'j3',name:'Josef Second',status:'Active'});
+ assert.match(O.plan('Add loan to Josef for N$2000 monthly deduction N$200',s).error,/More than one/);
+});
+test('loan activity only proposes, never automatically changes existing balances or payslips',()=>{
+ const s=make();s.loans.push({id:'loan_1',employeeId:'j',balance:1000,monthlyDeduction:100,status:'Active'});
+ s.payroll=[{id:'p',employeeId:'j',status:'Paid',loanDeduction:100}];
+ const p=preview('Pause Josef loan',s,'finance');
+ assert.equal(s.loans[0].status,'Active');
+ O.apply(s,p,'Finance');
+ assert.equal(s.loans[0].status,'Paused');assert.equal(s.loans[0].balance,1000);
+ assert.equal(s.payroll[0].loanDeduction,100);
+});
