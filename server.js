@@ -3,6 +3,7 @@ const TestJourney=require('./phone-test-journey');
 const AndroidUpdate=require('./public/android-update');
 const SiteAssistant=require('./public/site-assistant-core');
 const AssistantTripActions=require('./assistant-trip-actions');
+const AssistantOps=require('./assistant-operations');
 const PushDelivery=require('./push-delivery-policy');
 const TripSites=require('./trip-site-geofences');
 const {resolveMobileGps}=require('./mobile-gps');
@@ -1532,7 +1533,7 @@ function payrollProfile(state,employeeId){
   return p
 }
 function employeeLoanDeduction(state,employeeId,period,existing=null){
-  const loans=(state.loans||[]).filter(l=>l.employeeId===employeeId&&l.status!=='Cancelled'&&l.status!=='Paid'&&num(l.balance)>0&&(!l.startPeriod||String(l.startPeriod)<=String(period)));
+  const loans=(state.loans||[]).filter(l=>l.employeeId===employeeId&&!['Cancelled','Paid','Paused'].includes(l.status)&&num(l.balance)>0&&(!l.startPeriod||String(l.startPeriod)<=String(period)));
   const prior=Array.isArray(existing?.loanBreakdown)?existing.loanBreakdown:[];
   const breakdown=loans.map(l=>{const saved=prior.find(x=>x.loanId===l.id);const scheduled=saved&&existing?.status==='Paid'?num(saved.amount):Math.min(num(l.balance),num(l.monthlyDeduction));return{loanId:l.id,reference:l.reference||'',amount:Number(Math.max(0,scheduled).toFixed(2)),balanceBefore:Number(num(l.balance).toFixed(2))}}).filter(x=>x.amount>0);
   return{amount:Number(breakdown.reduce((a,x)=>a+num(x.amount),0).toFixed(2)),breakdown}
@@ -3686,25 +3687,67 @@ async function currentAndroidRelease(){
 }
 // Read-only AI/navigation assistant. No agent-generated writes or automatic
 // financial changes; action buttons only open the same forms users normally use.
+async function assistantNaturalCommand(text){
+  if(!OPENAI_API_KEY)return text;
+  // AI only translates the user's phrasing into a constrained canonical request.
+  // The DB resolver, role gate and explicit approval are enforced separately.
+  try{
+    const system='Rewrite this employee request for the Angermund Transport assistant into one concise canonical command if it explicitly requests an operation. Never change a question into an instruction. Do not invent missing people, amounts, trip numbers or dates. Available patterns: (1) Add loan to PERSON for N$AMOUNT monthly deduction N$AMOUNT; (2) Pause PERSON loan; (3) Change PERSON loan monthly deduction to N$AMOUNT; (4) Create task to DESCRIPTION tomorrow high priority; (5) Assign driver PERSON to trip TRIPNUMBER; (6) Assign truck FLEETNUMBER to trip TRIPNUMBER; (7) Record toll/parking/permit fee expense N$AMOUNT for trip TRIPNUMBER; (8) Change trip OLDNUMBER number to NEWNUMBER; (9) Switch truck FLEET from planned to departing. For unsupported or incomplete requests, preserve the original text unchanged. Never include details the user did not say. Return JSON only.';
+    const response=await fetch('https://api.openai.com/v1/responses',{
+      method:'POST',signal:AbortSignal.timeout(9500),
+      headers:{Authorization:'Bearer '+OPENAI_API_KEY,'Content-Type':'application/json'},
+      body:JSON.stringify({model:process.env.SITE_ASSISTANT_MODEL||'gpt-6-luna',store:false,max_output_tokens:230,
+        input:[{role:'system',content:system},{role:'user',content:String(text).slice(0,1200)}],
+        text:{format:{type:'json_schema',name:'operation_translation',strict:true,
+          schema:{type:'object',properties:{command:{type:'string'},complete:{type:'boolean'}},required:['command','complete'],additionalProperties:false}}}
+      })
+    });
+    if(!response.ok)return text;
+    const result=await response.json();
+    const output=(result.output||[]).flatMap(x=>x.content||[]).find(x=>x.type==='output_text')?.text||result.output_text;
+    const translated=JSON.parse(String(output||'{}'));
+    return translated.complete&&typeof translated.command==='string'&&translated.command.length<1100?translated.command:text;
+  }catch(e){console.warn('Natural-language command fallback:',e.message);return text}
+}
 const assistantCalls=new Map();
 const assistantDrafts=new Map(),ASSISTANT_DRAFT_TTL=10*60*1000;
 const assistantCanChangeTrips=u=>['admin','manager','dispatcher'].includes(String(u?.role||''));
+const assistantCanPerform=(u,kind)=>['trip_rename','trip_depart'].includes(kind)?assistantCanChangeTrips(u):AssistantOps.roleCan(u?.role,kind);
 function assistantPublicDraft(d){
- return{id:d.id,kind:d.plan.kind,tripId:d.plan.tripId,tripNumber:d.plan.tripNumber,
+ return{id:d.id,kind:d.plan.kind,tripId:d.plan.tripId||null,tripNumber:d.plan.tripNumber||null,
+   entityId:d.plan.entityId||null,page:d.plan.page||'trips',
    description:d.plan.description,old:d.plan.old,next:d.plan.next,warning:d.plan.warning,
+   lines:Array.isArray(d.plan.lines)?d.plan.lines:[],
    expiresAt:new Date(d.expiresAt).toISOString()};
 }
 app.post('/api/assistant/approve/:draftId',auth,async(req,res)=>{
- if(!assistantCanChangeTrips(req.user))return res.status(403).json({error:'Only dispatch management can approve trip changes.'});
  const id=String(req.params.draftId),d=assistantDrafts.get(id);
+ if(d&&!assistantCanPerform(req.user,d.plan.kind))return res.status(403).json({error:'You do not have permission to approve this operation.'});
  if(!d||d.userId!==req.user.sub||d.expiresAt<Date.now())return res.status(404).json({error:'This assistant draft expired. Ask the assistant to prepare it again.'});
  if(req.body?.confirm!==true)return res.status(400).json({error:'Explicit approval is required.'});
  if(d.inProgress)return res.status(409).json({error:'This change is already being approved.'});
  d.inProgress=true;
  try{
    const actor=req.user.name||req.user.email||req.user.sub;
-   const change=await mutateOpsState(state=>AssistantTripActions.apply(state,d.plan,actor));
+   const change=await mutateOpsState(state=>{
+     const outcome=['trip_rename','trip_depart'].includes(d.plan.kind)?
+       AssistantTripActions.apply(state,d.plan,actor):
+       AssistantOps.apply(state,d.plan,actor);
+     if(d.plan.kind==='expense_create'){
+       const trip=(state.trips||[]).find(x=>x.id===d.plan.tripId);
+       if(trip)recalcTripCosts(state,trip);
+     }
+     return outcome;
+   });
    assistantDrafts.delete(id);
+   if(d.plan.kind==='task_create')try{
+     const newState=await readOpsState();
+     const task=(newState.tasks||[]).find(x=>x.id===change.result.entityId);
+     if(task)await notifyTask(task,'New task: '+task.title,
+       (task.due?'Due '+task.due+' · ':'')+task.priority+' priority',
+       task.priority==='Critical'?'critical':task.priority==='High'?'warning':'info');
+   }catch(e){console.warn('Assistant task saved but notification was delayed:',e.message)}
+   // Expenses are deliberately left in Review, not approved or paid.
    res.json({success:true,change:change.result,revision:change.revision,
      message:d.plan.description+' · Approved and saved.'});
  }catch(e){
@@ -3727,12 +3770,46 @@ app.post('/api/assistant/ask',auth,async(req,res)=>{
     previous.push(now);assistantCalls.set(userId,previous);
     const message=String(req.body?.message||'').trim();
     if(!message||message.length>1200)return res.status(400).json({error:'Enter a question under 1,200 characters.'});
-    // Never ask the language model to execute operations. The authoritative
-    // database resolves trip identities and a per-user approval token is issued.
-    if(AssistantTripActions.attempt(message)){
+    // Interpret natural phrasing only if needed. AI never writes to the database.
+    // All canonical commands still pass through strict record and role validation.
+    let command=message,opsKind=AssistantOps.kind(command);
+    const actionable=/\b(add|give|create|record|change|set|update|edit|switch|assign|pause|resume|capture|reassign)\b/i.test(message)&&
+      /\b(loan|repayment|employee|driver|truck|trip|task|expense|toll|parking|permit)\b/i.test(message);
+    let opsSnapshot=null,prepared=null;
+    if(actionable&&opsKind){
+      opsSnapshot=await readOpsState();
+      prepared=AssistantOps.plan(command,opsSnapshot);
+    }
+    if(actionable&&(!opsKind||prepared?.error)&&OPENAI_API_KEY){
+      const translated=await assistantNaturalCommand(message);
+      if(translated!==message){
+        const normalizedKind=AssistantOps.kind(translated);
+        if(normalizedKind){
+          if(!opsSnapshot)opsSnapshot=await readOpsState();
+          const proposed=AssistantOps.plan(translated,opsSnapshot);
+          if(proposed?.kind){command=translated;opsKind=normalizedKind;prepared=proposed}
+        }else if(AssistantTripActions.attempt(translated))command=translated;
+      }
+    }
+    if(opsKind){
+      if(!assistantCanPerform(req.user,opsKind))
+        return res.json({answer:'Your role cannot change these records. Ask an administrator or the responsible manager.',page:null,source:'operation-permission'});
+      const plan=prepared||AssistantOps.plan(command,opsSnapshot||await readOpsState());
+      if(plan?.error)return res.json({answer:plan.error,page:opsKind.startsWith('loan')?'loans':opsKind.startsWith('task')?'tasks':'trips',source:'operation-clarification'});
+      if(plan?.kind){
+        plan.actorRole=req.user.role;
+        const draft={id:crypto.randomUUID(),userId:req.user.sub,plan,expiresAt:Date.now()+ASSISTANT_DRAFT_TTL,inProgress:false};
+        for(const [id,x] of assistantDrafts)if(x.expiresAt<Date.now()||x.userId===req.user.sub)assistantDrafts.delete(id);
+        assistantDrafts.set(draft.id,draft);
+        return res.json({answer:'I prepared '+plan.description+'. Review the details below. Nothing has been saved yet.',
+          page:plan.page||'trips',source:'operation-proposal',proposal:assistantPublicDraft(draft)});
+      }
+    }
+    // Preserve the existing approved trip-number and departure workflows.
+    if(AssistantTripActions.attempt(command)){
       if(!assistantCanChangeTrips(req.user))
         return res.json({answer:'Your account can view trips but cannot change trip numbers or departure status. Ask an admin, manager or dispatcher.',page:null,action:null,source:'trip-safety'});
-      const planned=AssistantTripActions.plan(message,await readOpsState());
+      const planned=AssistantTripActions.plan(command,await readOpsState());
       if(planned?.error)return res.json({answer:planned.error,page:'trips',action:null,source:'trip-clarification'});
       if(planned?.kind){
         const draft={id:crypto.randomUUID(),userId:req.user.sub,plan:planned,expiresAt:Date.now()+ASSISTANT_DRAFT_TTL,inProgress:false};

@@ -8,9 +8,12 @@
     '<div class="assistant-log" aria-live="polite"></div><div class="assistant-suggestions">'+
     '<button type="button" data-example="Where do I see my monthly income?">Monthly income</button>'+
     '<button type="button" data-example="Where do I see unpaid invoices?">Unpaid invoices</button>'+
-    '<button type="button" data-example="How do I create a new trip?">Create trip</button></div>'+
+    '<button type="button" data-example="How do I create a new trip?">Create trip</button>'+
+ '<button type="button" data-example="Add loan to Josef for N$2000 monthly deduction N$200">Employee loan</button>'+
+ '<button type="button" data-example="Create task to check ANG 12 tomorrow, high priority">Create task</button>'+
+ '<button type="button" data-example="Assign driver Josef to trip AT-101">Assign driver</button></div>'+
     '<form class="assistant-form"><input type="text" maxlength="1200" aria-label="Ask a question" placeholder="Ask anything about this site…" autocomplete="off" required><button type="submit" aria-label="Send question">➤</button></form>'+
-    '<small class="assistant-foot">Ask me to prepare trip changes. I show a preview and save nothing until you approve.</small></section>';
+    '<small class="assistant-foot">Ask for loans, tasks, truck/driver assignments, trip changes or expenses. Every change requires approval.</small></section>';
   document.body.appendChild(host);
   const launch=host.querySelector('.assistant-launch'),panel=host.querySelector('.assistant-panel'),
     log=host.querySelector('.assistant-log'),input=host.querySelector('input'),form=host.querySelector('form');
@@ -21,6 +24,10 @@
     const financial=bridge()?.context?.()?.pages?.some(x=>x.id==='monthlyPnl');
     const monthly=host.querySelector('[data-example="Where do I see my monthly income?"]');
     if(monthly)monthly.hidden=!financial;
+    const loans=host.querySelector('[data-example^="Add loan to"]');
+    if(loans)loans.hidden=!bridge()?.context?.()?.pages?.some(x=>x.id==='loans');
+    const assign=host.querySelector('[data-example^="Assign driver"]');
+    if(assign)assign.hidden=!bridge()?.context?.()?.pages?.some(x=>x.id==='dispatch');
   }
   window.angermundAssistantRefresh=refresh;
   function toggle(open){
@@ -50,7 +57,8 @@
     if(who==='assistant'&&proposal?.id){
       const box=document.createElement('div');box.className='assistant-approval-card';
       const title=document.createElement('b');title.textContent='Review change — not saved';box.appendChild(title);
-      for(const [label,value] of [['Trip',proposal.tripNumber],['Change',proposal.description],['Before',proposal.old],['After',proposal.next]]){
+      for(const [label,value] of (Array.isArray(proposal.lines)&&proposal.lines.length?proposal.lines:
+   [['Trip',proposal.tripNumber],['Change',proposal.description],['Before',proposal.old],['After',proposal.next]])){
         const line=document.createElement('div');line.className='assistant-review-line';
         const k=document.createElement('span');k.textContent=label;
         const v=document.createElement('strong');v.textContent=String(value||'');
@@ -71,15 +79,19 @@
         return result;
       };
       yes.onclick=async()=>{
-        if(!confirm('Approve this exact change to '+proposal.tripNumber+'? This will save it to Angermund Transport.'))return;
+        if(!confirm('Approve and save: '+proposal.description+'?'))return;
         yes.disabled=no.disabled=true;yes.textContent='Saving…';
         try{
           const result=await post('/api/assistant/approve/'+encodeURIComponent(proposal.id),{confirm:true});
           yes.textContent='✓ Saved';actions.remove();
           const saved=document.createElement('p');saved.textContent=result.message||'Approved and saved.';box.appendChild(saved);
           try{await bridge()?.reload?.()}catch{}
-          const open=document.createElement('button');open.type='button';open.className='assistant-go';open.textContent='Open updated trip →';
-          open.onclick=()=>{if(bridge()?.openTrip?.(result.change?.tripId))toggle(false)};
+          const open=document.createElement('button');open.type='button';open.className='assistant-go';open.textContent='View saved record →';
+          open.onclick=()=>{
+            if(result.change?.tripId&&bridge()?.openTrip?.(result.change.tripId)){toggle(false);return}
+            if(result.change?.entityId&&bridge()?.openRecord?.(result.change.recordType,result.change.entityId)){toggle(false);return}
+            if(proposal.page&&bridge()?.navigate?.(proposal.page))toggle(false);
+          };
           box.appendChild(open);
         }catch(e){
           yes.disabled=no.disabled=false;yes.textContent='✓ Approve & save';
