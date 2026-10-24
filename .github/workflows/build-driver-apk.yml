@@ -15,6 +15,11 @@ on:
       - 'android-driver/**'
       - '.github/workflows/build-driver-apk.yml'
 
+# Newer main commits must never be overwritten by an older APK build.
+concurrency:
+  group: android-release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -56,3 +61,9 @@ jobs:
           cp android-driver/app/build/outputs/apk/debug/app-debug.apk Angermund-Transport.apk
           gh release view android-latest >/dev/null 2>&1 || gh release create android-latest --title "Angermund Transport Android" --notes "Latest installable Android build for Angermund Transport."
           gh release upload android-latest Angermund-Transport.apk --clobber
+          VERSION_CODE=$(sed -n 's/^[[:space:]]*versionCode[[:space:]]*//p' android-driver/app/build.gradle | head -1)
+          VERSION_NAME=$(sed -n 's/^[[:space:]]*versionName[[:space:]]*"\([^"]*\)".*/\1/p' android-driver/app/build.gradle | head -1)
+          test -n "$VERSION_CODE" && test -n "$VERSION_NAME"
+          # Publish metadata LAST: the app must not offer an APK before it exists.
+          printf 'Latest installable Android build for Angermund Transport.\nANGERMUND_VERSION_NAME=%s\nANGERMUND_VERSION_CODE=%s\n' "$VERSION_NAME" "$VERSION_CODE" > android-release-notes.txt
+          gh release edit android-latest --notes-file android-release-notes.txt
