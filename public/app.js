@@ -3480,7 +3480,8 @@ function openTrip(id){
       (t.sourceOrderRef?'<p><b>Order reference:</b> '+esc(t.sourceOrderRef)+'</p>':'')+
       (t.notes?'<p class="trip-operations-notes-text">'+esc(t.notes)+'</p>':'')+
       '</section>':''}
-    ${carrierOrderPanel(t)}
+    ${t.notes?'<section class="panel"><h3>Internal trip notes</h3><p style="white-space:pre-wrap">'+esc(t.notes)+'</p></section>':''}
+        ${carrierOrderPanel(t)}
     ${historicalTripSourcePanel(t)}
     ${tripRequirementsPanel(t)}
     <div class="journey-leg-toolbar"><h3>Journey legs / loads</h3><div><button type="button" class="ghost" id="addJourneyLeg">+ Add leg</button><button type="button" class="primary" id="addReturnLeg">↩ Add return / backload</button></div></div>
