@@ -11,8 +11,11 @@ on:
       - 'test/site-assistant.test.js'
       - 'assistant-trip-actions.js'
       - 'assistant-operations.js'
+      - 'assistant-extra-actions.js'
+      - 'assistant-live-insights.js'
+      - 'test/assistant-extra-actions.test.js'
       - 'test/assistant-operations.test.js'
-      - 'test/assistant-trip-actions.test.js test/assistant-operations.test.js'
+      - 'test/assistant-trip-actions.test.js'
       - 'daily-platform-actions.js'
       - 'test/daily-platform-actions.test.js'
       - 'push-delivery-policy.js'
@@ -32,6 +35,9 @@ on:
       - 'test/site-assistant.test.js'
       - 'assistant-trip-actions.js'
       - 'assistant-operations.js'
+      - 'assistant-extra-actions.js'
+      - 'assistant-live-insights.js'
+      - 'test/assistant-extra-actions.test.js'
       - 'test/assistant-operations.test.js'
       - 'test/assistant-trip-actions.test.js'
       - 'daily-platform-actions.js'
@@ -54,4 +60,4 @@ jobs:
       - name: Check JavaScript syntax
         run: npm run check
       - name: Test isolated phone milestones and existing driver tracking
-        run: node --test test/phone-test-journey.test.js test/phone-trip-tracking.test.js test/push-delivery-policy.test.js test/android-update.test.js test/site-assistant.test.js test/daily-platform-actions.test.js test/assistant-trip-actions.test.js
+        run: node --test test/phone-test-journey.test.js test/phone-trip-tracking.test.js test/push-delivery-policy.test.js test/android-update.test.js test/site-assistant.test.js test/daily-platform-actions.test.js test/assistant-trip-actions.test.js test/assistant-operations.test.js test/assistant-extra-actions.test.js
