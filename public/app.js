@@ -3694,7 +3694,45 @@ function forceAndroidInstallPrompt(message='Latest Android app: v1.4.3'){
   if($('appInstallStatus'))$('appInstallStatus').innerHTML='<b>'+esc(message)+'</b><br><span>Download and install the APK. Android may ask you to allow installs from this browser.</span>';
   $('appInstallPrompt').classList.remove('hidden')
 }
-function openAndroidInstallPrompt(){forceAndroidInstallPrompt('Angermund Transport Android v1.4.3 is ready to install.')}
+function openAndroidInstallPrompt(){forceAndroidInstallPrompt('Angermund Transport Android v1.4.4 is ready to install.')}
+// The site/JS loads fresh from Railway automatically. Native APK releases
+// require an Android install confirmation, so check on launch and when active.
+let lastAndroidUpdateCheck=0,androidUpdateInFlight=false,latestAndroidUpdateInfo=null;
+const ANDROID_UPDATE_DEFER_PREFIX='angermund_android_update_defer_';
+async function checkAndroidAppUpdate(force=false){
+  if(!runningInsideAndroidApp()||androidUpdateInFlight||!window.AngermundAndroidUpdate)return;
+  if(!force&&Date.now()-lastAndroidUpdateCheck<60*60*1000)return;
+  lastAndroidUpdateCheck=Date.now();androidUpdateInFlight=true;
+  try{
+    const current=nativeGpsStatus()?.appVersion||
+      (/Angermund(?:Driver|Transport)Native\/(\d+\.\d+\.\d+)/i.exec(navigator.userAgent||'')||[])[1];
+    if(!current)return;
+    const response=await fetch('/api/android/latest',{cache:'no-store'});
+    if(!response.ok)return;
+    const latest=await response.json();
+    if(!latest?.available||!latest.version||
+       AngermundAndroidUpdate.compareVersions(current,latest.version)>=0)return;
+    latestAndroidUpdateInfo=latest;
+    const defer=Number(appLocalStorage.getItem(ANDROID_UPDATE_DEFER_PREFIX+latest.version)||0);
+    if(!force&&defer>Date.now())return;
+    const card=$('appInstallPrompt');if(!card||!$('appInstallStatus'))return;
+    if($('appInstallTitle'))$('appInstallTitle').textContent='Angermund update available';
+    const copy=card.querySelector('.app-install-card > p');
+    if(copy)copy.textContent='Android v'+latest.version+' is ready. Installed: v'+current+'. Your trips and GPS records stay saved.';
+    const qr=card.querySelector('figure');if(qr)qr.style.display='none';
+    if($('appInstallStatus'))$('appInstallStatus').textContent='Tap Update now to open the latest APK in Chrome. Android will ask you to confirm installation. No automatic silent installation is possible.';
+    if($('downloadAndroidApp'))$('downloadAndroidApp').textContent='⬇ Update now · v'+latest.version;
+    if($('openAndroidApp'))$('openAndroidApp').style.display='none';
+    if($('dismissAndroidApp'))$('dismissAndroidApp').textContent='Remind me later';
+    card.classList.remove('hidden');
+  }catch(e){console.warn('Could not check Android update',e.message)}
+  finally{androidUpdateInFlight=false}
+}
+function deferAndroidUpdate(){
+  if(latestAndroidUpdateInfo?.version)
+    appLocalStorage.setItem(ANDROID_UPDATE_DEFER_PREFIX+latestAndroidUpdateInfo.version,String(Date.now()+12*60*60*1000));
+}
+
 async function postBrowserPhoneGps(position,label){
   const now=Date.now();if(now-lastPhoneGpsTestSentAt<15000)return;lastPhoneGpsTestSentAt=now;
   try{
@@ -3754,16 +3792,17 @@ function openInstalledAndroidApp(){
 }
 function downloadAndroidApp(){
   sessionStorage.setItem(ANDROID_APP_SKIP_KEY,'1');
+  const offeredVersion=latestAndroidUpdateInfo?.version||'1.4.4';
   if(runningInsideAndroidApp()){
     if(typeof window.AngermundNative?.openAndroidInstaller==='function'){
-      hideAndroidAppPrompt();window.AngermundNative.openAndroidInstaller();notify('Opening Chrome to download Android v1.4.3');return
+      hideAndroidAppPrompt();window.AngermundNative.openAndroidInstaller();notify('Opening Chrome to download Android v'+offeredVersion);return
     }
     forceAndroidInstallPrompt('To update the old installed app, open this website in Chrome and tap Install App. The old WebView cannot install APK files directly.');
     return
   }
   hideAndroidAppPrompt();
-  const a=document.createElement('a');a.href='/download/android?v=1.4.3&ts='+Date.now();a.download='Angermund-Transport-v1.4.3.apk';
-  document.body.appendChild(a);a.click();a.remove();notify('Downloading the newest Android APK v1.4.3…')
+  const a=document.createElement('a');a.href='/download/android?v='+encodeURIComponent(offeredVersion)+'&ts='+Date.now();a.download='Angermund-Transport-v'+offeredVersion+'.apk';
+  document.body.appendChild(a);a.click();a.remove();notify('Downloading the newest Android APK v'+offeredVersion+'…')
 }
 function installLatestAndroidApp(){if(/Android/i.test(navigator.userAgent))downloadAndroidApp();else openAndroidInstallPrompt()}
 function startNativeBackgroundAlerts(){if(!authToken||!runningInsideAndroidApp()||typeof window.AngermundNative?.startBackgroundAlerts!=='function')return false;try{window.AngermundNative.startBackgroundAlerts(authToken);return true}catch{return false}}
@@ -4146,7 +4185,12 @@ async function boot(fromLogin=false){
   if(role==='driver')startDriverGpsWatch();else stopDriverGpsWatch();
   if(fromLogin||androidBrowserSession())setTimeout(maybeOfferAndroidApp,350);if(fromLogin)setTimeout(()=>openQuickPinSetup(false),650)
 }
-$('globalLogoutBtn').onclick=logout;if($('globalInstallAppBtn'))$('globalInstallAppBtn').onclick=installLatestAndroidApp;if($('globalExportBtn'))$('globalExportBtn').onclick=openPageExport;if($('mobileSidebarLogout'))$('mobileSidebarLogout').onclick=logout;$('menuBtn').onclick=()=>$('sidebar').classList.toggle('open');$('closeModal').onclick=()=>$('modal').classList.add('hidden');$('entryForm').onsubmit=saveForm;$('quickTripBtn').onclick=()=>openForm('trip');$('backupBtn').onclick=backup;$('notificationBtn').onclick=()=>go('notifications');$('roleSelect').onchange=()=>{$('roleSelect').value=role};if($('downloadAndroidApp'))$('downloadAndroidApp').onclick=downloadAndroidApp;if($('entryInstallApp'))$('entryInstallApp').onclick=installLatestAndroidApp;if($('loginInstallApp'))$('loginInstallApp').onclick=installLatestAndroidApp;if($('openAndroidApp'))$('openAndroidApp').onclick=openInstalledAndroidApp;if($('dismissAndroidApp'))$('dismissAndroidApp').onclick=()=>{sessionStorage.setItem(ANDROID_APP_SKIP_KEY,'1');hideAndroidAppPrompt()};$('fileInput').onchange=()=>{if($('fileInput').files[0]&&$('fileInput').dataset.kind==='restore')restore($('fileInput').files[0]);$('fileInput').value=''};$('scanInput').onchange=()=>{const files=Array.from($('scanInput').files||[]);if(files.length){if(['admin','manager','dispatcher','finance','workshop'].includes(role))handleAdminScanSelection(files);else uploadScan(files[0])}$('scanInput').value=''};$('loginForm').onsubmit=async e=>{e.preventDefault();$('loginError').textContent='';try{const login=$('loginEmail').value.trim(),result=await api('/api/auth/login',{method:'POST',body:{login,password:$('loginPassword').value}});authToken=result.token;sessionUser=result.user;appLocalStorage.setItem('angermund_token',authToken);appLocalStorage.setItem(QUICK_PIN_LOGIN_KEY,accountUsername(result.user)||login);$('loginPassword').value='';sessionStorage.removeItem(ANDROID_APP_SKIP_KEY);await boot(true)}catch(err){$('loginError').textContent=err.message}};if($('pinLoginBtn'))$('pinLoginBtn').onclick=loginWithQuickPin;if($('loginPin'))$('loginPin').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();loginWithQuickPin()}});refreshQuickPinLoginUi();window.addEventListener('online',flushDriverJobs);if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'}).then(r=>r.update()).catch(()=>{});appLocalStorage.setItem(STORE,JSON.stringify(db));const forceLogin=location.pathname.replace(/\/+$/,'')==='/login'||new URLSearchParams(location.search).get('login')==='1';if(forceLogin){stopDriverGpsWatch();authToken='';sessionUser=null;appLocalStorage.removeItem('angermund_token');if($('loginEmail'))$('loginEmail').value='';if($('loginPassword'))$('loginPassword').value='';if($('loginError'))$('loginError').textContent='';history.replaceState(null,'','/');$('loginScreen').classList.remove('hidden');refreshQuickPinLoginUi();setTimeout(showLoginPanel,80)}window.__angermundInitialized=true;if(authToken)boot().catch(()=>window.__recoverAngermundStartup?.());else{$('loginScreen').classList.remove('hidden');if(ENTRY_IS_NATIVE||forceLogin)showLoginPanel();dismissLoadingScreen()};if(androidBrowserSession())setTimeout(maybeOfferAndroidApp,450)
+$('globalLogoutBtn').onclick=logout;if($('globalInstallAppBtn'))$('globalInstallAppBtn').onclick=installLatestAndroidApp;if($('globalExportBtn'))$('globalExportBtn').onclick=openPageExport;if($('mobileSidebarLogout'))$('mobileSidebarLogout').onclick=logout;$('menuBtn').onclick=()=>$('sidebar').classList.toggle('open');$('closeModal').onclick=()=>$('modal').classList.add('hidden');$('entryForm').onsubmit=saveForm;$('quickTripBtn').onclick=()=>openForm('trip');$('backupBtn').onclick=backup;$('notificationBtn').onclick=()=>go('notifications');$('roleSelect').onchange=()=>{$('roleSelect').value=role};if($('downloadAndroidApp'))$('downloadAndroidApp').onclick=downloadAndroidApp;if($('entryInstallApp'))$('entryInstallApp').onclick=installLatestAndroidApp;if($('loginInstallApp'))$('loginInstallApp').onclick=installLatestAndroidApp;if($('openAndroidApp'))$('openAndroidApp').onclick=openInstalledAndroidApp;if($('dismissAndroidApp'))$('dismissAndroidApp').onclick=()=>{deferAndroidUpdate();sessionStorage.setItem(ANDROID_APP_SKIP_KEY,'1');hideAndroidAppPrompt()};$('fileInput').onchange=()=>{if($('fileInput').files[0]&&$('fileInput').dataset.kind==='restore')restore($('fileInput').files[0]);$('fileInput').value=''};$('scanInput').onchange=()=>{const files=Array.from($('scanInput').files||[]);if(files.length){if(['admin','manager','dispatcher','finance','workshop'].includes(role))handleAdminScanSelection(files);else uploadScan(files[0])}$('scanInput').value=''};$('loginForm').onsubmit=async e=>{e.preventDefault();$('loginError').textContent='';try{const login=$('loginEmail').value.trim(),result=await api('/api/auth/login',{method:'POST',body:{login,password:$('loginPassword').value}});authToken=result.token;sessionUser=result.user;appLocalStorage.setItem('angermund_token',authToken);appLocalStorage.setItem(QUICK_PIN_LOGIN_KEY,accountUsername(result.user)||login);$('loginPassword').value='';sessionStorage.removeItem(ANDROID_APP_SKIP_KEY);await boot(true)}catch(err){$('loginError').textContent=err.message}};if($('pinLoginBtn'))$('pinLoginBtn').onclick=loginWithQuickPin;if($('loginPin'))$('loginPin').addEventListener('keydown',e=>{if(e.key==='Enter'){e.preventDefault();loginWithQuickPin()}});refreshQuickPinLoginUi();window.addEventListener('online',flushDriverJobs);if('serviceWorker'in navigator)navigator.serviceWorker.register('/sw.js',{updateViaCache:'none'}).then(r=>r.update()).catch(()=>{});
+// Version check is independent of sign-in so a parked/signed-out device can
+// still learn about a new update on the next launch.
+setTimeout(()=>checkAndroidAppUpdate(),1600);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)checkAndroidAppUpdate()});
+window.addEventListener('online',()=>checkAndroidAppUpdate());appLocalStorage.setItem(STORE,JSON.stringify(db));const forceLogin=location.pathname.replace(/\/+$/,'')==='/login'||new URLSearchParams(location.search).get('login')==='1';if(forceLogin){stopDriverGpsWatch();authToken='';sessionUser=null;appLocalStorage.removeItem('angermund_token');if($('loginEmail'))$('loginEmail').value='';if($('loginPassword'))$('loginPassword').value='';if($('loginError'))$('loginError').textContent='';history.replaceState(null,'','/');$('loginScreen').classList.remove('hidden');refreshQuickPinLoginUi();setTimeout(showLoginPanel,80)}window.__angermundInitialized=true;if(authToken)boot().catch(()=>window.__recoverAngermundStartup?.());else{$('loginScreen').classList.remove('hidden');if(ENTRY_IS_NATIVE||forceLogin)showLoginPanel();dismissLoadingScreen()};if(androidBrowserSession())setTimeout(maybeOfferAndroidApp,450)
 
 // The splash remains only while the first session and view are being prepared.
 function dismissLoadingScreen(){
