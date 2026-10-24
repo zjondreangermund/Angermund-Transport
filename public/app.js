@@ -3689,12 +3689,12 @@ function refreshNativeGpsStatus(){
 }
 setInterval(()=>{if(!document.hidden)refreshNativeGpsStatus()},10000);
 // Native GPS status buttons are wired directly after every render or status update.
-function forceAndroidInstallPrompt(message='Latest Android app: v1.4.2'){
+function forceAndroidInstallPrompt(message='Latest Android app: v1.4.3'){
   if(!$('appInstallPrompt'))return;
   if($('appInstallStatus'))$('appInstallStatus').innerHTML='<b>'+esc(message)+'</b><br><span>Download and install the APK. Android may ask you to allow installs from this browser.</span>';
   $('appInstallPrompt').classList.remove('hidden')
 }
-function openAndroidInstallPrompt(){forceAndroidInstallPrompt('Angermund Transport Android v1.4.2 is ready to install.')}
+function openAndroidInstallPrompt(){forceAndroidInstallPrompt('Angermund Transport Android v1.4.3 is ready to install.')}
 async function postBrowserPhoneGps(position,label){
   const now=Date.now();if(now-lastPhoneGpsTestSentAt<15000)return;lastPhoneGpsTestSentAt=now;
   try{
@@ -3756,14 +3756,14 @@ function downloadAndroidApp(){
   sessionStorage.setItem(ANDROID_APP_SKIP_KEY,'1');
   if(runningInsideAndroidApp()){
     if(typeof window.AngermundNative?.openAndroidInstaller==='function'){
-      hideAndroidAppPrompt();window.AngermundNative.openAndroidInstaller();notify('Opening Chrome to download Android v1.4.2');return
+      hideAndroidAppPrompt();window.AngermundNative.openAndroidInstaller();notify('Opening Chrome to download Android v1.4.3');return
     }
     forceAndroidInstallPrompt('To update the old installed app, open this website in Chrome and tap Install App. The old WebView cannot install APK files directly.');
     return
   }
   hideAndroidAppPrompt();
-  const a=document.createElement('a');a.href='/download/android?v=1.4.2&ts='+Date.now();a.download='Angermund-Transport-v1.4.2.apk';
-  document.body.appendChild(a);a.click();a.remove();notify('Downloading the newest Android APK v1.4.2…')
+  const a=document.createElement('a');a.href='/download/android?v=1.4.3&ts='+Date.now();a.download='Angermund-Transport-v1.4.3.apk';
+  document.body.appendChild(a);a.click();a.remove();notify('Downloading the newest Android APK v1.4.3…')
 }
 function installLatestAndroidApp(){if(/Android/i.test(navigator.userAgent))downloadAndroidApp();else openAndroidInstallPrompt()}
 function startNativeBackgroundAlerts(){if(!authToken||!runningInsideAndroidApp()||typeof window.AngermundNative?.startBackgroundAlerts!=='function')return false;try{window.AngermundNative.startBackgroundAlerts(authToken);return true}catch{return false}}
