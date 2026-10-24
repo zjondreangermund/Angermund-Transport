@@ -1461,5 +1461,28 @@ html.modal-open{overflow:hidden!important}@media(max-width:760px){html:has(#side
 .assistant-tools{display:flex;gap:6px;flex-wrap:wrap;padding:4px 12px}.assistant-tools button,.assistant-read{color:#dcefff;background:#123756;border:1px solid #2c679b;border-radius:8px;padding:7px 9px;font-size:12px;cursor:pointer;min-height:36px}
 .assistant-tools [aria-pressed=true]{background:#a43232;border-color:#f99}.assistant-voice-status{display:block;padding:4px 12px;color:#bdcddd;font-size:11px}.assistant-read{margin-top:7px;padding:4px 7px;min-height:30px}
 @media(max-width:760px){.assistant-suggestions{max-height:65px;overflow-y:auto}.assistant-tools button{padding:6px;font-size:11px}.assistant-head{padding:9px 12px}.assistant-log{min-height:80px}}
-/* Keep every voice/upload action reachable even with a short phone viewport. */
-.assistant-panel{overflow-y:auto;overscroll-behavior:contain}.assistant-head,.assistant-suggestions,.assistant-form,.assistant-attachment,.assistant-tools,.assistant-voice-status,.assistant-foot{flex-shrink:0}.assistant-log{flex:1 0 100px;max-height:420px}
+/* Conversation-first assistant. Only messages scroll; extra tools are opt-in. */
+#angermundAssistantRoot [hidden]{display:none!important}
+.angermund-assistant-root.is-open>.assistant-launch{display:none}
+.assistant-panel{display:flex;flex-direction:column;overflow:hidden;width:min(480px,calc(100vw - 28px));height:min(760px,calc(100dvh - 100px));max-height:none}
+.assistant-head{position:relative;top:auto;flex:0 0 auto;min-height:54px;padding:8px 14px;gap:8px;box-sizing:border-box}
+.assistant-head>div{min-width:0;flex:1}.assistant-head b{font-size:16px}.assistant-close{flex:0 0 40px;height:40px;min-height:40px;line-height:1}
+.assistant-log{flex:1 1 0;min-height:0;max-height:none;overflow-y:auto;padding:14px;scroll-padding:14px;scrollbar-width:thin}
+.assistant-row{flex:0 0 auto;max-width:96%}.assistant-row p{font-size:15px;line-height:1.5}
+.assistant-suggestions,.assistant-tools{flex:0 0 auto;max-height:min(28dvh,180px);overflow-y:auto;overscroll-behavior:contain;padding:10px 12px;border-top:1px solid #23435e}
+.assistant-foot{flex-basis:100%;padding:3px 0 0;font-size:11px;background:transparent}
+.assistant-composer{flex:0 0 auto;min-width:0;border-top:1px solid #23435e;background:#0d243a;padding:8px 12px max(8px,env(safe-area-inset-bottom))}
+.assistant-form{padding:0;border:0;align-items:flex-end;gap:8px;background:transparent}
+.assistant-form textarea.assistant-text{box-sizing:border-box;min-height:44px;height:44px;max-height:100px;resize:none;padding:10px 12px;font-size:16px;line-height:22px;overflow-y:auto}
+.assistant-form button{height:44px;min-height:44px;min-width:44px;font-size:20px;flex:0 0 44px}
+.assistant-compose-actions{display:flex;gap:8px;align-items:center;padding-top:5px}
+.assistant-compose-actions>button{border:0;border-radius:8px;min-height:36px;padding:5px 10px;color:#dcefff;background:transparent;font-size:13px;cursor:pointer}
+.assistant-compose-actions>button:last-child{margin-left:auto}.assistant-compose-actions>[aria-pressed=true]{background:#a43232}
+.assistant-attachment{padding:0 0 6px;gap:7px;flex-wrap:nowrap}.assistant-file-name{flex:1;min-width:0;max-height:54px;overflow-y:auto;font-size:12px}.assistant-clear-file{flex:0 0 32px;min-height:32px}
+.assistant-voice-status{padding:3px 0 0;font-size:11px;line-height:1.3;max-height:44px;overflow-y:auto}
+@media(max-width:760px){
+ html.assistant-open,html.assistant-open body{overflow:hidden!important}
+ .angermund-assistant-root.is-open .assistant-panel{position:fixed;inset:auto;top:var(--assistant-viewport-top,0px);left:0;right:0;bottom:auto;width:100%;max-width:none;height:var(--assistant-viewport-height,100dvh);max-height:none;border-radius:0;border-width:0;box-sizing:border-box;padding-top:env(safe-area-inset-top)}
+ .assistant-head{min-height:52px;padding:6px 12px}.assistant-log{padding:12px;min-height:0}.assistant-row{padding:10px 12px}.assistant-suggestions{max-height:25dvh}
+ .assistant-composer{padding-left:10px;padding-right:10px}.assistant-tools button{font-size:12px;min-height:38px}
+}
