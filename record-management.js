@@ -35,13 +35,15 @@ function deleteRecord(state,kind,id,actor='Admin'){
   // Atomic cascade: all matching diesel/expense/MDC records disappear with
   // the trip; unaffected trips retain their own records. Keep full snapshots
   // in recordHistory for an accountable deletion trail.
-  const deletedDiesel=(state.diesel||[]).filter(x=>x.tripId===id);
-  const deletedExpenses=(state.expenses||[]).filter(x=>x.tripId===id);
+  const legIds=new Set((row.legs||[]).map(leg=>String(leg.id||'')).filter(Boolean));
+  const belongsToTrip=x=>x.tripId===id||(!x.tripId&&x.legId&&legIds.has(String(x.legId)));
+  const deletedDiesel=(state.diesel||[]).filter(belongsToTrip);
+  const deletedExpenses=(state.expenses||[]).filter(belongsToTrip);
   const deletedExpenseIds=new Set(deletedExpenses.map(x=>x.id));
   for(const item of deletedDiesel)related.push({kind:'diesel',record:structuredClone(item)});
   for(const item of deletedExpenses)related.push({kind:'expenses',record:structuredClone(item)});
-  state.diesel=(state.diesel||[]).filter(x=>x.tripId!==id);
-  state.expenses=(state.expenses||[]).filter(x=>x.tripId!==id);
+  state.diesel=(state.diesel||[]).filter(x=>!belongsToTrip(x));
+  state.expenses=(state.expenses||[]).filter(x=>!belongsToTrip(x));
   // The related expense may originate from a task or approval; clear any
   // links which would otherwise point to a now-deleted expense.
   for(const task of state.tasks||[]){
