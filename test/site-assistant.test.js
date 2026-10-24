@@ -18,6 +18,7 @@ test('invoices and tracking map to existing app routes',()=>{
  assert.equal(a.answer('Which customers have unpaid invoices?',{pages}).page,'invoices');
  assert.equal(a.answer('Show me truck GPS', {pages}).page,'tracking');
  assert.equal(a.answer('Create a new trip',{pages}).action,'new_trip');
+ assert.equal(a.answer('Create a new task',{pages:[...pages,{id:'tasks',label:'Tasks & Approvals',description:'Task management'}]}).action,'new_task');
 });
 test('role-sensitive absent pages never return forbidden routes or private figures',()=>{
  const limited=[{id:'tracking',label:'Live GPS & Geofences',description:'View GPS'}];
