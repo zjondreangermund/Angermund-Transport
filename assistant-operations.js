@@ -10,7 +10,8 @@ function moneyAmounts(s){const re=/(?:N\s*\$|NAD|ZAR|R\s*)([\d][\d,]*(?:\.\d{1,2
 const employees=s=>Array.isArray(s.employees)&&s.employees.length?s.employees:s.drivers||[];
 function person(s,q,kind='employee'){
  const rows=(kind==='driver'?s.drivers||[]:employees(s)).filter(x=>!['Inactive','Archived','Terminated'].includes(x.status));
- const found=rows.filter(x=>x.name&&has(q,x.name));
+ const full=rows.filter(x=>x.name&&has(q,x.name));
+ const found=full.length?full:rows.filter(x=>x.name&&has(q,String(x.name).trim().split(/\s+/)[0]));
  return found.length===1?{row:found[0]}:{error:found.length?'More than one person matched. Specify the full name.':'No unique '+kind+' found. Enter the exact name used in Angermund.'};
 }
 function ref(s,q){const found=(s.trips||[]).filter(x=>x.number&&T.tokenPresent(q,x.number));return found.length===1?{row:found[0]}:{error:found.length?'Multiple trip numbers detected. Specify one trip.':'Enter the exact trip number.'}}
@@ -62,7 +63,7 @@ function plan(message,s,now=Date.now()){
   if(!m)return err('Try: Create task to check ANG 12 tomorrow, high priority.');
   const due=/\b(?:due|on)\s+(20\d{2}-\d{2}-\d{2})\b/i.exec(q)?.[1]||(/tomorrow/i.test(q)?new Date(now+7200000+86400000).toISOString().slice(0,10):/\btoday\b/i.test(q)?new Date(now+7200000).toISOString().slice(0,10):'');
   if(due&&new Date(due+'T12:00:00Z').toISOString().slice(0,10)!==due)return err('Invalid task due date.');
-  let title=m[1].replace(/\b(?:due|on)\s+20\d{2}-\d{2}-\d{2}\b/ig,'').replace(/\b(?:tomorrow|today)\b/ig,'').replace(/[,.;]?\s*(?:high|critical|normal|low)\s*(?:priority)?\b/ig,'').trim();
+  let title=m[1].replace(/\b(?:due|on)\s+20\d{2}-\d{2}-\d{2}\b/ig,'').replace(/\b(?:tomorrow|today)\b/ig,'').replace(/[,.;]?\s*(?:high|critical|normal|low)\s*(?:priority)?\b/ig,'').trim().replace(/[,;:.\s]+$/,'');
   if(title.length<5||title.length>180)return err('Provide a task description between 5 and 180 characters.');
   const priority=/\bcritical\b/i.test(q)?'Critical':/\bhigh\b/i.test(q)?'High':/\blow\b/i.test(q)?'Low':'Normal';
   return{kind:k,old:'No task',next:title,values:{title,due,priority},description:'Create task: '+title,page:'tasks',
