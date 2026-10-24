@@ -6,6 +6,8 @@ const AssistantTripActions=require('./assistant-trip-actions');
 const AssistantOps=require('./assistant-operations');
 const AssistantExtra=require('./assistant-extra-actions');
 const AssistantPlatform=require('./assistant-platform');
+const AssistantJobs=require('./assistant-jobs');
+const AssistantBusiness=require('./assistant-business');
 const AssistantInsights=require('./assistant-live-insights');
 const PushDelivery=require('./push-delivery-policy');
 const TripSites=require('./trip-site-geofences');
@@ -1421,7 +1423,7 @@ require('./whiteboard-routes')(app,{auth,roles,readOpsState,mutateOpsState,store
 app.get('/api/state',auth,async(req,res)=>{const row=pool?(await q('SELECT payload,revision,updated_at FROM app_state WHERE id=1'))[0]:{payload:memory.state||{},revision:0};res.json(row)});
 app.put('/api/state',auth,roles('admin','manager','dispatcher','workshop','finance'),async(req,res)=>{
  if(!req.body||typeof req.body!=='object'||Array.isArray(req.body))return res.status(400).json({error:'Invalid state'});
- try{const incoming=req.body;delete incoming.whiteboardReviews;delete incoming.dailyPlatformTasks;removeWorkbookTests(incoming);pruneOperationalHistory(incoming);
+ try{const incoming=req.body;delete incoming.whiteboardReviews;delete incoming.dailyPlatformTasks;delete incoming.assistantSessions;delete incoming.assistantActions;delete incoming.assistantDocumentHashes;removeWorkbookTests(incoming);pruneOperationalHistory(incoming);
  const changed=await mutateOpsState(state=>{if((state.operationalResetVersion&&state.operationalResetVersion!==incoming.operationalResetVersion)||String(state.recordDeletionVersion||'')!==String(incoming.recordDeletionVersion||'')){const e=Error('Records changed. Refresh before saving.');e.status=409;throw e}protectServerArrival(incoming,state);Object.assign(state,incoming)});res.json({revision:changed.revision})}catch(e){res.status(e.status||500).json({error:e.message})}
 });
 
@@ -3718,7 +3720,7 @@ async function assistantNaturalCommand(text){
   }catch(e){console.warn('Natural-language command fallback:',e.message);return text}
 }
 const assistantPlatformHelpers={
- recalc:recalcTripCosts,trip:buildPlannedTrip,
+ recalc:recalcTripCosts,trip:buildPlannedTrip,payroll:generatePayrollPeriod,profile:payrollProfile,isDriver:PayrollEligibility.isDriver,
  editLoad(state,t,v){return editLoad(state,t,v,{ensureTripLegs,syncTripFromLegs,recalcTripCosts,isShunterTruckId,upsertImportedShunterRecon})},
  invoice(state,tripId,legId){const t=(state.trips||[]).find(t=>t.id===tripId);const legs=ensureTripLegs(state,t);return buildJourneyLegInvoice(state,tripId,legId||legs[0]?.id)},
  nblInvoice:buildNblConsolidatedInvoice,shunterInvoice:buildNblShunterInvoice,
@@ -3745,6 +3747,28 @@ async function assistantPlatformRequest(message,capabilities,pending=null){
   request.values=JSON.parse(request.values||'{}');return request;
  }catch(e){console.warn('Platform request interpretation:',e.message);return null;}
 }
+async function assistantJobJSON(system,message,attachment){
+ if(!OPENAI_API_KEY)throw Error('Server AI is not configured for this interpretation.');
+ const content=[{type:'input_text',text:message}];
+ if(attachment){if(attachment.mimetype==='application/pdf')content.push({type:'input_file',filename:attachment.originalname,file_data:'data:application/pdf;base64,'+attachment.buffer.toString('base64')});else content.push({type:'input_image',image_url:'data:'+attachment.mimetype+';base64,'+attachment.buffer.toString('base64')});}
+ const response=await fetch('https://api.openai.com/v1/responses',{method:'POST',signal:AbortSignal.timeout(45000),headers:{Authorization:'Bearer '+OPENAI_API_KEY,'Content-Type':'application/json'},body:JSON.stringify({model:process.env.SITE_ASSISTANT_MODEL||'gpt-6-luna',store:false,max_output_tokens:3000,input:[{role:'system',content:system},{role:'user',content}],text:{format:{type:'json_schema',name:'job_requests',strict:true,schema:{type:'object',properties:{requests:{type:'string'}},required:['requests'],additionalProperties:false}}}})});
+ if(!response.ok)throw Error('AI service could not prepare this job. Try explicit commands or retry.');const data=await response.json(),output=(data.output||[]).flatMap(o=>o.content||[]).find(o=>o.type==='output_text')?.text||data.output_text;return JSON.parse(output||'{}');
+}
+const assistantJobs=AssistantJobs.install(app,{
+ ...assistantPlatformHelpers,auth,read:readOpsState,mutate:mutateOpsState,key:OPENAI_API_KEY,scan:analyzeReceiptHybrid,archive:archiveStoredFile,jsonAI:assistantJobJSON,audioUpload:upload.single('audio'),
+ async saveDocument(connection,user,plan,outcome,document){
+  const at=new Date().toISOString(),pod=plan.operation==='pod';
+  if(pod){
+   const vals=[document.id,user.sub,plan.tripId,plan.values.legId||null,'POD','Assistant-approved batch POD',document.filename,document.mimeType,document.buffer,at];
+   if(connection)await connection.query('INSERT INTO trip_documents(id,user_id,trip_id,leg_id,kind,reference,filename,mime_type,content,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',vals);
+   else memory.tripDocuments.push({id:document.id,userId:user.sub,tripId:plan.tripId,legId:plan.values.legId||'',kind:'POD',reference:vals[5],filename:document.filename,mimeType:document.mimeType,content:document.buffer,createdAt:at});
+  }else{
+   const type=plan.operation==='diesel'?'fuel':'expense';
+   if(connection)await connection.query('INSERT INTO company_receipts(id,user_id,linked_type,linked_id,kind,filename,mime_type,content,created_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',[document.id,user.sub,type,outcome.entityId,'assistant-slip',document.filename,document.mimeType,document.buffer,at]);
+   else memory.companyReceipts.push({id:document.id,userId:user.sub,linkedType:type,linkedId:outcome.entityId,kind:'assistant-slip',filename:document.filename,mimeType:document.mimeType,content:document.buffer,createdAt:at});
+  }
+ }
+});
 const assistantCalls=new Map(),assistantPending=new Map();
 const assistantDrafts=new Map(),ASSISTANT_DRAFT_TTL=10*60*1000;
 setInterval(()=>{for(const [id,d] of assistantDrafts)if(d.expiresAt<Date.now()&&!d.inProgress)assistantDrafts.delete(id);for(const [id,d] of assistantPending)if(d.expiresAt<Date.now())assistantPending.delete(id)},60_000).unref();
@@ -3771,6 +3795,8 @@ app.post('/api/assistant/approve/:draftId',auth,async(req,res)=>{
    const archived=d.file?archiveStoredFile(d.file):null;
    const document=archived?{id:crypto.randomUUID(),...archived}:null;
    const change=await mutateOpsState(async(state,connection)=>{
+     const before=structuredClone(state);
+     const history=()=>{state.assistantActions??=[];state.assistantActions.unshift({id:crypto.randomUUID(),userId:req.user.sub,role:req.user.role,at:new Date().toISOString(),description:d.plan.description,changes:AssistantJobs.delta(before,state)});state.assistantActions=state.assistantActions.slice(0,30)};
      if(d.plan.kind==='platform'){
        const outcome=await AssistantPlatform.apply(state,d.plan,actor,req.user.role,assistantPlatformHelpers,document);
        if(document){
@@ -3785,7 +3811,7 @@ app.post('/api/assistant/approve/:draftId',auth,async(req,res)=>{
            else memory.companyReceipts.push({id:document.id,userId:req.user.sub,linkedType:type,linkedId:outcome.entityId,kind:'assistant-slip',filename:document.filename,mimeType:document.mimeType,content:document.buffer,createdAt:at});
          }
        }
-       return outcome;
+       history();return outcome;
      }
      const outcome=['trip_rename','trip_depart'].includes(d.plan.kind)?
        AssistantTripActions.apply(state,d.plan,actor):
@@ -3796,7 +3822,7 @@ app.post('/api/assistant/approve/:draftId',auth,async(req,res)=>{
        const trip=(state.trips||[]).find(x=>x.id===d.plan.tripId);
        if(trip)recalcTripCosts(state,trip);
      }
-     return outcome;
+     history();return outcome;
    });
    assistantDrafts.delete(id);
    if(d.plan.kind==='platform'&&d.plan.operation==='trip')try{await linkTripLegGeofences(change.result.entityId)}catch(e){console.warn('Trip saved; geofence linking needs retry:',e.message)}
@@ -3822,7 +3848,7 @@ app.post('/api/assistant/cancel/:draftId',auth,(req,res)=>{
  if(d.inProgress)return res.status(409).json({error:'Approval already in progress'});
  assistantDrafts.delete(d.id);res.json({cancelled:true});
 });
-app.post('/api/assistant/ask',auth,upload.single('document'),async(req,res)=>{
+app.post('/api/assistant/ask',auth,upload.array('document',20),async(req,res)=>{
   try{
     const userId=String(req.user?.sub||''),now=Date.now();
     const previous=(assistantCalls.get(userId)||[]).filter(t=>now-t<60_000);
@@ -3830,13 +3856,15 @@ app.post('/api/assistant/ask',auth,upload.single('document'),async(req,res)=>{
     previous.push(now);assistantCalls.set(userId,previous);
     if(typeof req.body?.context==='string'){try{req.body.context=JSON.parse(req.body.context)}catch{req.body.context={}}}
     if(typeof req.body?.history==='string'){try{req.body.history=JSON.parse(req.body.history)}catch{req.body.history=[]}}
-    const message=String(req.body?.message||'').trim();
+    req.file=req.files?.[0]||null;
+    let message=String(req.body?.message||'').trim();
     if(req.file&&!/^(?:image\/(?:jpeg|png|webp)|application\/pdf)$/.test(req.file.mimetype))return res.status(400).json({error:'Attach a JPG, PNG, WebP or PDF document.'});
-    if(!message||message.length>1200)return res.status(400).json({error:'Enter a question under 1,200 characters.'});
+    if(!message||message.length>4000)return res.status(400).json({error:'Enter an instruction under 4,000 characters.'});
 
+    try{if(await assistantJobs.handle(req,res))return;message=String(req.body.message||message);}catch(e){return res.status(e.status===403?403:e.status===429?429:200).json({answer:e.message,error:e.status===403?e.message:undefined,source:'workflow-clarification'});}
     // Permission-scoped capability list comes from the server, never the browser.
-    const capabilities=AssistantPlatform.catalog(req.user.role);
-    if(/^(?:help|what can you do|show capabilities|list actions)[?.! ]*$/i.test(message))return res.json({answer:'I can prepare approved changes for: '+capabilities.map(x=>x.operation+' '+x.collection).join(', ')+'. Also loans, tasks, driver/truck assignment, trip numbers and departure. Attach a slip or POD with your instruction. Use exact references; missing details are requested before saving.',source:'capabilities',capabilities});
+    const capabilities=[...AssistantPlatform.catalog(req.user.role),...AssistantBusiness.catalog(req.user.role)];
+    if(/^(?:help|what can you do|show capabilities|list actions)[?.! ]*$/i.test(message))return res.json({answer:capabilities.length?'You can ask for changes permitted by your account: '+[...new Set(capabilities.map(x=>({master_create:'Create master records',master_edit:'Edit master records',master_archive:'Archive master records',nbl_invoice:'NBL consolidated billing',shunter_invoice:'Shunter billing',receipt_assign:'Reassign slips',trip:'Create trips',quote:'Quotations',invoice:'Invoices',payment:'Record received payments',payroll_profile:'Payroll profiles and salaries',payroll:'Generate payroll drafts',overhead:'Record overheads',settings:'Operational settings',pod:'Attach PODs',diesel:'Capture diesel',expense:'Capture purchases',maintenance:'Workshop work orders',edit:'Edit records',delete:'Delete records'})[x.operation]||x.operation))].join(', ')+'. Also loans/tasks/assignments, grouped jobs, daily brief, truck profit comparisons (YYYY-MM), tender document review, voice dictation, action history and undo. Attach slips/PODs or use numbered lines to map batch files. Review every change before saving.':'You can ask questions about pages available to your account and dictate instructions. Business changes require the responsible staff role.',source:'capabilities',capabilities});
     const recordReply=AssistantPlatform.read(message,await readOpsState(),req.user.role);
     if(recordReply)return res.json(recordReply);
     let platformRequest=AssistantPlatform.parse(message);
@@ -3848,7 +3876,7 @@ app.post('/api/assistant/ask',auth,upload.single('document'),async(req,res)=>{
       if(clarificationDate)platformRequest={...unfinished.request,values:{...unfinished.request.values,date:clarificationDate}};
       else if(OPENAI_API_KEY&&message.length<500)platformRequest=await assistantPlatformRequest(message,capabilities,unfinished.request);
     }
-    if(wantsPlatform&&OPENAI_API_KEY&&capabilities.length&&(!platformRequest||platformRequest.operation==='quote'&&(!platformRequest.values.client||!platformRequest.values.route))){const interpreted=await assistantPlatformRequest(message,capabilities);if(interpreted)platformRequest=interpreted;}
+    if(wantsPlatform&&OPENAI_API_KEY&&capabilities.length&&(!platformRequest||platformRequest.operation==='quote'&&(!platformRequest.values.client||!platformRequest.values.route))){const interpreted=await assistantPlatformRequest(message,AssistantPlatform.catalog(req.user.role));if(interpreted)platformRequest=interpreted;}
 
     if(platformRequest){
       try{
