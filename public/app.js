@@ -198,7 +198,9 @@ window.angermundAssistantBridge={
   context:siteAssistantContext,
   navigate(id){if(!canView(id))return false;go(id);return true},
   openNewTrip(){if(!['admin','manager','dispatcher'].includes(role))return false;go('dispatch');openForm('trip');return true},
-  openNewTask(){if(!['admin','manager'].includes(role))return false;go('tasks');openTaskForm();return true}
+  openNewTask(){if(!['admin','manager'].includes(role))return false;go('tasks');openTaskForm();return true},
+  async reload(){return refreshCentralState(false)},
+  openTrip(id){if(!canView('trips')||!get('trips',id).id)return false;go('trips');openTrip(id);return true}
 };
 const defaultPageForRole=(r=role)=>r==='driver'?'driverPortal':r==='site_worker'?'tasks':'command';
 let navigationReady=false,lastExitBackAt=0,closingModalFromBack=false;
