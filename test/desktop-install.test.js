@@ -6,7 +6,7 @@ test('desktop manifest is standalone with an existing 512px Windows icon',()=>{
  const m=JSON.parse(read('public/manifest.json'));
  assert.equal(m.display,'standalone');assert.equal(m.id,'/');
  assert.ok(m.icons.some(x=>x.src==='/angermund-icon.png'&&x.sizes==='512x512'&&x.type==='image/png'));
- for(const icon of m.icons)assert.ok(fs.existsSync(path.join(root,'public',icon.src.replace(/^\//,''))));
+ for(const icon of m.icons)assert.ok(fs.existsSync(path.join(root,'public',icon.src.replace(/^\//,'').split('?')[0])));
 });
 test('install button dispatches desktop users to PWA installer instead of Android APK',()=>{
  const app=read('public/app.js');
