@@ -66,7 +66,7 @@ function summary(query,s,user,now=new Date().toISOString()){
   const rows=(s.expenses||[]).filter(e=>/review|pending/i.test(e.status||''))
    .map(e=>(e.category||'Expense')+' · '+fmt(e.amount)+' · trip '+(trips.find(t=>t.id===e.tripId)?.number||'Unlinked')+
      (e.receiptMissing?' · receipt missing':''));
-  return list('Expenses awaiting review ('+rows.length+'):',rows,'expenses');
+  return list('Expenses awaiting review ('+rows.length+'):',rows,'roadCharges');
  }
  if(k==='trip_status'){
   const xs=trips.filter(t=>t.number&&Trip.tokenPresent(query,t.number));
