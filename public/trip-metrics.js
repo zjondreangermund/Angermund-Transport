@@ -20,7 +20,7 @@ function lastRefillRemainder(t={},records=[],kmPerL=2.2){
  const end=n(t.endKm),start=n(t.startKm),journey=distance(t);
  const estimatedEnd=!end&&start>0&&journey.distance>0;
  const closingOdo=end>0?end:(estimatedEnd?start+journey.distance:0);
- const readings=records.map(r=>n(r.odometer)).filter(v=>v>0).sort((a,b)=>a-b);
+ const readings=records.filter(r=>!t.id||!r.tripId||String(r.tripId)===String(t.id)).map(r=>n(r.odometer)).filter(v=>v>0).sort((a,b)=>a-b);
  const lastSlipOdometer=readings[readings.length-1]||0;
  const unready=(reason)=>({ready:false,reason,km:0,lastSlipOdometer,closingOdometer:closingOdo||0,estimatedEnd,estimatedLitres:null});
  if(!readings.length)return unready('No diesel slip odometer recorded on this trip');
