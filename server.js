@@ -1,3 +1,4 @@
+const {preserveTrips}=require('./preserve-trips');
 const DriverAccess=require('./driver-access');
 const PhoneTracking=require('./phone-trip-tracking');
 const TestJourney=require('./phone-test-journey');
@@ -1437,7 +1438,7 @@ app.get('/api/state',auth,async(req,res)=>{const row=pool?(await q('SELECT paylo
 app.put('/api/state',auth,roles('admin','manager','dispatcher','workshop','finance'),async(req,res)=>{
  if(!req.body||typeof req.body!=='object'||Array.isArray(req.body))return res.status(400).json({error:'Invalid state'});
  try{const incoming=req.body;delete incoming.whiteboardReviews;delete incoming.dailyPlatformTasks;delete incoming.assistantSessions;delete incoming.assistantActions;delete incoming.assistantDocumentHashes;removeWorkbookTests(incoming);pruneOperationalHistory(incoming);
- const changed=await mutateOpsState(state=>{if((state.operationalResetVersion&&state.operationalResetVersion!==incoming.operationalResetVersion)||String(state.recordDeletionVersion||'')!==String(incoming.recordDeletionVersion||'')){const e=Error('Records changed. Refresh before saving.');e.status=409;throw e}protectServerArrival(incoming,state);Object.assign(state,incoming)});res.json({revision:changed.revision})}catch(e){res.status(e.status||500).json({error:e.message})}
+ const changed=await mutateOpsState(state=>{if((state.operationalResetVersion&&state.operationalResetVersion!==incoming.operationalResetVersion)||String(state.recordDeletionVersion||'')!==String(incoming.recordDeletionVersion||'')){const e=Error('Records changed. Refresh before saving.');e.status=409;throw e}preserveTrips(incoming,state);protectServerArrival(incoming,state);Object.assign(state,incoming)});res.json({revision:changed.revision})}catch(e){res.status(e.status||500).json({error:e.message})}
 });
 
 app.delete('/api/records/:kind/:id',auth,async(req,res)=>{
@@ -2717,6 +2718,7 @@ app.patch('/api/payroll/:id',auth,roles('admin','manager','finance'),async(req,r
   }catch(e){res.status(e.status||500).json({error:e.message})}
 });
 async function buildPlannedTrip(state,body,actor){
+      if(!require('./operational-cutoff').importAllowed(body.date)){const e=Error('Choose a valid trip date on or after 2026-09-20');e.status=400;throw e}
       state.trips??=[];state.trucks??=[];state.drivers??=[];state.routes??=[];
       const useManualRoute=body.routeId===ManualTripRoute.MANUAL_ROUTE_ID;
       const route=useManualRoute?ManualTripRoute.manualRoute(body,state.routes):
@@ -2757,7 +2759,7 @@ async function buildPlannedTrip(state,body,actor){
         dieselCost:0,tolls:0,allowance:0,other:0,
         status,stage,pod:false,approved:false,settlementStatus:'Pending',
         shunter:isShunterTruckId(body.truckId),tripType:isShunterTruckId(body.truckId)?'Shunter':'Transport',
-        createdAt:new Date().toISOString(),createdBy:actor
+        source:'manual',createdAt:new Date().toISOString(),createdBy:actor
       };
       syncTripFromLegs(state,trip);recalcTripCosts(state,trip);
       state.trips.unshift(trip);

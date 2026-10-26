@@ -2,6 +2,7 @@
 // Plans contain data only. The server owns permissions, resolution and execution.
 const crypto=require('node:crypto');
 const TruckTrip=require('./assistant-trip-resolver');
+const TripSearch=require('./trip-search');
 const Records=require('./record-management');
 const Diesel=require('./manual-diesel');
 const Costing=require('./public/quote-costing');
@@ -220,6 +221,7 @@ async function apply(s,p,actor,role,h={},document=null){
  return{...result,entityId:row?.id||p.entityId||p.tripId,recordType:({quotes:'quote',invoices:'invoice',expenses:'expense',trips:'trip'})[p.collection]||p.collection,tripId:result.tripId||p.tripId||'',page:p.page};
 }
 function read(message,s,role){
+ if(TripSearch.isQuery(message))return Records.allowed('trips',role)?TripSearch.reply(s,message):{answer:'Your account cannot view those records.',source:'record-permission'};
  const m=/^(?:show|find|list|search|view)\s+(?:my\s+)?(invoices?|quotations?|quotes?|diesel|expenses?|maintenance|trips?|loans?|payroll|tyres?|inspections?|incidents?|overheads?)(?:\s+(.+?))?[?.!]*$/i.exec(String(message||'').trim());
  const tender=/\b(?:tender|tendering)\b/i.test(message)&&!/\b(?:create|generate|delete|edit|change|make)\b/i.test(message);
  if(!m&&!tender)return null;
@@ -227,7 +229,13 @@ function read(message,s,role){
  if(!c||!Records.allowed(c,role))return{answer:'Your account cannot view those records.',page:null,source:'record-permission'};
  const term=key(m?.[2]||'');
  if(c==='trips'&&/\bang[\s-]*\d+\b|\btruck\b/i.test(term)){try{const t=TruckTrip.resolve(s,term),truck=(s.trucks||[]).find(x=>x.id===t.truckId),route=(s.routes||[]).find(x=>x.id===t.routeId);return{answer:[truck?.fleetName,t.date,route?.name||t.load,t.status].filter(Boolean).join(' · '),page:'trips',source:'live-records'}}catch(e){return{answer:e.message,page:'trips',source:'operation-clarification'}}}
- const rows=(s[c]||[]).filter(r=>!term||[r.id,r.number,r.slip,r.receiptNo,r.reference,r.supplier,r.status,r.date,r.period].some(v=>key(v).includes(term))).slice(0,12);
+ const search=TripSearch.terms(term),related=(k,id)=>(s[k]||[]).find(x=>x.id===id)||{};
+ const rows=(s[c]||[]).filter(r=>{
+   const t=related('trips',r.tripId),date=String(r.date||r.period||'');
+   if(search.date&&!(date.slice(5,7)===search.date.month&&date.slice(8,10)===search.date.day&&(!search.date.year||date.slice(0,4)===search.date.year)))return false;
+   const text=key([r.id,r.number,r.slip,r.receiptNo,r.reference,r.supplier,r.status,r.date,r.period,r.description,r.notes,r.category,r.title,t.number,t.load,related('trucks',r.truckId||t.truckId).fleetName,related('drivers',r.driverId||t.driverId).name,related('clients',r.clientId||t.clientId).name,related('routes',t.routeId).name].join(' ')).replace(/\bang[\s-]*0*(\d+)\b/g,'ang$1');
+   return search.tokens.every(v=>text.includes(v));
+ }).slice(0,12);
  const lines=rows.map(r=>[r.number||r.slip||r.receiptNo||r.id,r.date||r.period,r.status,r.supplier,r.amount!==undefined?'N$ '+r.amount:r.quotedIncome!==undefined?'Quote N$ '+r.quotedIncome:r.litres!==undefined?r.litres+' L':'',r.costing?'Cost N$ '+r.estimatedCost+'; profit N$ '+r.expectedProfit+'; '+r.distance+' actual km':'',r.id].filter(Boolean).join(' · '));
  return{answer:(tender?'Tender pricing uses saved route quotations with diesel, Namibia MDC, driver, maintenance, tyres, overhead and margin breakdowns. Confirm distances, empty travel and costs before submission. Saved quotations:\n':'Current '+c+':\n')+(lines.join('\n')||'No matching records.')+'\nUse an exact reference or ID when requesting a change.',page:pages[c],source:'live-records'};
 }
