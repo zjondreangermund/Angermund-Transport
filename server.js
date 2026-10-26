@@ -13,6 +13,7 @@ const AssistantJobs=require('./assistant-jobs');
 const AssistantBusiness=require('./assistant-business');
 const AssistantInsights=require('./assistant-live-insights');
 const TripMetrics=require('./public/trip-metrics');
+const TruckFuelIntervals=require('./truck-fuel-intervals');
 const PushDelivery=require('./push-delivery-policy');
 const TripSites=require('./trip-site-geofences');
 const {resolveMobileGps}=require('./mobile-gps');
@@ -1437,6 +1438,11 @@ app.post('/api/approvals/:id/decision',auth,roles('admin','manager','finance'),u
 
 require('./whiteboard-routes')(app,{auth,roles,readOpsState,mutateOpsState,storeCompanyReceipt});
 
+app.get('/api/admin/truck-fuel-intervals',auth,roles('admin','manager','finance','dispatcher'),async(req,res)=>{
+ try{const state=await readOpsState();const truckId=String(req.query.truckId||'');if(!truckId||(state.trucks||[]).every(t=>t.id!==truckId))return res.status(400).json({error:'Valid truckId required'});
+ res.json({...TruckFuelIntervals.truckFuel(state,truckId),trips:(state.trips||[]).filter(t=>t.truckId===truckId).map(t=>({id:t.id,number:t.number,date:t.date,...TruckFuelIntervals.estimateTripFuel(state,t)}))});}
+ catch(e){res.status(400).json({error:e.message})}
+});
 app.get('/api/admin/trip-payroll-diagnostics',auth,roles('admin','manager','finance'),async(req,res)=>{
  try{const state=await readOpsState();res.json(TripPayrollDiagnostics.inspect(state,String(req.query.period||monthPeriod(new Date()))))}
  catch(e){res.status(400).json({error:e.message})}
@@ -1512,6 +1518,12 @@ function recalcTripCosts(state,t){
   const hasTollExpense=expenses.some(x=>/^toll$/i.test(String(x.category||'')));
   const legacyToll=hasTollExpense?0:num(t.tolls),allowance=num(t.allowance),other=num(t.other);
   const total=diesel+expense+legacyToll+allowance+other;
+  // Fuel purchases remain truck transactions. Keep actual receipt spend distinct from
+  // estimated consumption per journey so a refill never assigns all fuel to one trip.
+  const allocated=TruckFuelIntervals.estimateTripFuel(state,t);
+  t.estimatedFuelCost=allocated.estimatedCost;
+  t.estimatedFuelLitres=allocated.estimatedLitres;
+  t.fuelAllocationSource=allocated.source;
   t.dieselCost=Number(diesel.toFixed(2));
   t.expenseCost=Number(expense.toFixed(2));
   t.actualTripCost=Number(total.toFixed(2));
@@ -1533,7 +1545,7 @@ function serverSouthAfricaTrip(state,t){
 function serverTripRate(state,t,configured){
   if(num(configured)>0)return num(configured);
   if(serverSouthAfricaTrip(state,t))return .60;
-  const efficiency=serverFuelMetrics(state,t).kmPerL;
+  const efficiency=TruckFuelIntervals.truckFuel(state,t.truckId).latest?.kmPerL||0;
   return efficiency>=2.4?.50:efficiency>=2.3?.40:.30
 }
 function serverIncentiveFor(state,t){return 0}
@@ -3387,6 +3399,7 @@ app.patch('/api/admin/diesel/:id',auth,roles('admin','manager','dispatcher','fin
       const oldTrip=(state.trips||[]).find(x=>x.id===rec.tripId);
       for(const key of ['litres','price','odometer','printedTotal'])if(body[key]!==undefined)rec[key]=num(body[key]);
       for(const key of ['supplier','slip'])if(body[key]!==undefined)rec[key]=String(body[key]||'');
+      if(body.fullTank!==undefined)rec.fullTank=body.fullTank===true;
       if(body.verified!==undefined)rec.verified=Boolean(body.verified);
       if(body.status!==undefined)rec.status=String(body.status||'');
       if(num(rec.litres)<=0){const e=Error('Diesel litres must be greater than zero');e.status=400;throw e}

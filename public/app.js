@@ -3405,12 +3405,13 @@ function openDieselReview(recordId){
     +'<div class="field"><label>Receipt total</label><input id="drTotal" type="number" step="0.01" value="'+num(x.printedTotal||fuelRecordCost(x))+'"></div>'
     +'<div class="field"><label>Price / litre</label><input id="drPrice" type="number" step="0.0001" value="'+num(x.price)+'"></div>'
     +'<div class="field"><label>Odometer</label><input id="drOdo" type="number" step="1" value="'+num(x.odometer)+'"></div>'
+    +'<div class="field"><label><input type="checkbox" id="drFullTank" '+(x.fullTank?'checked':'')+'> Tank filled completely</label></div>'
     +'<div class="field"><label>Supplier</label><input id="drSupplier" value="'+esc(x.supplier||'')+'"></div>'
     +'<div class="field"><label>Slip / receipt no.</label><input id="drSlip" value="'+esc(x.slip||'')+'"></div></div>'
     +'<div class="diesel-review-summary"><span>Status</span><b>'+(x.verified?'Verified':'Awaiting review')+'</b><span>Driver</span><b>'+esc(driver(x.driverId))+'</b><span>Scope</span><b>'+esc(t.number||'Company / fleet')+'</b></div>'
     +'<div class="form-actions"><button type="button" class="ghost" id="cancelForm">Close</button>'+(uploadId?'<button type="button" class="ghost" id="viewDieselReceipt">View receipt</button>':'')+'<button type="button" class="ghost" id="saveDieselCorrection">Save correction</button><button type="button" class="primary" id="approveDiesel">✓ Approve & verify</button>'+(['admin','finance'].includes(role)?'<button type="button" class="danger" id="deleteDiesel">Delete record</button>':'')+'</div>';
   $('modal').classList.remove('hidden');
-  const body=verified=>({litres:num($('drLitres').value),printedTotal:num($('drTotal').value),price:num($('drPrice').value),odometer:num($('drOdo').value),supplier:$('drSupplier').value.trim(),slip:$('drSlip').value.trim(),verified});
+  const body=verified=>({litres:num($('drLitres').value),printedTotal:num($('drTotal').value),price:num($('drPrice').value),odometer:num($('drOdo').value),supplier:$('drSupplier').value.trim(),slip:$('drSlip').value.trim(),fullTank:$('drFullTank').checked,verified});
   const save=async verified=>{try{await api('/api/admin/diesel/'+encodeURIComponent(recordId),{method:'PATCH',body:body(verified)});$('modal').classList.add('hidden');await refreshCentralState(false);if(x.tripId)openTrip(x.tripId);else{page='diesel';render()}notify(verified?'Diesel slip verified':'Diesel values corrected')}catch(e){notify(e.message)}};
   $('cancelForm').onclick=()=>{$('modal').classList.add('hidden');if(x.tripId)openTrip(x.tripId)};
   if($('viewDieselReceipt'))$('viewDieselReceipt').onclick=()=>x.receiptSource==='company'?openCompanyReceiptFile(uploadId):openDriverUploadFile(uploadId);
