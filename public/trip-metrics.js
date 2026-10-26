@@ -40,7 +40,7 @@ function lastRefillRemainder(t={},records=[],kmPerL=2.2){
  const rate=n(kmPerL)>0?n(kmPerL):2.2;
  return{ready:true,reason:'',km,lastSlipOdometer,closingOdometer:closingOdo,estimatedEnd,
    estimatedLitres:Number((km/rate).toFixed(2)),estimateKmPerL:rate,
-   distanceSource:estimatedEnd?'Trip start + saved route/Excel distance (estimate)':'Depot arrival odometer'};
+   distanceSource:estimatedEnd?(gpsReliable(t)?'Trip start + continuous GPS distance (estimated odometer)':'Trip start + saved route/Excel distance (estimate)'):'Depot arrival odometer'};
 }
 const api={distance,fuel,lastRefillRemainder,gpsReliable};if(typeof module==='object'&&module.exports)module.exports=api;else root.TripMetrics=api;
 })(typeof globalThis!=='undefined'?globalThis:this);
