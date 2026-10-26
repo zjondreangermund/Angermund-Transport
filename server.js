@@ -1525,7 +1525,7 @@ function syncTripFromLegs(state,t){
   return t
 }
 function serverTripLegSummary(state,t){
-  const legs=ensureTripLegs(state,t);return{count:legs.length,income:legs.reduce((a,x)=>a+calculateLegIncome(x),0),distance:TripMetrics.distance(t).distance}
+  const legs=ensureTripLegs(state,t);return{count:legs.length,income:legs.reduce((a,x)=>a+calculateLegIncome(x),0),distance:TripMetrics.distance(t,(state.diesel||[]).filter(x=>x.tripId===t.id)).distance}
 }
 function driverFuelRecordCost(x){const total=num(x.printedTotal)||num(x.total);return total>0?total:num(x.litres)*num(x.price)}
 function recalcTripCosts(state,t){
@@ -1596,7 +1596,7 @@ function calculatePayrollRecord(state,employee,period,existing=null){
   const trips=driver?PayrollTripLink.eligibleTrips(state,driver,start,end):[];
   const tripKm=trips.reduce((a,t)=>a+serverTripLegSummary(state,t).distance,0),tripRatePerKm=driver?num(existing?.tripRatePerKm??p.tripRatePerKm):0;
   const tripPay=trips.reduce((a,t)=>a+serverTripLegSummary(state,t).distance*serverTripRate(state,t,tripRatePerKm),0);
-  const tripBreakdown=trips.map(t=>{const distance=serverTripLegSummary(state,t).distance,rate=serverTripRate(state,t,tripRatePerKm),legs=t.legs?.length?t.legs:[t];return{tripId:t.id,number:t.number||t.id,date:t.date,truck:(state.trucks||[]).find(x=>x.id===t.truckId)?.fleetName||t.truckId||'',route:legs.map(l=>(state.routes||[]).find(x=>x.id===l.routeId)?.name||'').filter(Boolean).join(' → '),load:legs.map(l=>l.load||'').filter(Boolean).join(' / '),distance,rate,pay:Number((distance*rate).toFixed(2))}});
+  const tripBreakdown=trips.map(t=>{const evidence=TripMetrics.distance(t,(state.diesel||[]).filter(x=>x.tripId===t.id)),distance=evidence.distance,rate=serverTripRate(state,t,tripRatePerKm),legs=t.legs?.length?t.legs:[t];return{tripId:t.id,number:t.number||t.id,date:t.date,truck:(state.trucks||[]).find(x=>x.id===t.truckId)?.fleetName||t.truckId||'',route:legs.map(l=>(state.routes||[]).find(x=>x.id===l.routeId)?.name||'').filter(Boolean).join(' → '),load:legs.map(l=>l.load||'').filter(Boolean).join(' / '),distance,distanceSource:evidence.distanceSource,partial:Boolean(evidence.partial),rate,pay:Number((distance*rate).toFixed(2))}});
   const incentive=0;
   const reimbursements=driver?(state.expenses||[]).filter(x=>x.driverId===driver.id&&inPeriod(x.date)&&x.reimbursable!==false&&x.status==='Approved').reduce((a,x)=>a+num(x.amount),0):0;
   const advances=driver?(state.advances||[]).filter(x=>x.driverId===driver.id&&inPeriod(x.date)&&x.status!=='Reconciled').reduce((a,x)=>a+num(x.amount),0):0;
