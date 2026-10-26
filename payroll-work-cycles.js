@@ -12,6 +12,20 @@ function bounds(period){
  return {monthStart:at(y,m-1,1),monthEndExclusive:at(y,m,1),
   tripStart:at(y,m-2,21),tripEndInclusive:at(y,m-1,20),tripEndExclusive:at(y,m-1,21)};
 }
+function cycleForPeriod(state,period){
+ const fallback=bounds(period);
+ const relevant=(state.invoices||[]).filter(i=>i.consolidated===true&&!i.shunterRecon&&
+   iso(i.periodEnd).slice(0,7)===period&&!/cancelled|void|deleted/i.test(String(i.status||''))&&
+   /^\d{4}-\d{2}-\d{2}$/.test(String(i.periodStart||''))&&/^\d{4}-\d{2}-\d{2}$/.test(String(i.periodEnd||'')));
+ if(!relevant.length)return {...fallback,invoiceId:null,invoiceNumber:null,source:'NBL standard cutoff (invoice not yet created)'};
+ const unique=[...new Set(relevant.map(i=>iso(i.periodStart)+'|'+iso(i.periodEnd)))];
+ if(unique.length>1)throw Error('Conflicting NBL invoice billing dates for '+period+'. Resolve invoice cycles before recalculating payroll.');
+ const invoice=relevant[0],start=iso(invoice.periodStart),end=iso(invoice.periodEnd);
+ if(start>end)throw Error('NBL invoice dates are invalid for '+period);
+ const after=new Date(Date.parse(end+'T00:00:00Z')+86400000).toISOString().slice(0,10);
+ return {...fallback,tripStart:start,tripEndInclusive:end,tripEndExclusive:after,
+   invoiceId:invoice.id,invoiceNumber:invoice.number||'',source:'NBL invoice '+(invoice.number||'')};
+}
 function completionDate(t){
  return iso(t.deliveredDate||t.completedDate||t.closedDate||t.date);
 }
@@ -72,4 +86,4 @@ function workdays(state,driver,start,endExclusive){
 function isDefaultShunterDriver(state,driver){
  return Boolean(driver&&(state.trucks||[]).some(t=>isShunter(t.id)&&String(t.defaultDriverId||'')===String(driver.id)));
 }
-module.exports={bounds,completionDate,isShunter,tripWorked,reconWorked,assignmentForDay,workdays,isDefaultShunterDriver,DAILY_BONUS,DAY_BONUS_POOL,STANDARD_WORKDAYS};
+module.exports={bounds,cycleForPeriod,completionDate,isShunter,tripWorked,reconWorked,assignmentForDay,workdays,isDefaultShunterDriver,DAILY_BONUS,DAY_BONUS_POOL,STANDARD_WORKDAYS};
