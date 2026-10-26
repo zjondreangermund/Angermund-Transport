@@ -3394,7 +3394,6 @@ async function gpsIn(req,res,source){
        const depots=fences.filter(isCompanyDepot),zones=linkedTripZones(route,leg,trip,fences),depot=zones?depotGeofenceForTrip(fences,zones):(depots.length===1?depots[0]:null);
        let navRoute=route;
        // A geofence may have been linked by ID without route latitude/longitude.
-       const zones=linkedTripZones(route,leg,trip,fences);
        if(zones)navRoute={...route,loadLat:zones.load.latitude,loadLon:zones.load.longitude,loadName:zones.load.name,
          offloadLat:zones.offload.latitude,offloadLon:zones.offload.longitude,offloadName:zones.offload.name};
        const navigation=TripGps.navigation(trip,navRoute,depot,p);
