@@ -14,6 +14,7 @@ const AssistantBusiness=require('./assistant-business');
 const AssistantInsights=require('./assistant-live-insights');
 const TripMetrics=require('./public/trip-metrics');
 const TripGps=require('./trip-gps-progress');
+const TripGeofenceTimeline=require('./trip-geofence-timeline');
 const PushDelivery=require('./push-delivery-policy');
 const TripSites=require('./trip-site-geofences');
 const {resolveMobileGps}=require('./mobile-gps');
@@ -3351,7 +3352,19 @@ async function rebuildTripGps(tripId){
    offloadLon:offFence?.longitude??zones?.offload?.longitude??route?.offloadLon,
    offloadName:offFence?.name||zones?.offload?.name||route?.offloadName};
   const progress=TripGps.rebuild(trip,rows,r,depot);
-  if(progress)trip.gpsProgress=progress;
+  if(progress){
+   const stops=TripGeofenceTimeline.chain(trip,state.routes||[],fences);
+   // Reconstruct geofence transitions when queued phone GPS was uploaded offline.
+   const history={...trip};
+   delete history.gpsProgress;
+   for(const row of rows){
+    const point={...row,vehicleId:row.vehicleId||trip.truckId,tripId:row.tripId||trip.id,recordedAt:new Date(row.recordedAt).toISOString()};
+    if(TripGps.attach(history,point,Date.parse(point.recordedAt)+1000))
+      TripGeofenceTimeline.update(history,point,stops);
+   }
+   if(history.gpsProgress?.geofenceTimeline)progress.geofenceTimeline=history.gpsProgress.geofenceTimeline;
+   trip.gpsProgress=progress;
+  }
   return{tripId:trip.id,rawSignals:rows.length,acceptedSignals:progress?.points||0,
    gpsKm:progress?.observedKm||0,reliable:TripMetrics.gpsReliable(trip),
    coverageGaps:progress?.gaps||0,navigation:progress?.navigation||null,
@@ -3410,9 +3423,11 @@ async function gpsIn(req,res,source){
          offloadLat:linkedOff?.latitude??zones?.offload?.latitude??route?.offloadLat,
          offloadLon:linkedOff?.longitude??zones?.offload?.longitude??route?.offloadLon,
          offloadName:linkedOff?.name||zones?.offload?.name||route?.offloadName};
+       const chain=TripGeofenceTimeline.chain(trip,state.routes||[],fences);
+       const rolling=TripGeofenceTimeline.update(trip,p,chain);
        const navigation=TripGps.navigation(trip,navRoute,depot,p);
        return{tripId:trip.id,observedKm:trip.gpsProgress.observedKm,points:trip.gpsProgress.points,
-         reliable:TripMetrics.gpsReliable(trip),navigation};
+         reliable:TripMetrics.gpsReliable(trip),navigation,geofenceTimeline:rolling};
      });
      if(result.result)p.tripProgress=result.result;
      const current=await readOpsState(),completed=(current.trips||[]).find(t=>t.id===trackedTripId);
