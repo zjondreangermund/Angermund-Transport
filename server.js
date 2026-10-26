@@ -23,6 +23,7 @@ const {isCompanyDepot,canConfirmGps,releaseVehicle,protectServerArrival}=require
 const {applyOperationalCutoff:applyOperationalCutoffDb}=require('./operational-cutoff-db');
 const {CUTOFF:OPS_CUTOFF,VERSION:OPS_CUTOFF_VERSION,importAllowed,pruneOperationalHistory}=require('./operational-cutoff');
 const PayrollEligibility=require('./public/payroll-eligibility');
+const PayrollTripLink=require('./payroll-trip-link');
 const {allowed:canManageRecord,deleteRecord,editRecord}=require('./record-management');
 const {calculate:calculateInvoiceCharges}=require('./public/invoice-charges');
 const {VERSION:WORKBOOK_TEST_CLEANUP_VERSION,removeWorkbookTests}=require('./workbook-test-cleanup');
@@ -1536,7 +1537,7 @@ function workforceEmployees(state){
   return (state.drivers||[]).map(d=>({id:d.id,name:d.name,jobTitle:d.role||'Driver',category:'Driver',status:d.status||'Active',baseSalary:0,payeDefault:0,sscDefault:0}))
 }
 function workforceEmployee(state,id){return workforceEmployees(state).find(x=>x.id===id)||null}
-function workforceDriver(state,employee){if(!PayrollEligibility.isDriver(employee,state.drivers||[]))return null;return (state.drivers||[]).find(d=>d.id===employee?.id)||{id:employee.id}}
+function workforceDriver(state,employee){if(!PayrollEligibility.isDriver(employee,state.drivers||[]))return null;return PayrollTripLink.resolveDriver(state,employee)}
 function payrollProfile(state,employeeId){
   state.payProfiles??=[];
   let p=state.payProfiles.find(x=>(x.employeeId||x.driverId)===employeeId);
@@ -1563,7 +1564,7 @@ function applyPayrollLoanRepayments(state,row,userId=''){
 function calculatePayrollRecord(state,employee,period,existing=null){
   const p=payrollProfile(state,employee.id),driver=workforceDriver(state,employee),{start,end}=periodBounds(period);
   const inPeriod=d=>String(d||'')>=start&&String(d||'')<end;
-  const trips=driver?(state.trips||[]).filter(t=>t.driverId===driver.id&&inPeriod(t.date)&&num(t.stage)>=3):[];
+  const trips=driver?PayrollTripLink.eligibleTrips(state,driver,start,end):[];
   const tripKm=trips.reduce((a,t)=>a+serverTripLegSummary(state,t).distance,0),tripRatePerKm=driver?num(existing?.tripRatePerKm??p.tripRatePerKm):0;
   const tripPay=trips.reduce((a,t)=>a+serverTripLegSummary(state,t).distance*serverTripRate(state,t,tripRatePerKm),0);
   const tripBreakdown=trips.map(t=>{const distance=serverTripLegSummary(state,t).distance,rate=serverTripRate(state,t,tripRatePerKm),legs=t.legs?.length?t.legs:[t];return{tripId:t.id,number:t.number||t.id,date:t.date,truck:(state.trucks||[]).find(x=>x.id===t.truckId)?.fleetName||t.truckId||'',route:legs.map(l=>(state.routes||[]).find(x=>x.id===l.routeId)?.name||'').filter(Boolean).join(' → '),load:legs.map(l=>l.load||'').filter(Boolean).join(' / '),distance,rate,pay:Number((distance*rate).toFixed(2))}});
