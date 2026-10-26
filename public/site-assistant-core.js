@@ -11,6 +11,7 @@
   ['rates',/\b(quote|quotation|transport rate|price per km|tender)\b/i],
   ['dispatch',/\b(dispatch|assign driver|send truck|allocate truck|board)\b/i],
   ['trips',/\b(trip|journey|load|delivery)\b/i],
+  ['shunterBonus',/\b(shunter bonus|shunter pay|daily bonus|shunter salary|shunter allowance)\b/i],
   ['shunterRecon',/\b(shunter|shunting|reconciliation|recon)\b/i],
   ['tracking',/\b(gps|location|geofence|track(ing)?|where.*truck)\b/i],
   ['diesel',/\b(diesel|fuel slip|fuel usage|litres|odometer)\b/i],

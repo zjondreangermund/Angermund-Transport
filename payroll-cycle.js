@@ -3,10 +3,25 @@ const Link=require('./payroll-trip-link');
 const dayAfter=d=>new Date(Date.parse(d+'T00:00:00Z')+86400000).toISOString().slice(0,10);
 function isShunter(state,t){const truck=(state.trucks||[]).find(x=>x.id===t.truckId)||{};return t.shunter===true||t.tripType==='Shunter'||['trk_ang4','trk_ang5'].includes(t.truckId)||/^ang\s*0?[45]$/i.test(truck.fleetName||'');}
 function shunterDriver(state,driver,profile={}){if(!driver)return false;if(profile.payBasis)return profile.payBasis==='shunter';return(state.trucks||[]).some(t=>isShunter(state,{truckId:t.id})&&t.defaultDriverId===driver.id);}
-function bounds(period,driver,shunter,existing){
- if(existing?.periodStart&&existing?.periodEnd)return{start:existing.periodStart,end:dayAfter(existing.periodEnd),periodEnd:existing.periodEnd,basis:existing.payrollBasis||'invoice-cycle'};
- const [y,m]=period.split('-').map(Number),start=new Date(Date.UTC(y,driver&&!shunter?m-2:m-1,driver&&!shunter?21:1)),end=new Date(Date.UTC(y,driver&&!shunter?m-1:m,driver&&!shunter?21:1));
- return{start:start.toISOString().slice(0,10),end:end.toISOString().slice(0,10),periodEnd:new Date(end-86400000).toISOString().slice(0,10),basis:driver&&!shunter?'nbl-cycle':'calendar-month'};
+function cutoffDate(year,month,day){
+ const last=new Date(Date.UTC(year,month,0)).getUTCDate();
+ return new Date(Date.UTC(year,month-1,Math.min(day,last))).toISOString().slice(0,10);
+}
+function bounds(period,driver,shunter,existing,profile={}){
+ // NBL invoice dates, or explicitly entered legacy dates, take priority.
+ // Ordinary draft cycles are recalculated when their recurring cutoff changes.
+ if(existing?.periodStart&&existing?.periodEnd&&!['nbl-cycle','configured-cutoff','calendar-month'].includes(existing.payrollBasis))
+   return{start:existing.periodStart,end:dayAfter(existing.periodEnd),periodEnd:existing.periodEnd,basis:existing.payrollBasis||'invoice-cycle'};
+ const [y,m]=String(period).split('-').map(Number);
+ if(shunter||!driver){
+   const start=new Date(Date.UTC(y,m-1,1)).toISOString().slice(0,10);
+   const periodEnd=new Date(Date.UTC(y,m,0)).toISOString().slice(0,10);
+   return{start,end:dayAfter(periodEnd),periodEnd,basis:'calendar-month'};
+ }
+ const entered=Number(profile.cutoffDay??20);
+ const day=Number.isInteger(entered)&&entered>=1&&entered<=31?entered:20;
+ const previousEnd=cutoffDate(y,m-1,day),periodEnd=cutoffDate(y,m,day);
+ return{start:dayAfter(previousEnd),end:dayAfter(periodEnd),periodEnd,basis:day===20?'nbl-cycle':'configured-cutoff'};
 }
 function bonus(state,driver,start,end,profile={}){
  const amount=profile.shunterBonusAmount===undefined?8000:Number(profile.shunterBonusAmount),divisor=profile.shunterWorkingDays===undefined?20:Number(profile.shunterWorkingDays),rate=amount/divisor,dates=new Map();
