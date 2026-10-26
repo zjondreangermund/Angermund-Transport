@@ -3522,7 +3522,7 @@ function tripClosingDistancePanel(t){
     +(reliable?'<p><b>Verified GPS journey: '+num(t.gpsProgress.observedKm).toFixed(1)+' km.</b> Manual closing kilometres are locked because GPS covered the whole trip.</p>':'')
     +'<p><b>'+(m.ready?m.km.toLocaleString()+' km since last refill':esc(m.reason))+'</b>'
     +(m.ready?'<br><small>Last diesel-slip odometer: '+num(m.lastSlipOdometer).toLocaleString()+' km · '+(m.estimatedEnd?'Estimated final odometer from Excel/route distance':'Recorded depot arrival odometer')+': '+num(m.closingOdometer).toLocaleString()+' km</small>':'')
-    +(m.ready&&m.km>0?'<br><small>Estimated fuel used since last refill: '+num(m.estimatedLitres).toFixed(1)+' L at assumed 2.2 km/L. This is <b>not</b> an actual purchase, invoice or verified fuel efficiency.</small>':'')+'</p>'
+    +(!reliable&&m.ready&&m.km>0?'<br><small>Estimated fuel used since last refill: '+num(m.estimatedLitres).toFixed(1)+' L at assumed 2.2 km/L. This is <b>not</b> an actual purchase, invoice or verified fuel efficiency.</small>':'')+'</p>'
     +(edit?'<div class="form-grid"><div class="field"><label>Trip departure odometer (km)</label><input id="tripClosingStartKm" type="number" min="0" step="1" value="'+num(t.startKm)+'"></div><div class="field"><label>Depot arrival / final odometer (km)</label><input id="tripClosingEndKm" type="number" min="1" step="1" value="'+(num(t.endKm)||'')+'" placeholder="Enter reading at Windhoek depot"></div></div><button type="button" class="ghost" id="saveTripClosingOdometer">Save arrival reading</button>':'')
     +'<p><small>Trip kilometres: actual departure-to-arrival odometers first; otherwise Excel or saved journey distance (estimated). The final segment is already within the trip total and must not be added twice. Refuel-derived km/L can remain provisional until fuel is reconciled.</small></p></section>';
 }
@@ -3552,6 +3552,7 @@ function openTrip(id){
     ${tripRequirementsPanel(t)}
     ${tripClosingDistancePanel(t)}
     ${tripGpsStatus(t)}
+    ${['admin','manager','dispatcher','finance'].includes(role)?'<button type="button" class="ghost" id="reconcileTripGps">Recalculate GPS kilometres from saved phone/tracker signals</button>':''}
     <div class="journey-leg-toolbar"><h3>Journey legs / loads</h3><div><button type="button" class="ghost" id="addJourneyLeg">+ Add leg</button><button type="button" class="primary" id="addReturnLeg">↩ Add return / backload</button></div></div>
     <div class="journey-leg-list">${legs.map(x=>journeyLegCard(t,x)).join('')}</div>
     <div class="split-3">
@@ -3579,6 +3580,13 @@ function openTrip(id){
     </div>`;
   $('modal').classList.remove('hidden');
   $('cancelForm').onclick=()=>$('modal').classList.add('hidden');
+  if($('reconcileTripGps'))$('reconcileTripGps').onclick=async()=>{
+    try{
+      const result=await api('/api/admin/trips/'+encodeURIComponent(id)+'/rebuild-gps',{method:'POST'});
+      await refreshCentralState(false);openTrip(id);
+      notify(result.acceptedSignals+' GPS signals checked · '+num(result.gpsKm).toFixed(1)+' km · '+(result.reliable?'Verified':'Provisional (use odometer/Excel until coverage complete)'));
+    }catch(e){notify(e.message)}
+  };
   if($('saveTripClosingOdometer'))$('saveTripClosingOdometer').onclick=async()=>{
     try{
       const startKm=Number($('tripClosingStartKm').value),endRaw=$('tripClosingEndKm').value;
