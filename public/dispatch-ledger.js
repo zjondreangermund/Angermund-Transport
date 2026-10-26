@@ -1,5 +1,38 @@
 'use strict';
 function ledgerDotBar(labels,current,color,label){return '<ol class="ledger-progress status-'+color+'" aria-label="'+esc(label)+'">'+labels.map((x,i)=>'<li class="'+(i<=current?'reached ':'')+(i===current?'current':'')+'" '+(i===current?'aria-current="step"':'')+'><span class="ledger-dot"></span><span>'+esc(x)+'</span></li>').join('')+'</ol>'}
+function ledgerRollingGeofences(t){
+ const model=AngermundDispatchGeofences.windowFor(t,db.routes||[]);
+ const live=t.gpsProgress?.geofenceTimeline;
+ const dots=model.map((stop,i)=>{
+  const first=i===0,cls=first?'is-last':i===1?'is-next':'is-after';
+  const marker=stop.state==='arrived'?'✓':i+1;
+  return '<div class="dispatch-fence-node '+cls+' '+(stop.state==='arrived'?'is-arrived':'')+'">'
+   +'<span class="dispatch-fence-circle" title="'+esc(stop.name)+'">'+marker+'</span>'
+   +'<b title="'+esc(stop.name)+'">'+esc(stop.name)+'</b>'
+   +'<small>'+esc(stop.state==='inferred'?'Last departure (estimated)':stop.state==='departed'?'Last left':stop.state==='arrived'?'At geofence':stop.state==='starting'?'Current start':stop.state==='next'?'Next stop':stop.state==='unmapped'?'Location not mapped':stop.state==='done'?'End of journey':'Following stop')+'</small>'
+   +'</div>';
+ }).join('');
+ const gps=t.gpsProgress,hasFix=Boolean(gps?.lastFix);
+ const last=live?.fromLastKm==null?'':num(live.fromLastKm).toFixed(1)+' km from last geofence';
+ const toNext=live?.toNextKm==null?'':num(live.toNextKm).toFixed(1)+' km straight-line to next';
+ const foot=(last||toNext)?'<small class="dispatch-fence-distances">'+esc(last)+(last&&toNext?' · ':'')+esc(toNext)+'</small>':
+    '<small class="dispatch-fence-distances">'+(hasFix?'Geofence coordinates required for automatic progress':'Waiting for live GPS signal')+'</small>';
+ return '<div class="dispatch-three-fences" role="group" aria-label="Rolling last, next and following geofences">'
+  +'<div class="dispatch-three-fences-label">📍 Geofences · previous → next → following</div>'
+  +'<div class="dispatch-fence-steps">'+dots+'</div>'+foot+'</div>';
+}
+function ledgerKilometreProgress(t){
+ const km=AngermundDispatchGeofences.kmProgress(t,journeyDistance(t));
+ if(!km.total)return '<small class="dispatch-km-pending">Trip distance not yet recorded</small>';
+ const completed=TripLifecycle.completed(t);
+ const suffix=km.verified?' · verified GPS':km.ready?' · GPS observed / provisional':' · awaiting GPS';
+ const travelled=completed&&km.travelled<km.total&&km.verified===false?'GPS observed '+km.travelled.toLocaleString()+' km':
+  (km.ready?km.travelled.toLocaleString()+' km travelled':'GPS kilometres pending');
+ return '<div class="dispatch-km-summary"><span>'+esc(travelled)+esc(suffix)+'</span>'
+  +'<span>'+(km.ready?km.remaining.toLocaleString()+' km remaining':'Total '+km.total.toLocaleString()+' km')+'</span></div>'
+  +'<div class="dispatch-km-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="'+km.percent.toFixed(0)+'" aria-label="GPS observed kilometres across complete trip"><span style="width:'+km.percent.toFixed(1)+'%"></span></div>'
+  +'<small class="dispatch-km-footnote">Total trip '+km.total.toLocaleString()+' km · '+(km.ready?'GPS travelled kilometres; remaining is an estimate until the journey is verified':'Trip-distance estimate, awaiting GPS')+' · diesel slips remain linked to this trip</small>';
+}
 function ledgerProgress(t){
  const ls=tripLegs(t).filter(l=>!l.cancelled&&!/cancelled/i.test(l.status||'')),phase=TripLifecycle.phase(t),returning=TripLifecycle.returning(t),done=TripLifecycle.completed(t),delivered=TripLifecycle.delivered(t);
  const completedLoads=ls.filter(TripLifecycle.deliveredLeg).length,segments=[];
@@ -26,7 +59,7 @@ function ledgerProgress(t){
    const colour=s.transfer?'#fb923c':'#3b82f6';
    return '<span class="ledger-route-segment" style="left:'+left+'%;width:'+(right-left)+'%;background:linear-gradient(to right,'+colour+' 0%,'+colour+' '+travelled+'%,#64748b '+travelled+'%,#64748b 100%)" '+(s.transfer?'title="Travel to different loading point"':'')+'><span class="ledger-return-fill" style="width:'+green+'%"></span></span>'+(!s.transfer?'<span class="ledger-stop-marker '+(done||TripLifecycle.deliveredLeg(s.leg)?'stop-reached':'')+'" style="left:'+right+'%" title="Delivery '+(s.legIndex+1)+'"></span>':'');
  }).join('');
- return '<div class="ledger-single-journey '+(returning?'is-returning ':'')+(done?'is-home ':'')+(delivered?'is-delivered ':'')+((returning||phase.key==='route')?'is-driving':'')+'" role="group" aria-label="Journey progress: '+esc(label)+'">'+stops+'<div class="ledger-one-track" style="--truck-position:'+position+'%">'+lines+'<span class="ledger-depot-marker"></span><span class="ledger-moving-dot" aria-hidden="true"></span></div><div class="ledger-one-labels"><span>'+(done?'At depot':'Angermund depot')+'</span><strong>'+esc(label)+'</strong><span>Delivered</span></div>'+(ls.length>1?'<small>'+completedLoads+' / '+ls.length+' loads delivered</small>':'')+'</div>';
+ return '<div class="ledger-single-journey '+(returning?'is-returning ':'')+(done?'is-home ':'')+(delivered?'is-delivered ':'')+((returning||phase.key==='route')?'is-driving':'')+'" role="group" aria-label="Journey progress: '+esc(label)+'">'+stops+'<div class="ledger-one-track" style="--truck-position:'+position+'%">'+lines+'<span class="ledger-depot-marker"></span><span class="ledger-moving-dot" aria-hidden="true"></span></div><div class="ledger-one-labels"><span>'+(done?'At depot':'Angermund depot')+'</span><strong>'+esc(label)+'</strong><span>Delivered</span></div>'+(ls.length>1?'<small>'+completedLoads+' / '+ls.length+' loads delivered</small>':'')+ledgerRollingGeofences(t)+ledgerKilometreProgress(t)+'</div>';
 }
 function ledgerTripCard(t){
  const phase=TripLifecycle.phase(t),ls=tripLegs(t),pod=ls.every(l=>l.pod||l.podDocumentId||l.podUploadId)||Boolean(t.pod||t.podDocumentId||t.podUploadId),fills=(db.diesel||[]).filter(f=>f.tripId===t.id),litres=sum(fills,f=>num(f.litres)),capture=['admin','manager','dispatcher'].includes(role),done=TripLifecycle.completed(t),returned=TripLifecycle.returning(t),delivered=TripLifecycle.delivered(t);
