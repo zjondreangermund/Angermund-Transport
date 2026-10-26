@@ -4041,6 +4041,7 @@ app.post('/api/assistant/cancel/:draftId',auth,(req,res)=>{
  if(d.inProgress)return res.status(409).json({error:'Approval already in progress'});
  assistantDrafts.delete(d.id);res.json({cancelled:true});
 });
+app.get('/api/assistant/usage',auth,roles('admin','manager','finance'),(req,res)=>res.json(AssistantIntelligence.usageTracker.report()));
 app.post('/api/assistant/ask',auth,upload.array('document',20),async(req,res)=>{
   try{
     const userId=String(req.user?.sub||''),now=Date.now();
@@ -4203,6 +4204,8 @@ app.post('/api/assistant/ask',auth,upload.array('document',20),async(req,res)=>{
       role:req.user.role,currentPage:String(req.body?.context?.currentPage||'').slice(0,40)};
     const fallback=SiteAssistant.answer(message,context);
     if(!OPENAI_API_KEY)return res.json({...fallback,source:'site-guide',aiEnabled:false});
+    const model=AssistantIntelligence.chooseModel('answer',message);
+    const evidence=AssistantIntelligence.isAdvancedQuestion(message)?AssistantIntelligence.buildEvidence(message,await readOpsState(),req.user.role):null;
     try{
       const history=(Array.isArray(req.body?.history)?req.body.history:[])
         .slice(-6).filter(x=>['user','assistant'].includes(x?.role))
