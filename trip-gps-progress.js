@@ -9,7 +9,7 @@ const metres=(a,b)=>{
 };
 function valid(p,now=Date.now()){
  const lat=Number(p?.latitude),lon=Number(p?.longitude),at=Date.parse(p?.recordedAt);
- const phone=p?.source==='android-background',goodSource=['android-background','driver','telematics','truck-device','tracker','vehicle-tracker'].includes(String(p?.source||''));
+ const phone=p?.source==='android-background',goodSource=['android-background','telematics','truck-device','tracker','vehicle-tracker'].includes(String(p?.source||''));
  const accuracy=p?.accuracy==null?(!phone?35:Infinity):Number(p.accuracy);
  return goodSource&&Number.isFinite(lat)&&Math.abs(lat)<=90&&Number.isFinite(lon)&&Math.abs(lon)<=180
   &&!(lat===0&&lon===0)&&Number.isFinite(at)&&at<=now+60000&&now-at<7*86400000&&accuracy>=0&&accuracy<=75;
