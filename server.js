@@ -13,6 +13,7 @@ const AssistantJobs=require('./assistant-jobs');
 const AssistantBusiness=require('./assistant-business');
 const AssistantInsights=require('./assistant-live-insights');
 const TripMetrics=require('./public/trip-metrics');
+const TripGps=require('./trip-gps-progress');
 const PushDelivery=require('./push-delivery-policy');
 const TripSites=require('./trip-site-geofences');
 const {resolveMobileGps}=require('./mobile-gps');
@@ -1446,6 +1447,7 @@ app.patch('/api/admin/trips/:tripId/closing-odometer',auth,roles('admin','manage
   const changed=await mutateOpsState(state=>{
    const t=(state.trips||[]).find(x=>x.id===req.params.tripId);
    if(!t){const e=Error('Trip not found');e.status=404;throw e}
+   if(TripMetrics.gpsReliable(t)){const e=Error('A complete verified GPS journey already provides the trip distance. Manual closing kilometres are disabled.');e.status=409;throw e}
    const departure=startKm===undefined?num(t.startKm):startKm;
    if(departure>0&&endKm<=departure){const e=Error('Depot arrival odometer must be greater than departure odometer');e.status=400;throw e}
    const slips=(state.diesel||[]).filter(x=>x.tripId===t.id&&num(x.odometer)>0);
@@ -3324,7 +3326,58 @@ app.post('/api/integrations/traccar/position',async(req,res)=>{
     return gpsIn(req,res,'telematics')
   }catch(e){res.status(500).json({error:e.message})}
 });
-async function gpsIn(req,res,source){const p={vehicleId:String(req.body.vehicleId||req.body.vehicle_id||''),driverId:req.body.driverId||req.user.driverId||null,tripId:req.body.tripId||null,latitude:Number(req.body.latitude),longitude:Number(req.body.longitude),speed:num(req.body.speed),heading:num(req.body.heading),accuracy:req.body.accuracy==null?null:num(req.body.accuracy),source,recordedAt:req.body.recordedAt||new Date().toISOString()};if(!p.vehicleId||!Number.isFinite(p.latitude)||!Number.isFinite(p.longitude))return res.status(400).json({error:'vehicleId, latitude and longitude are required'});if(pool)await q('INSERT INTO gps_positions(vehicle_id,driver_id,trip_id,latitude,longitude,speed,heading,accuracy,source,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[p.vehicleId,p.driverId,p.tripId,p.latitude,p.longitude,p.speed,p.heading,p.accuracy,p.source,p.recordedAt]);else memory.gps.push(p);if(!req.gpsHistoryOnly){await evaluateGeofences(p);if(source==='phone-test')await evaluatePhoneTestJourney(p,req.user);if(source!=='phone-test'){await evaluateDepotArrival(p);await evaluateTripZones(p);}}if(!req.gpsHistoryOnly)emit('gps',p);res.status(201).json(p)}
+async function gpsIn(req,res,source){
+ const p={vehicleId:String(req.body.vehicleId||req.body.vehicle_id||''),driverId:req.body.driverId||req.user.driverId||null,
+ tripId:req.body.tripId||null,latitude:Number(req.body.latitude),longitude:Number(req.body.longitude),speed:num(req.body.speed),
+ heading:num(req.body.heading),accuracy:req.body.accuracy==null?null:num(req.body.accuracy),source,
+ recordedAt:req.body.recordedAt||new Date().toISOString()};
+ if(!p.vehicleId||!Number.isFinite(p.latitude)||!Number.isFinite(p.longitude))return res.status(400).json({error:'vehicleId, latitude and longitude are required'});
+ // Associate only a trusted source with one unambiguous, currently assigned trip.
+ // Phone test and browser-supplied trip identifiers must never create a trip GPS ledger.
+ let trackedTripId=null;
+ if(!req.gpsHistoryOnly&&TripGps.valid(p)){
+   const state=await readOpsState();
+   if(source==='android-background'){
+     const t=(state.trips||[]).find(t=>t.id===p.tripId&&t.truckId===p.vehicleId&&t.driverId===p.driverId&&!TripLifecycle.completed(t)&&PhoneTracking.permitsPoint(t,{driverId:p.driverId},p));
+     if(t)trackedTripId=t.id;
+   }else if(['telematics','truck-device','tracker','vehicle-tracker'].includes(source)){
+     const eligible=(state.trips||[]).filter(t=>t.truckId===p.vehicleId&&!TripLifecycle.completed(t)&&
+       !/cancelled/i.test(t.status||'')&&(t.startedAt||num(t.stage)>=3||TripLifecycle.returning(t)));
+     if(eligible.length===1)trackedTripId=eligible[0].id;
+   }
+ }
+ if(trackedTripId)p.tripId=trackedTripId;
+ if(pool)await q('INSERT INTO gps_positions(vehicle_id,driver_id,trip_id,latitude,longitude,speed,heading,accuracy,source,recorded_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',[p.vehicleId,p.driverId,p.tripId,p.latitude,p.longitude,p.speed,p.heading,p.accuracy,p.source,p.recordedAt]);
+ else memory.gps.push(p);
+ if(!req.gpsHistoryOnly){
+   await evaluateGeofences(p);
+   if(source==='phone-test')await evaluatePhoneTestJourney(p,req.user);
+   if(source!=='phone-test'){
+     await evaluateDepotArrival(p);
+     await evaluateTripZones(p);
+   }
+   if(trackedTripId){
+     const fences=await operationalGeofences(true);
+     const result=await mutateOpsState(state=>{
+       const trip=(state.trips||[]).find(t=>t.id===trackedTripId);
+       if(!trip||!TripGps.attach(trip,p))return null;
+       const leg=activeTripLegServer(trip),route=(state.routes||[]).find(r=>r.id===(leg?.routeId||trip.routeId));
+       const depots=fences.filter(isCompanyDepot),depot=depots.length===1?depots[0]:null;
+       let navRoute=route;
+       // A geofence may have been linked by ID without route latitude/longitude.
+       const zones=linkedTripZones(route,leg,trip,fences);
+       if(zones)navRoute={...route,loadLat:zones.load.latitude,loadLon:zones.load.longitude,loadName:zones.load.name,
+         offloadLat:zones.offload.latitude,offloadLon:zones.offload.longitude,offloadName:zones.offload.name};
+       const navigation=TripGps.navigation(trip,navRoute,depot,p);
+       return{tripId:trip.id,observedKm:trip.gpsProgress.observedKm,points:trip.gpsProgress.points,
+         reliable:TripMetrics.gpsReliable(trip),navigation};
+     });
+     if(result.result)p.tripProgress=result.result;
+   }
+   emit('gps',p);
+ }
+ res.status(201).json(p);
+}
 app.post('/api/admin/slips/post',auth,roles('admin','manager','dispatcher','workshop','finance'),upload.fields([{name:'receipt',maxCount:1},{name:'receipts',maxCount:20}]),async(req,res)=>{
   let receipt=null;
   try{
