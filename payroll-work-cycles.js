@@ -13,7 +13,7 @@ function bounds(period){
   tripStart:at(y,m-2,21),tripEndInclusive:at(y,m-1,20),tripEndExclusive:at(y,m-1,21)};
 }
 function completionDate(t){
- return iso(t.deliveredDate||t.completedDate||t.closedDate||t.depotArrival?.at||t.date);
+ return iso(t.deliveredDate||t.completedDate||t.closedDate||t.date);
 }
 function isShunter(tripOrTruck){
  const id=typeof tripOrTruck==='object'?tripOrTruck?.truckId:tripOrTruck;
