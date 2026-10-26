@@ -2378,8 +2378,8 @@ function wirePayroll(){
       lines.push('','PAYROLL ISSUES');
       for(const p of report.payroll.filter(x=>x.isDriver))lines.push(p.employee+' · linked driver: '+(p.matchedDriver||'NOT FOUND')+' · eligible: '+p.eligibleTrips.length+' · km on payslip: '+(p.payslipKm??'No payslip')+' · trip pay: '+(p.payslipTripPay??'No payslip')+(p.issue?' · '+p.issue:''),...p.excludedTrips.map(t=>'  Excluded '+t.number+' · '+t.status+' · stage '+t.stage),...p.missingDistance.map(x=>'  Missing distance: '+x));
       $('modalTitle').textContent='Database trip & payroll diagnostics';
-      $('entryForm').innerHTML='<p>Live production data. Read-only; nothing will be deleted or recalculated. Approved and paid payslips remain protected.</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:65vh;overflow:auto">'+esc(lines.join('\\n'))+'</pre><div class="form-actions"><button type="button" class="ghost" id="copyTripDiagnosis">Copy report</button></div>';
-      $('modal').classList.remove('hidden');$('copyTripDiagnosis').onclick=()=>navigator.clipboard?.writeText(lines.join('\\n')).then(()=>notify('Diagnostic report copied'));
+      $('entryForm').innerHTML='<p>Live production data. Read-only; nothing will be deleted or recalculated. Approved and paid payslips remain protected.</p><pre style="white-space:pre-wrap;overflow-wrap:anywhere;max-height:65vh;overflow:auto">'+esc(lines.join('\n'))+'</pre><div class="form-actions"><button type="button" class="ghost" id="copyTripDiagnosis">Copy report</button></div>';
+      $('modal').classList.remove('hidden');$('copyTripDiagnosis').onclick=()=>navigator.clipboard?.writeText(lines.join('\n')).then(()=>notify('Diagnostic report copied'));
     }catch(e){notify('Diagnostics: '+e.message)}
   };
   if($('addEmployeeLoan'))$('addEmployeeLoan').onclick=()=>openEmployeeLoan();document.querySelectorAll('.edit-loan').forEach(b=>b.onclick=()=>openEmployeeLoan(b.dataset.id));
