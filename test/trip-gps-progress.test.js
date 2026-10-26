@@ -2,14 +2,14 @@
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs');
 const GPS=require('../trip-gps-progress'),M=require('../public/trip-metrics'),Protect=require('../depot-arrival');
 const time=(i)=>new Date(Date.parse('2026-10-26T09:00:00Z')+i*45000).toISOString();
-function trip(){return{id:'trip1',number:'AT-1',truckId:'ang10',startKm:1000,endKm:2500,startedAt:time(0),
-  legs:[{id:'l1',routeId:'r1',status:'In transit'}],distance:1450}};
+function trip(){return{id:'trip1',number:'AT-1',truckId:'ang10',startKm:1000,endKm:1011,startedAt:time(0),
+  legs:[{id:'l1',routeId:'r1',status:'In transit'}],distance:11}};
 function phone(i,override={}){return{tripId:'trip1',vehicleId:'ang10',driverId:'driver',source:'android-background',
  accuracy:15,latitude:-22,longitude:17+i*.007,recordedAt:time(i),...override}}
 test('continuous authenticated phone GPS records independent trip kilometres and overrides stale Excel estimate only after depot',()=>{
  const t=trip();for(let i=0;i<15;i++)assert.equal(GPS.attach(t,phone(i),Date.parse(time(i))+1000),true);
  assert.equal(t.gpsProgress.points,15);assert(t.gpsProgress.observedKm>10);assert.equal(M.gpsReliable(t),false);
- assert.equal(M.distance(t).distance,1500);t.depotArrival={at:time(14)};
+ assert.equal(M.distance(t).distance,11);t.depotArrival={at:time(14)};
  assert.equal(M.gpsReliable(t),true);
  assert.equal(M.distance(t).distanceSource,'Verified continuous GPS');
  assert.equal(M.distance(t).distance,t.gpsProgress.observedKm);
@@ -24,11 +24,17 @@ test('other trucks, test mode, untrusted browser, duplicate points and jumps can
  assert.equal(t.gpsProgress.rejectedJumps,1);
  assert.equal(M.gpsReliable(t),false);
 });
+test('a superficially continuous but incomplete 30 km GPS recording cannot replace a 3000 km trip',()=>{
+ const t=trip();t.startKm=100000;t.endKm=103000;
+ for(let i=0;i<15;i++)GPS.attach(t,phone(i),Date.parse(time(i))+1000);
+ t.depotArrival={at:time(14)};
+ assert.equal(M.gpsReliable(t),false);assert.equal(M.distance(t).distance,3000);
+});
 test('GPS gaps do not silently count the shortest line as full distance',()=>{
  const t=trip();GPS.attach(t,phone(0),Date.parse(time(0))+1000);
  GPS.attach(t,phone(18),Date.parse(time(18))+1000);
  assert.equal(t.gpsProgress.gaps,1);assert.equal(t.gpsProgress.observedKm,0);
- t.depotArrival={at:time(18)};assert.equal(M.distance(t).distance,1500);
+ t.depotArrival={at:time(18)};assert.equal(M.distance(t).distance,11);
 });
 test('geofence navigation reports straight-line distance TO next and observed track FROM previous',()=>{
  const t=trip(),p=phone(0);GPS.attach(t,p,Date.parse(time(0))+1000);
