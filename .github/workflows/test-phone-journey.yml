@@ -77,5 +77,7 @@ jobs:
           node-version: '22'
       - name: Check JavaScript syntax
         run: npm run check
+      - name: Verify trip-linked diesel and post-refuel return kilometres
+        run: node --test test/trip-refill-remainder.test.js
       - name: Test isolated phone milestones and existing driver tracking
         run: node --test test/phone-test-journey.test.js test/phone-trip-tracking.test.js test/push-delivery-policy.test.js test/android-update.test.js test/site-assistant.test.js test/daily-platform-actions.test.js test/assistant-trip-actions.test.js test/assistant-operations.test.js test/assistant-extra-actions.test.js test/record-management.test.js test/desktop-install.test.js test/manual-trip-route.test.js
