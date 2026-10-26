@@ -77,6 +77,8 @@ jobs:
           node-version: '22'
       - name: Check JavaScript syntax
         run: npm run check
+      - name: Verify phone GPS kilometres, geofence navigation and safety
+        run: node --test test/trip-gps-progress.test.js test/phone-trip-tracking.test.js test/depot-arrival.test.js
       - name: Verify trip-linked diesel and post-refuel return kilometres
         run: node --test test/trip-refill-remainder.test.js
       - name: Test isolated phone milestones and existing driver tracking

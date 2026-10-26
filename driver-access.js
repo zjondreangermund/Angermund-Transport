@@ -14,7 +14,7 @@ function notificationVisible(n,u){
 function driverState(s,u){
  const out=Object.fromEntries(Object.keys(s).map(k=>[k,Array.isArray(s[k])?[]:{}]));
  const trips=(s.trips||[]).filter(t=>u.driverId&&t.driverId===u.driverId);
- const tripKeys='id number date plannedDropDate driverId truckId trailerId trailerIds routeId clientId load tons pallets status stage pod podUploadId podAt startedAt arrivedAt driverComplete driverAcceptedAt returnJourney depotArrival operationalCompletedAt phoneTracking geo carrierDetails'.split(' ');
+ const tripKeys='id number date plannedDropDate driverId truckId trailerId trailerIds routeId clientId load tons pallets status stage pod podUploadId podAt startedAt arrivedAt driverComplete driverAcceptedAt returnJourney depotArrival operationalCompletedAt phoneTracking gpsProgress geo carrierDetails'.split(' ');
  out.trips=trips.map(t=>({...pick(t,tripKeys),carrierDetails:t.carrierDetails?pick(t.carrierDetails,['origin','destination']):undefined,legs:(t.legs||[]).map(l=>pick(l,'id sequence label routeId clientId load tons pallets status pod podUploadId podAt startedAt arrivedAt geo'.split(' ')))}));
  const ids=key=>new Set(trips.flatMap(t=>[t[key],...(t.legs||[]).map(l=>l[key])]));
  out.drivers=(s.drivers||[]).filter(d=>u.driverId&&d.id===u.driverId).map(d=>pick(d,['id','name','status']));

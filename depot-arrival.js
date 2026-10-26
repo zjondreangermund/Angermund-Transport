@@ -16,5 +16,5 @@ function releaseVehicle(state,t){
  if(!other){const tr=(state.trucks||[]).find(x=>x.id===t.truckId);if(tr&&!/workshop|maintenance|repair|out of service/i.test(tr.status||''))tr.status='Available'}
  const dr=(state.drivers||[]).find(x=>x.id===t.driverId);if(dr&&!(state.trips||[]).some(x=>x.id!==t.id&&x.driverId===t.driverId&&!Lifecycle.completed(x)&&(x.startedAt||Number(x.stage)>=2)))dr.status='Available';
 }
-function protectServerArrival(incoming,current){for(const t of incoming.trips||[]){const old=(current.trips||[]).find(x=>x.id===t.id);for(const key of ['depotArrival','operationalCompletedAt','returnJourney','phoneTracking']){if(old?.[key])t[key]=structuredClone(old[key]);else delete t[key]}if(!Lifecycle.completed(t)){t.driverComplete=false;delete t.driverCompletedAt}}}
+function protectServerArrival(incoming,current){for(const t of incoming.trips||[]){const old=(current.trips||[]).find(x=>x.id===t.id);for(const key of ['depotArrival','operationalCompletedAt','returnJourney','phoneTracking','gpsProgress']){if(old?.[key])t[key]=structuredClone(old[key]);else delete t[key]}if(!Lifecycle.completed(t)){t.driverComplete=false;delete t.driverCompletedAt}}}
 module.exports={isCompanyDepot,canConfirmGps,releaseVehicle,protectServerArrival};
