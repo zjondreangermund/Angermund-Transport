@@ -4,7 +4,7 @@ function ledgerRollingGeofences(t){
  const model=AngermundDispatchGeofences.windowFor(t,db.routes||[]);
  const live=t.gpsProgress?.geofenceTimeline;
  const dots=model.map((stop,i)=>{
-  const first=i===0,cls=first?'is-last':i===1?'is-next':'is-after';
+  const first=i===0,cls=first?'is-last'+(!TripLifecycle.completed(t)&&['departed','inferred'].includes(stop.state)?' is-pulsing':''):i===1?'is-next':'is-after';
   const marker=stop.state==='arrived'?'✓':i+1;
   return '<div class="dispatch-fence-node '+cls+' '+(stop.state==='arrived'?'is-arrived':'')+'">'
    +'<span class="dispatch-fence-circle" title="'+esc(stop.name)+'">'+marker+'</span>'
@@ -25,7 +25,7 @@ function ledgerKilometreProgress(t){
  const km=AngermundDispatchGeofences.kmProgress(t,journeyDistance(t));
  if(!km.total)return '<small class="dispatch-km-pending">Trip distance not yet recorded</small>';
  const completed=TripLifecycle.completed(t);
- const suffix=km.verified?' · verified GPS':km.ready?' · GPS observed / provisional':' · awaiting GPS';
+ const suffix=km.verified?' · verified GPS':km.source==='GPS'?' · GPS observed / provisional':km.ready?' · completed trip distance':' · awaiting GPS';
  const travelled=completed&&km.travelled<km.total&&km.verified===false?'GPS observed '+km.travelled.toLocaleString()+' km':
   (km.ready?km.travelled.toLocaleString()+' km travelled':'GPS kilometres pending');
  return '<div class="dispatch-km-summary"><span>'+esc(travelled)+esc(suffix)+'</span>'
