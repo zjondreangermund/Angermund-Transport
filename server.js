@@ -13,6 +13,7 @@ const AssistantJobs=require('./assistant-jobs');
 const AssistantBusiness=require('./assistant-business');
 const AssistantInsights=require('./assistant-live-insights');
 const TripMetrics=require('./public/trip-metrics');
+const TruckFuelIntervals=require('./truck-fuel-intervals');
 const PushDelivery=require('./push-delivery-policy');
 const TripSites=require('./trip-site-geofences');
 const {resolveMobileGps}=require('./mobile-gps');
@@ -1437,6 +1438,11 @@ app.post('/api/approvals/:id/decision',auth,roles('admin','manager','finance'),u
 
 require('./whiteboard-routes')(app,{auth,roles,readOpsState,mutateOpsState,storeCompanyReceipt});
 
+app.get('/api/admin/truck-fuel-intervals',auth,roles('admin','manager','finance','dispatcher'),async(req,res)=>{
+ try{const state=await readOpsState();const truckId=String(req.query.truckId||'');if(!truckId||(state.trucks||[]).every(t=>t.id!==truckId))return res.status(400).json({error:'Valid truckId required'});
+ res.json({...TruckFuelIntervals.truckFuel(state,truckId),trips:(state.trips||[]).filter(t=>t.truckId===truckId).map(t=>({id:t.id,number:t.number,date:t.date,...TruckFuelIntervals.estimateTripFuel(state,t)}))});}
+ catch(e){res.status(400).json({error:e.message})}
+});
 app.get('/api/admin/trip-payroll-diagnostics',auth,roles('admin','manager','finance'),async(req,res)=>{
  try{const state=await readOpsState();res.json(TripPayrollDiagnostics.inspect(state,String(req.query.period||monthPeriod(new Date()))))}
  catch(e){res.status(400).json({error:e.message})}
@@ -1533,7 +1539,7 @@ function serverSouthAfricaTrip(state,t){
 function serverTripRate(state,t,configured){
   if(num(configured)>0)return num(configured);
   if(serverSouthAfricaTrip(state,t))return .60;
-  const efficiency=serverFuelMetrics(state,t).kmPerL;
+  const efficiency=TruckFuelIntervals.truckFuel(state,t.truckId).latest?.kmPerL||0;
   return efficiency>=2.4?.50:efficiency>=2.3?.40:.30
 }
 function serverIncentiveFor(state,t){return 0}
