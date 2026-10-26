@@ -2303,7 +2303,7 @@ function wireWorkerLoans(){
 }
 
 function shunterBonuses(){
-  const shunterTrucks=(db.trucks||[]).filter(t=>['trk_ang4','trk_ang5'].includes(t.id)||/^ang\\s*0?[45]$/i.test(t.fleetName||''));
+  const shunterTrucks=(db.trucks||[]).filter(t=>['trk_ang4','trk_ang5'].includes(t.id)||/^ang\s*0?[45]$/i.test(t.fleetName||''));
   const isAssigned=e=>shunterTrucks.some(t=>{
     const d=(db.drivers||[]).find(x=>x.id===t.defaultDriverId);
     return t.defaultDriverId===e.id||t.defaultDriverId===e.driverId||(d&&String(d.name||'').trim().toLowerCase()===String(e.name||'').trim().toLowerCase());
