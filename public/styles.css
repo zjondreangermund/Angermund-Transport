@@ -1576,3 +1576,9 @@ body.driver-mode .driver-no-trip{padding:24px 12px}
 body.driver-mode .driver-no-trip>div{font-size:40px}
 
 body.driver-mode #angermundAssistantRoot{display:none!important}
+
+/* Per-driver shunter bonus editor */
+.shunter-bonus-table input[type=number]{width:125px;max-width:100%;min-height:38px;background:#0c1d31;color:inherit;border:1px solid var(--line);border-radius:8px;padding:6px 9px}
+.shunter-bonus-table th,.shunter-bonus-table td{vertical-align:middle}
+.shunter-bonus-table .primary{white-space:nowrap}
+@media(max-width:640px){.shunter-bonus-table input[type=number]{width:105px}}
