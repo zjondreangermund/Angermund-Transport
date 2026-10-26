@@ -27,7 +27,7 @@ test('diagnostics explain evidence and preserve payroll role boundary',()=>{
 });
 test('payslip captures immutable per-trip amounts and labels',()=>{
  const fs=require('node:fs'),vm=require('node:vm'),src=fs.readFileSync('server.js','utf8');
- const c={num:v=>Number(v||0),crypto:require('node:crypto'),PayrollEligibility:require('../public/payroll-eligibility'),periodBounds:()=>({start:'2026-10-01',end:'2026-11-01'}),serverTripLegSummary:(s,t)=>M.distance(t),serverTripRate:()=>.4};vm.createContext(c);vm.runInContext(src.slice(src.indexOf('function workforceEmployees('),src.indexOf('function generatePayrollPeriod(')),c);
+ const c={num:v=>Number(v||0),crypto:require('node:crypto'),PayrollEligibility:require('../public/payroll-eligibility'),PayrollTripLink:require('../payroll-trip-link'),TripMetrics:M,periodBounds:()=>({start:'2026-10-01',end:'2026-11-01'}),serverTripLegSummary:(s,t)=>M.distance(t),serverTripRate:()=>.4};vm.createContext(c);vm.runInContext(src.slice(src.indexOf('function workforceEmployees('),src.indexOf('function generatePayrollPeriod(')),c);
  const s=structuredClone(state);s.trips[0].stage=4;s.employees=[{id:'d',name:'Anton',jobTitle:'Driver'}];s.payProfiles=[];
  const p=c.calculatePayrollRecord(s,s.employees[0],'2026-10');a.equal(p.tripBreakdown[0].pay,280);a.equal(p.tripPay,280);a.equal(p.tripBreakdown[0].load,'Charcoal / Furniture');s.trips[0].legs[0].load='Changed';a.equal(p.tripBreakdown[0].load,'Charcoal / Furniture');
 });

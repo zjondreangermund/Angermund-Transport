@@ -15,17 +15,38 @@ function gpsReliable(t={}){
   &&Number.isFinite(start)&&Number.isFinite(first)&&Math.abs(first-start)<=300000
   &&Number.isFinite(end)&&Number.isFinite(last)&&Math.abs(end-last)<=300000;
 }
-function distance(t={}){
- if(gpsReliable(t))return{distance:n(t.gpsProgress.observedKm),distanceSource:'Verified continuous GPS',estimated:false};
+function dieselOdometerDistance(t={},records=[]){
+ // A diesel slip is an observation, not proof that the entire trip began or
+ // ended there. Never treat a single isolated slip as a full journey distance.
  const start=n(t.startKm),end=n(t.endKm);
- if(start>0&&end>start)return{distance:end-start,distanceSource:'Odometer',estimated:false};
+ const values=(records||[]).filter(r=>(!t.id||!r.tripId||String(r.tripId)===String(t.id))
+   &&(!t.truckId||!r.truckId||String(r.truckId)===String(t.truckId))
+   &&(!t.driverId||!r.driverId||String(r.driverId)===String(t.driverId)))
+  .map(r=>n(r.odometer)).filter(v=>v>0).sort((a,b)=>a-b);
+ const first=values[0]||0,last=values[values.length-1]||0;
+ if(!values.length)return null;
+ // Inconsistent readings require review; do not manufacture distance.
+ if(start>0&&first<start||end>0&&last>end||start>0&&end>0&&end<=start)return null;
+ let km=0,source='';
+ if(start>0&&last>start){km=last-start;source='Departure to last diesel odometer'}
+ else if(end>0&&first>0&&end>first){km=end-first;source='First diesel odometer to trip arrival'}
+ else if(values.length>=2&&last>first){km=last-first;source='Between diesel slip odometers'}
+ if(!(km>0)||km>20000)return null;
+ return{distance:Number(km.toFixed(2)),distanceSource:source+' (confirmed portion only)',estimated:true,partial:true,
+   odometerReadings:values.length,firstDieselOdometer:first,lastDieselOdometer:last};
+}
+function distance(t={},records=[]){
+ if(gpsReliable(t))return{distance:n(t.gpsProgress.observedKm),distanceSource:'Verified continuous GPS',estimated:false,partial:false};
+ const start=n(t.startKm),end=n(t.endKm);
+ if(start>0&&end>start)return{distance:end-start,distanceSource:'Odometer',estimated:false,partial:false};
  const legs=Array.isArray(t.legs)?t.legs:[],complete=legs.length&&legs.every(l=>n(l.distance)>0);
  const km=complete?legs.reduce((s,l)=>s+n(l.distance),0):n(t.distance);
- return{distance:Math.max(0,km),distanceSource:km>0?'Saved journey distance (estimate)':'Missing distance',estimated:km>0};
+ if(km>0)return{distance:Math.max(0,km),distanceSource:'Saved journey distance (estimate)',estimated:true,partial:false};
+ return dieselOdometerDistance(t,records)||{distance:0,distanceSource:'Missing distance',estimated:false,partial:false};
 }
 function fuel(t,records=[]){
- const d=distance(t),litres=records.reduce((s,r)=>s+n(r.litres),0),cost=r=>n(r.printedTotal)||n(r.total)||n(r.litres)*n(r.price),spend=records.reduce((s,r)=>s+cost(r),0),ready=d.distance>0&&litres>0;
- const reason=!t?.id?'No linked trip':!d.distance?'Enter trip distance or valid start/end odometers':!litres?'No linked diesel litres':'';
+ const d=distance(t,records),litres=records.reduce((s,r)=>s+n(r.litres),0),cost=r=>n(r.printedTotal)||n(r.total)||n(r.litres)*n(r.price),spend=records.reduce((s,r)=>s+cost(r),0),ready=d.distance>0&&litres>0&&!d.partial;
+ const reason=!t?.id?'No linked trip':!d.distance?'Enter trip distance or valid start/end odometers':d.partial?'Only a portion of the trip is confirmed by diesel odometers; enter final depot odometer, GPS or complete Excel/route distance':!litres?'No linked diesel litres':'';
  return{...d,litres,spend,ready,reason,kmPerL:ready?d.distance/litres:0,litresPerKm:ready?litres/d.distance:0,litresPer100Km:ready?100*litres/d.distance:0,costPerKm:d.distance>0?spend/d.distance:0,pricePerL:litres>0&&records.every(r=>cost(r)>0)?spend/litres:0};
 }
 
@@ -33,7 +54,7 @@ function lastRefillRemainder(t={},records=[],kmPerL=2.2){
  // The last purchase does not end the journey. Depot/return odometer is a
  // separate observation, and the unrefuelled distance must not create a receipt.
  const end=n(t.endKm),start=n(t.startKm),journey=distance(t);
- const estimatedEnd=!end&&start>0&&journey.distance>0;
+ const estimatedEnd=!end&&start>0&&journey.distance>0&&!journey.partial;
  const closingOdo=end>0?end:(estimatedEnd?start+journey.distance:0);
  const readings=records.filter(r=>!t.id||!r.tripId||String(r.tripId)===String(t.id)).map(r=>n(r.odometer)).filter(v=>v>0).sort((a,b)=>a-b);
  const lastSlipOdometer=readings[readings.length-1]||0;
@@ -49,5 +70,5 @@ function lastRefillRemainder(t={},records=[],kmPerL=2.2){
    estimatedLitres:Number((km/rate).toFixed(2)),estimateKmPerL:rate,
    distanceSource:estimatedEnd?(gpsReliable(t)?'Trip start + continuous GPS distance (estimated odometer)':'Trip start + saved route/Excel distance (estimate)'):'Depot arrival odometer'};
 }
-const api={distance,fuel,lastRefillRemainder,gpsReliable};if(typeof module==='object'&&module.exports)module.exports=api;else root.TripMetrics=api;
+const api={distance,fuel,lastRefillRemainder,gpsReliable,dieselOdometerDistance};if(typeof module==='object'&&module.exports)module.exports=api;else root.TripMetrics=api;
 })(typeof globalThis!=='undefined'?globalThis:this);

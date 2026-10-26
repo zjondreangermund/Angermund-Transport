@@ -81,6 +81,8 @@ jobs:
         run: node --test test/dispatch-rolling-geofences.test.js
       - name: Verify phone GPS kilometres, geofence navigation and safety
         run: node --test test/trip-gps-progress.test.js test/phone-trip-tracking.test.js test/depot-arrival.test.js
+      - name: Verify diesel slip odometers contribute to driver payroll
+        run: node --test test/diesel-odometer-payroll.test.js test/payroll-trip-link.test.js test/trip-diagnostics.test.js
       - name: Verify trip-linked diesel and post-refuel return kilometres
         run: node --test test/trip-refill-remainder.test.js
       - name: Test isolated phone milestones and existing driver tracking
