@@ -3309,7 +3309,7 @@ app.get('/api/mobile/alerts',deviceAuth,async(req,res)=>{
   res.json({alerts:rows,serverTime:new Date().toISOString()})
 });
 app.post('/api/gps',auth,async(req,res)=>{if(req.user.role==='driver'){const state=await readOpsState(),t=(state.trips||[]).find(x=>x.id===req.body.tripId&&x.driverId===req.user.driverId);if(!t||TripLifecycle.completed(t))return res.status(403).json({error:'An assigned active trip is required'});req.body.vehicleId=t.truckId;req.body.driverId=req.user.driverId;}return gpsIn(req,res,'driver')});
-app.post('/api/integrations/telematics/webhook',async(req,res)=>{if(req.headers['x-telematics-token']!==process.env.TELEMATICS_WEBHOOK_TOKEN)return res.status(401).json({error:'Invalid webhook token'});req.user={sub:'telematics'};return gpsIn(req,res,'telematics')});
+app.post('/api/integrations/telematics/webhook',async(req,res)=>{if(!process.env.TELEMATICS_WEBHOOK_TOKEN||req.headers['x-telematics-token']!==process.env.TELEMATICS_WEBHOOK_TOKEN)return res.status(401).json({error:'Invalid webhook token'});req.user={sub:'telematics'};return gpsIn(req,res,'telematics')});
 app.post('/api/integrations/traccar/position',async(req,res)=>{
   const expected=process.env.TRACCAR_FORWARD_TOKEN||process.env.TELEMATICS_WEBHOOK_TOKEN;
   const supplied=String(req.headers['x-traccar-token']||req.headers['x-telematics-token']||'');
@@ -3326,6 +3326,35 @@ app.post('/api/integrations/traccar/position',async(req,res)=>{
     return gpsIn(req,res,'telematics')
   }catch(e){res.status(500).json({error:e.message})}
 });
+// Rebuild from the raw timestamped trip GPS evidence, including phone fixes
+// uploaded after a network outage. Do not use tracker fixes for other trips.
+async function rebuildTripGps(tripId){
+ return mutateOpsState(async(state,c)=>{
+  const trip=(state.trips||[]).find(t=>t.id===tripId);
+  if(!trip)return{error:'Trip not found'};
+  let rows;
+  if(c){
+   const raw=await c.query('SELECT vehicle_id AS "vehicleId",trip_id AS "tripId",latitude,longitude,accuracy,source,recorded_at AS "recordedAt" FROM gps_positions WHERE trip_id=$1 AND vehicle_id=$2 ORDER BY recorded_at ASC LIMIT 30001',[trip.id,trip.truckId]);
+   rows=raw.rows;
+  }else rows=(memory.gps||[]).filter(p=>p.tripId===trip.id&&p.vehicleId===trip.truckId);
+  if(rows.length>30000)return{error:'GPS history exceeds 30,000 positions; contact administrator before using it for driver pay',truncated:true};
+  const leg=activeTripLegServer(trip),route=(state.routes||[]).find(r=>r.id===(leg?.routeId||trip.routeId));
+  const fences=await operationalGeofences(true),zones=linkedTripZones(route,leg,trip,fences);
+  const depots=fences.filter(isCompanyDepot),depot=zones?depotGeofenceForTrip(fences,zones):(depots.length===1?depots[0]:null);
+  const r=zones?{...route,loadLat:zones.load.latitude,loadLon:zones.load.longitude,loadName:zones.load.name,
+   offloadLat:zones.offload.latitude,offloadLon:zones.offload.longitude,offloadName:zones.offload.name}:route;
+  const progress=TripGps.rebuild(trip,rows,r,depot);
+  if(progress)trip.gpsProgress=progress;
+  return{tripId:trip.id,rawSignals:rows.length,acceptedSignals:progress?.points||0,
+   gpsKm:progress?.observedKm||0,reliable:TripMetrics.gpsReliable(trip),
+   coverageGaps:progress?.gaps||0,navigation:progress?.navigation||null,
+   note:'Completed continuous GPS is eligible for trip distance; gaps leave odometer/Excel distance in control.'};
+ });
+}
+app.post('/api/admin/trips/:tripId/rebuild-gps',auth,roles('admin','manager','dispatcher','finance'),async(req,res)=>{
+ try{const result=(await rebuildTripGps(req.params.tripId)).result;if(result.error)return res.status(result.truncated?409:404).json(result);res.json(result)}
+ catch(e){res.status(500).json({error:e.message})}
+});
 async function gpsIn(req,res,source){
  const p={vehicleId:String(req.body.vehicleId||req.body.vehicle_id||''),driverId:req.body.driverId||req.user.driverId||null,
  tripId:req.body.tripId||null,latitude:Number(req.body.latitude),longitude:Number(req.body.longitude),speed:num(req.body.speed),
@@ -3337,7 +3366,10 @@ async function gpsIn(req,res,source){
  let trackedTripId=null;
  if(!req.gpsHistoryOnly&&TripGps.valid(p)){
    const state=await readOpsState();
-   if(source==='android-background'){
+   if(source==='driver'&&req.user.role==='driver'){
+     const t=(state.trips||[]).find(t=>t.id===p.tripId&&t.truckId===p.vehicleId&&t.driverId===p.driverId&&!TripLifecycle.completed(t));
+     if(t)trackedTripId=t.id;
+   }else if(source==='android-background'){
      const t=(state.trips||[]).find(t=>t.id===p.tripId&&t.truckId===p.vehicleId&&t.driverId===p.driverId&&!TripLifecycle.completed(t)&&PhoneTracking.permitsPoint(t,{driverId:p.driverId},p));
      if(t)trackedTripId=t.id;
    }else if(['telematics','truck-device','tracker','vehicle-tracker'].includes(source)){
@@ -3362,7 +3394,7 @@ async function gpsIn(req,res,source){
        const trip=(state.trips||[]).find(t=>t.id===trackedTripId);
        if(!trip||!TripGps.attach(trip,p))return null;
        const leg=activeTripLegServer(trip),route=(state.routes||[]).find(r=>r.id===(leg?.routeId||trip.routeId));
-       const depots=fences.filter(isCompanyDepot),depot=depots.length===1?depots[0]:null;
+       const depots=fences.filter(isCompanyDepot),zones=linkedTripZones(route,leg,trip,fences),depot=zones?depotGeofenceForTrip(fences,zones):(depots.length===1?depots[0]:null);
        let navRoute=route;
        // A geofence may have been linked by ID without route latitude/longitude.
        const zones=linkedTripZones(route,leg,trip,fences);
@@ -3373,6 +3405,8 @@ async function gpsIn(req,res,source){
          reliable:TripMetrics.gpsReliable(trip),navigation};
      });
      if(result.result)p.tripProgress=result.result;
+     const current=await readOpsState(),completed=(current.trips||[]).find(t=>t.id===trackedTripId);
+     if(completed?.depotArrival?.at)await rebuildTripGps(trackedTripId).catch(e=>console.warn('GPS reconciliation pending:',e.message));
    }
    emit('gps',p);
  }
