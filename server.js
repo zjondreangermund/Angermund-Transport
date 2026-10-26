@@ -26,6 +26,7 @@ const {applyOperationalCutoff:applyOperationalCutoffDb}=require('./operational-c
 const {CUTOFF:OPS_CUTOFF,VERSION:OPS_CUTOFF_VERSION,importAllowed,pruneOperationalHistory}=require('./operational-cutoff');
 const PayrollEligibility=require('./public/payroll-eligibility');
 const PayrollTripLink=require('./payroll-trip-link');
+const PayrollCycle=require('./payroll-cycle');
 const TripPayrollDiagnostics=require('./trip-payroll-diagnostics');
 const {allowed:canManageRecord,deleteRecord,editRecord}=require('./record-management');
 const {calculate:calculateInvoiceCharges}=require('./public/invoice-charges');
@@ -1591,28 +1592,30 @@ function applyPayrollLoanRepayments(state,row,userId=''){
   row.loanBreakdown=actual;row.loanDeduction=Number(actual.reduce((a,x)=>a+num(x.amount),0).toFixed(2));row.loanRepaymentsPosted=true;row.net=Number((num(row.gross)+num(row.reimbursements)-num(row.advances)-num(row.paye)-num(row.ssc)-num(row.deductions)-num(row.loanDeduction)).toFixed(2));return row
 }
 function calculatePayrollRecord(state,employee,period,existing=null){
-  const p=payrollProfile(state,employee.id),driver=workforceDriver(state,employee),{start,end}=periodBounds(period);
+  const p=payrollProfile(state,employee.id),driver=workforceDriver(state,employee),shunter=PayrollCycle.shunterDriver(state,driver,p),cycle=PayrollCycle.bounds(period,driver,shunter,existing),{start,end}=cycle;
   const inPeriod=d=>String(d||'')>=start&&String(d||'')<end;
-  const trips=driver?PayrollTripLink.eligibleTrips(state,driver,start,end):[];
+  const trips=driver?PayrollTripLink.eligibleTrips(state,driver,start,end,{billingDate:!shunter}).filter(t=>!PayrollCycle.isShunter(state,t)):[];
   const tripKm=trips.reduce((a,t)=>a+serverTripLegSummary(state,t).distance,0),tripRatePerKm=driver?num(existing?.tripRatePerKm??p.tripRatePerKm):0;
   const tripPay=trips.reduce((a,t)=>a+serverTripLegSummary(state,t).distance*serverTripRate(state,t,tripRatePerKm),0);
   const tripBreakdown=trips.map(t=>{const evidence=TripMetrics.distance(t,(state.diesel||[]).filter(x=>x.tripId===t.id)),distance=evidence.distance,rate=serverTripRate(state,t,tripRatePerKm),legs=t.legs?.length?t.legs:[t];return{tripId:t.id,number:t.number||t.id,date:t.date,truck:(state.trucks||[]).find(x=>x.id===t.truckId)?.fleetName||t.truckId||'',route:legs.map(l=>(state.routes||[]).find(x=>x.id===l.routeId)?.name||'').filter(Boolean).join(' → '),load:legs.map(l=>l.load||'').filter(Boolean).join(' / '),distance,distanceSource:evidence.distanceSource,partial:Boolean(evidence.partial),rate,pay:Number((distance*rate).toFixed(2))}});
+  const shunterBonus=PayrollCycle.bonus(state,driver,start,end,p);
   const incentive=0;
   const reimbursements=driver?(state.expenses||[]).filter(x=>x.driverId===driver.id&&inPeriod(x.date)&&x.reimbursable!==false&&x.status==='Approved').reduce((a,x)=>a+num(x.amount),0):0;
   const advances=driver?(state.advances||[]).filter(x=>x.driverId===driver.id&&inPeriod(x.date)&&x.status!=='Reconciled').reduce((a,x)=>a+num(x.amount),0):0;
   const overtimeHours=num(existing?.overtimeHours??existing?.overtime),overtimeRate=num(existing?.overtimeRate)||num(p.overtimeRate),overtimePay=overtimeHours*overtimeRate;
   const base=num(existing?.base)||num(p.baseSalary)||num(employee.baseSalary),days=num(existing?.days)||num(p.standardDays)||22;
-  const gross=base+tripPay+overtimePay,payeThreshold=num(p.payeThreshold)||8000;
+  const gross=base+tripPay+overtimePay+shunterBonus.amount,payeThreshold=num(p.payeThreshold)||8000;
   const configuredPaye=existing?.paye!==undefined?num(existing.paye):num(p.payeDefault),paye=gross>payeThreshold?configuredPaye:0;
   const ssc=existing?.ssc!==undefined?num(existing.ssc):num(p.sscDefault),deductions=existing?.deductions!==undefined?num(existing.deductions):num(p.otherDeductionDefault);
   const loanInfo=employeeLoanDeduction(state,employee.id,period,existing),loanDeduction=existing?.status==='Paid'?num(existing.loanDeduction):loanInfo.amount,loanBreakdown=existing?.status==='Paid'&&Array.isArray(existing.loanBreakdown)?existing.loanBreakdown:loanInfo.breakdown;
   const net=gross+reimbursements-advances-paye-ssc-deductions-loanDeduction;
-  return{id:existing?.id||'pay_'+crypto.randomUUID(),period,employeeId:employee.id,days,overtimeHours,overtimeRate,overtimePay:Number(overtimePay.toFixed(2)),base:Number(base.toFixed(2)),tripKm:Number(tripKm.toFixed(2)),tripRatePerKm:Number(tripRatePerKm.toFixed(4)),tripPay:Number(tripPay.toFixed(2)),incentive:0,fuelSavingBonus:0,reimbursements:Number(reimbursements.toFixed(2)),advances:Number(advances.toFixed(2)),paye:Number(paye.toFixed(2)),payeThreshold:Number(payeThreshold.toFixed(2)),ssc:Number(ssc.toFixed(2)),deductions:Number(deductions.toFixed(2)),loanDeduction:Number(loanDeduction.toFixed(2)),loanBreakdown,gross:Number(gross.toFixed(2)),net:Number(net.toFixed(2)),tripCount:trips.length,tripBreakdown:existing?.status==='Paid'?existing.tripBreakdown:tripBreakdown,status:existing?.status||'Draft',loanRepaymentsPosted:Boolean(existing?.loanRepaymentsPosted),generatedAt:new Date().toISOString(),autoGenerated:existing?.autoGenerated??true,taxNumber:p.taxNumber||'',setupRequired:!(num(p.baseSalary)>0),jobTitle:employee.jobTitle||employee.title||''}
+  return{id:existing?.id||'pay_'+crypto.randomUUID(),period,periodStart:start,periodEnd:cycle.periodEnd,payrollBasis:cycle.basis,sourceInvoiceIds:existing?.sourceInvoiceIds||[],shunterBonus:shunterBonus.amount,shunterDays:shunterBonus.count,shunterDailyRate:shunterBonus.rate,shunterDayBreakdown:shunterBonus.days,employeeId:employee.id,days,overtimeHours,overtimeRate,overtimePay:Number(overtimePay.toFixed(2)),base:Number(base.toFixed(2)),tripKm:Number(tripKm.toFixed(2)),tripRatePerKm:Number(tripRatePerKm.toFixed(4)),tripPay:Number(tripPay.toFixed(2)),incentive:0,fuelSavingBonus:0,reimbursements:Number(reimbursements.toFixed(2)),advances:Number(advances.toFixed(2)),paye:Number(paye.toFixed(2)),payeThreshold:Number(payeThreshold.toFixed(2)),ssc:Number(ssc.toFixed(2)),deductions:Number(deductions.toFixed(2)),loanDeduction:Number(loanDeduction.toFixed(2)),loanBreakdown,gross:Number(gross.toFixed(2)),net:Number(net.toFixed(2)),tripCount:trips.length,tripBreakdown:existing?.status==='Paid'?existing.tripBreakdown:tripBreakdown,status:existing?.status||'Draft',loanRepaymentsPosted:Boolean(existing?.loanRepaymentsPosted),generatedAt:new Date().toISOString(),autoGenerated:existing?.autoGenerated??true,taxNumber:p.taxNumber||'',setupRequired:!(num(p.baseSalary)>0),jobTitle:employee.jobTitle||employee.title||''}
 }
-function generatePayrollPeriod(state,period,auto=false){
+function generatePayrollPeriod(state,period,auto=false,transportOnly=false){
   state.payroll??=[];
   const rows=[],employees=workforceEmployees(state).filter(x=>x.active!==false&&x.status!=='Inactive');
   for(const employee of employees){
+    if(transportOnly&&(!workforceDriver(state,employee)||PayrollCycle.shunterDriver(state,workforceDriver(state,employee),payrollProfile(state,employee.id))))continue;
     if(auto&&(state.deletedPayrollPeriods||[]).includes(period+':'+employee.id))continue;
     const p=payrollProfile(state,employee.id);if(auto&&p.autoGenerate===false)continue;
     const existing=state.payroll.find(x=>x.period===period&&x.employeeId===employee.id);
@@ -2719,6 +2722,8 @@ app.patch('/api/payroll/profiles/:driverId',auth,roles('admin','manager','financ
       const employee=workforceEmployee(state,did);if(!employee){const e=Error('Employee not found');e.status=404;throw e}
       const p=payrollProfile(state,did);
       for(const key of ['baseSalary','tripRatePerKm','payeDefault','sscDefault','overtimeRate','standardDays','otherDeductionDefault'])if(body[key]!==undefined)p[key]=num(body[key]);
+      for(const key of ['shunterBonusAmount','shunterWorkingDays'])if(body[key]!==undefined){const v=Number(body[key]);if(!Number.isFinite(v)||v<0||(key==='shunterWorkingDays'&&v<=0))throw Error('Enter a valid shunter bonus and working-day divisor');p[key]=v;}
+      if(body.payBasis!==undefined){if(!['auto','shunter','transport'].includes(body.payBasis))throw Error('Invalid pay basis');if(body.payBasis==='auto')delete p.payBasis;else p.payBasis=body.payBasis;}
       if(!PayrollEligibility.isDriver(employee,state.drivers||[]))p.tripRatePerKm=0;
       if(body.taxNumber!==undefined)p.taxNumber=String(body.taxNumber||'');
       if(body.autoGenerate!==undefined)p.autoGenerate=Boolean(body.autoGenerate);
@@ -2914,19 +2919,37 @@ function linkNblInvoiceLines(state,inv,lines){
     if(all.every(x=>x.invoiceId)){t.stage=Math.max(num(t.stage),5);t.status='Invoiced';t.invoiceIds=Array.from(new Set(all.map(x=>x.invoiceId).filter(Boolean)))}
   }
 }
+function syncNblDriverPayroll(state,invoice){
+  state.payroll??=[];const driverIds=new Set((invoice.lines||[]).map(l=>(state.trips||[]).find(t=>t.id===l.tripId)?.driverId).filter(Boolean)),rows=[],warnings=[];
+  if(!driverIds.size){invoice.payrollIds=[];invoice.payrollWarnings=['No assigned drivers on the invoice trips; payroll could not be generated'];return{payrollIds:[],payrollWarnings:invoice.payrollWarnings};}
+  const matched=new Set();
+  for(const employee of workforceEmployees(state)){
+    const driver=workforceDriver(state,employee);if(!driver||!driverIds.has(driver.id)||PayrollCycle.shunterDriver(state,driver,payrollProfile(state,employee.id)))continue;
+    matched.add(driver.id);
+    const period=invoice.periodEnd.slice(0,7),existing=state.payroll.find(p=>p.employeeId===employee.id&&p.period===period);
+    if(existing&&['Approved','Paid'].includes(existing.status)){warnings.push(employee.name+': finalized payslip preserved; review invoice dates against payroll');continue}
+    if(existing?.sourceInvoiceIds?.some(id=>id!==invoice.id)&&(existing.periodStart!==invoice.periodStart||existing.periodEnd!==invoice.periodEnd)){warnings.push(employee.name+': another invoice already sets different payroll dates for this month; review required');continue}
+    const overlap=state.payroll.find(p=>p.employeeId===employee.id&&p!==existing&&p.periodStart<=invoice.periodEnd&&p.periodEnd>=invoice.periodStart);
+    if(overlap){warnings.push(employee.name+': overlapping payslip '+overlap.period+' requires review');continue}
+    const seed={...existing,periodStart:invoice.periodStart,periodEnd:invoice.periodEnd,payrollBasis:'invoice-cycle',sourceInvoiceIds:[...new Set([...(existing?.sourceInvoiceIds||[]),invoice.id])]};
+    const next=calculatePayrollRecord(state,employee,period,seed);if(existing)Object.assign(existing,next);else state.payroll.unshift(next);rows.push(next.id);
+  }
+  for(const id of driverIds)if(!matched.has(id))warnings.push('Assigned driver '+((state.drivers||[]).find(d=>d.id===id)?.name||id)+' has no matching transport payroll profile');
+  invoice.payrollIds=rows;invoice.payrollWarnings=warnings;return{payrollIds:rows,payrollWarnings:warnings};
+}
 function buildNblConsolidatedInvoice(state,cycleMonth,custom={}){
   const bounds=custom.periodStart!==undefined||custom.periodEnd!==undefined?invoiceCustomBounds(custom):nblInvoiceCycleBounds(cycleMonth),start=bounds.start,end=bounds.end;
   state.invoices=state.invoices||[];
   const nbl=(state.clients||[]).find(isNblClient);if(!nbl){const e=Error('Namibian Breweries / NBL client was not found');e.status=404;throw e}
   const existing=state.invoices.find(x=>x.consolidated===true&&x.clientId===nbl.id&&x.periodStart===start&&x.periodEnd===end);
-  if(existing)return{invoice:existing,existing:true,lines:existing.lines||[],excluded:[]};
+  if(existing)return{invoice:existing,existing:true,lines:existing.lines||[],excluded:[],...syncNblDriverPayroll(state,existing)};
   const found=collectNblInvoiceLines(state,nbl,start,end),lines=found.lines,excluded=found.excluded;
   if(!lines.length){const e=Error('No uninvoiced NBL trips are ready in the '+start+' to '+end+' cycle');e.status=400;throw e}
   const highest=[...state.invoices,...(state.recordHistory||[]).filter(h=>h.kind==='invoices'&&h.action==='Deleted').map(h=>h.record)].reduce((m,x)=>{const n=Number(String(x.number||'').split('-').pop())||0;return Math.max(m,n)},999);
   const terms=num(nbl.terms)||30,endDate=new Date(end+'T00:00:00Z'),dueDate=new Date(endDate.getTime()+terms*86400000),amount=Number(lines.reduce((a,x)=>a+num(x.amount),0).toFixed(2));
   const inv={id:'inv_'+crypto.randomUUID(),number:'INV-'+(highest+1),date:end,clientId:nbl.id,tripId:'',amount,due:dueDate.toISOString().slice(0,10),status:'Unpaid',consolidated:true,billingCycle:'Custom billing dates',periodStart:start,periodEnd:end,cutoffDay:null,lines,tripIds:Array.from(new Set(lines.map(x=>x.tripId))),lineCount:lines.length};
   calculateInvoiceCharges(state,inv,{newInvoice:true,vatRate:custom.vatRate,includeMdc:custom.includeMdc,mdcOverrideKm:custom.mdcOverrideKm,mdcRatePer100km:custom.mdcRatePer100km});state.invoices.unshift(inv);linkNblInvoiceLines(state,inv,lines);
-  return{invoice:inv,existing:false,lines,excluded}
+  return{invoice:inv,existing:false,lines,excluded,...syncNblDriverPayroll(state,inv)}
 }
 app.patch('/api/invoices/:id',auth,roles('admin','manager','finance'),async(req,res)=>{
   try{const changed=await mutateOpsState(state=>{
@@ -3828,12 +3851,13 @@ async function applyPayeThresholdMigration(){
 async function ensureMonthEndPayroll(){
   try{
     const na=new Date(Date.now()+2*60*60*1000),y=na.getUTCFullYear(),m=na.getUTCMonth(),day=na.getUTCDate(),last=new Date(Date.UTC(y,m+1,0)).getUTCDate();
-    let period=null;if(day===last)period=y+'-'+String(m+1).padStart(2,'0');else if(day<=3){const p=new Date(Date.UTC(y,m-1,1));period=p.getUTCFullYear()+'-'+String(p.getUTCMonth()+1).padStart(2,'0')}
+    let period=null;if(day>=21&&day<=23)period=y+'-'+String(m+1).padStart(2,'0');else if(day===last)period=y+'-'+String(m+1).padStart(2,'0');else if(day<=3){const p=new Date(Date.UTC(y,m-1,1));period=p.getUTCFullYear()+'-'+String(p.getUTCMonth()+1).padStart(2,'0')}
     if(!period)return;
     const snapshot=await readOpsState(),employees=workforceEmployees(snapshot),rows=snapshot.payroll||[];
-    const missing=employees.some(e=>payrollProfile(snapshot,e.id).autoGenerate!==false&&!rows.some(x=>x.period===period&&x.employeeId===e.id));
+    const eligible=day>=21&&day<=23?employees.filter(e=>workforceDriver(snapshot,e)&&!PayrollCycle.shunterDriver(snapshot,workforceDriver(snapshot,e),payrollProfile(snapshot,e.id))):employees;
+    const missing=eligible.some(e=>payrollProfile(snapshot,e.id).autoGenerate!==false&&!rows.some(x=>x.period===period&&x.employeeId===e.id&&(['Approved','Paid'].includes(x.status)||String(x.generatedAt||'').slice(0,10)===na.toISOString().slice(0,10))));
     if(!missing)return;
-    await mutateOpsState(state=>generatePayrollPeriod(state,period,true))
+    await mutateOpsState(state=>generatePayrollPeriod(state,period,true,day>=21&&day<=23))
   }catch(e){console.error('Month-end payroll check failed',e.message)}
 }
 // Self-hosted version discovery for installed APKs. GitHub Actions writes
