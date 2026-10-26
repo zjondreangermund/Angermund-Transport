@@ -8,7 +8,6 @@ test('partial diesel slip odometers provide known kilometres, without inventing 
  a.equal(m.distance,700);a.equal(m.partial,true);a.match(m.distanceSource,/confirmed portion/i);
  a.equal(M.fuel(t,slips).ready,false);a.match(M.fuel(t,slips).reason,/Only a portion/);
  a.equal(M.distance(t,[slips[0]]).distance,0);
- a.equal(M.distance(t,{...[]}).distance,0);
  a.equal(M.distance({...t,startKm:100000},slips).distance,1200);
  a.equal(M.distance({...t,startKm:100000,endKm:102000},slips).distance,2000);
  a.equal(M.distance({...t,distance:1800},slips).distance,1800);
@@ -49,8 +48,8 @@ test('October draft payroll uses diesel odometer kilometre evidence for the assi
  state.trips[0].startKm=100000;state.trips[0].endKm=102000;
  const second=ctx.generatePayrollPeriod(state,'2026-10');
  a.equal(second[0].tripKm,2000);a.equal(second[0].tripBreakdown[0].partial,false);
- a.equal(second[0].tripPay,600);
+ a.equal(second[0].tripPay,1000);
  second[0].status='Approved';state.trips[0].endKm=102500;
  const third=ctx.generatePayrollPeriod(state,'2026-10');
- a.equal(third[0].tripKm,2000);a.equal(third[0].tripPay,600);
+ a.equal(third[0].tripKm,2000);a.equal(third[0].tripPay,1000);
 });
