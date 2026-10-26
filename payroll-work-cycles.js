@@ -43,7 +43,7 @@ function reconWorked(r){
   (Number(r.charge)>0||(r.tmsIds||[]).length>0||Number(r.movements)>0);
 }
 function assignmentForDay(state,truckId,date){
- const trips=(state.trips||[]).filter(t=>String(t.truckId)===String(truckId)&&iso(t.date)===date&&tripWorked(t));
+ const trips=(state.trips||[]).filter(t=>String(t.truckId)===String(truckId)&&iso(t.date)===date&&!/cancelled|canceled|deleted/i.test(String(t.status||'')));
  const tripDrivers=[...new Set(trips.map(t=>String(t.driverId||'')).filter(Boolean))];
  if(tripDrivers.length>1)return null; // same truck, conflicting drivers; manual review
  if(tripDrivers.length===1)return{driverId:tripDrivers[0],source:'Trip assignment',tripIds:trips.map(t=>t.id)};
@@ -56,7 +56,7 @@ function assignmentForDay(state,truckId,date){
  const fallback=String(truck?.defaultDriverId||'');
  return fallback?{driverId:fallback,source:'Truck default driver + verified shunter recon',tripIds:[]}:null;
 }
-function workdays(state,driver,start,endExclusive){
+function workdays(state,driver,start,endExclusive,monthlyBonus=DAY_BONUS_POOL,workingDays=STANDARD_WORKDAYS){
  if(!driver?.id)return[];
  const candidates=new Map();
  for(const r of state.shunterRecons||[]){
@@ -79,7 +79,7 @@ function workdays(state,driver,start,endExclusive){
    continue;
   }
   byDay.set(c.date,{date:c.date,truckId:c.truckId,evidence:c.evidence,
-   assignmentSource:ass.source,driverId:driver.id,amount:DAILY_BONUS});
+   assignmentSource:ass.source,driverId:driver.id,amount:Number((Number(monthlyBonus)/Number(workingDays)).toFixed(2))});
  }
  return [...byDay.values()].sort((a,b)=>a.date.localeCompare(b.date));
 }
