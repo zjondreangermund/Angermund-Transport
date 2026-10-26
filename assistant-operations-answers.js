@@ -59,7 +59,7 @@ function answer(question,state={},user={}){
        (active?' · saved '+active.period+' payslip '+(active.periodStart||'?')+' to '+(active.periodEnd||'?')+' ('+active.status+')':' · no saved payslip');
    }).join('\n')+'\nChange a recurring cutoff in Payroll & Payslips → Edit. Choose exact dates when creating an NBL invoice; its linked draft payslips use those dates. Approved and Paid payslips are not overwritten.','payroll');
  }
- if(ops&&/\b(trips?|loads?|dispatch|imports?)\b/i.test(q)&&/\b(missing|not (?:loaded|loading|showing|there|visible|found)|can.?t (?:see|find)|where (?:is|are)|why|find|search)\b/i.test(q)){
+ if(ops&&!(finance&&payrollAsked)&&/\b(trips?|loads?|dispatch|imports?)\b/i.test(q)&&/\b(missing|not (?:loaded|loading|showing|there|visible|found)|can.?t (?:see|find)|where (?:is|are)|why|find|search)\b/i.test(q)){
    const candidates=(state.trips||[]).filter(t=>{
      if(truck&&t.truckId!==truck.id)return false;
      if(date&&![t.date,t.deliveredDate,t.completedDate,t.closedDate].some(d=>String(d||'').slice(0,10)===date))return false;
