@@ -196,7 +196,22 @@ public class LocationService extends Service implements LocationListener {
                         if (code == 201 || code == 204) {
                             queue.remove(point.id);
                             prefs().edit().putLong("gps_last_uploaded", System.currentTimeMillis()).apply();
-                            status(code == 204 ? "Waiting for an assigned trip" : "Location sent · " + queue.count() + " waiting");
+                            String gpsText=code == 204 ? "Waiting for an assigned trip" : "Location sent · " + queue.count() + " waiting";
+                            if (code == 201 && !prefs().getBoolean("gps_test_mode", false)) {
+                                try (BufferedReader br = new BufferedReader(new InputStreamReader(c.getInputStream(), StandardCharsets.UTF_8))) {
+                                    StringBuilder body = new StringBuilder();String line;
+                                    while ((line = br.readLine()) != null) body.append(line);
+                                    JSONObject reply = new JSONObject(body.toString());
+                                    JSONObject progress = reply.optJSONObject("tripProgress");
+                                    JSONObject next = progress == null ? null : progress.optJSONObject("navigation");
+                                    if (next != null) {
+                                        gpsText = String.format(java.util.Locale.US,"To %s: %.1f km (straight line) · From %s: %.1f km travelled",
+                                            next.optString("next","next geofence"),next.optDouble("toNextKm",0),
+                                            next.optString("previous","previous geofence"),next.optDouble("fromPreviousKm",0));
+                                    }
+                                } catch (Exception ignored) { /* GPS was posted; display the normal status if optional context fails */ }
+                            }
+                            status(gpsText);
                         } else if (code == 401 || code == 403) {
                             prefs().edit().putBoolean("gps_enabled", false).remove("device_token").apply();
                             queue.clear(); status("Sign in again to resume GPS"); handler.post(this::stopSelf); break;
