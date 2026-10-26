@@ -14,6 +14,7 @@ const AssistantBusiness=require('./assistant-business');
 const AssistantInsights=require('./assistant-live-insights');
 const TripMetrics=require('./public/trip-metrics');
 const TripGps=require('./trip-gps-progress');
+const TripGeofenceTimeline=require('./trip-geofence-timeline');
 const PushDelivery=require('./push-delivery-policy');
 const TripSites=require('./trip-site-geofences');
 const {resolveMobileGps}=require('./mobile-gps');
@@ -3410,9 +3411,11 @@ async function gpsIn(req,res,source){
          offloadLat:linkedOff?.latitude??zones?.offload?.latitude??route?.offloadLat,
          offloadLon:linkedOff?.longitude??zones?.offload?.longitude??route?.offloadLon,
          offloadName:linkedOff?.name||zones?.offload?.name||route?.offloadName};
+       const chain=TripGeofenceTimeline.chain(trip,state.routes||[],fences);
+       const rolling=TripGeofenceTimeline.update(trip,p,chain);
        const navigation=TripGps.navigation(trip,navRoute,depot,p);
        return{tripId:trip.id,observedKm:trip.gpsProgress.observedKm,points:trip.gpsProgress.points,
-         reliable:TripMetrics.gpsReliable(trip),navigation};
+         reliable:TripMetrics.gpsReliable(trip),navigation,geofenceTimeline:rolling};
      });
      if(result.result)p.tripProgress=result.result;
      const current=await readOpsState(),completed=(current.trips||[]).find(t=>t.id===trackedTripId);
