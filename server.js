@@ -24,6 +24,7 @@ const {applyOperationalCutoff:applyOperationalCutoffDb}=require('./operational-c
 const {CUTOFF:OPS_CUTOFF,VERSION:OPS_CUTOFF_VERSION,importAllowed,pruneOperationalHistory}=require('./operational-cutoff');
 const PayrollEligibility=require('./public/payroll-eligibility');
 const PayrollTripLink=require('./payroll-trip-link');
+const TripPayrollDiagnostics=require('./trip-payroll-diagnostics');
 const {allowed:canManageRecord,deleteRecord,editRecord}=require('./record-management');
 const {calculate:calculateInvoiceCharges}=require('./public/invoice-charges');
 const {VERSION:WORKBOOK_TEST_CLEANUP_VERSION,removeWorkbookTests}=require('./workbook-test-cleanup');
@@ -1436,6 +1437,10 @@ app.post('/api/approvals/:id/decision',auth,roles('admin','manager','finance'),u
 
 require('./whiteboard-routes')(app,{auth,roles,readOpsState,mutateOpsState,storeCompanyReceipt});
 
+app.get('/api/admin/trip-payroll-diagnostics',auth,roles('admin','manager','finance'),async(req,res)=>{
+ try{const state=await readOpsState();res.json(TripPayrollDiagnostics.inspect(state,String(req.query.period||monthPeriod(new Date()))))}
+ catch(e){res.status(400).json({error:e.message})}
+});
 app.get('/api/state',auth,async(req,res)=>{const row=pool?(await q('SELECT payload,revision,updated_at FROM app_state WHERE id=1'))[0]:{payload:memory.state||{},revision:0};res.json(req.user.role==='driver'?{...row,payload:DriverAccess.driverState(row.payload||{},req.user)}:row)});
 app.put('/api/state',auth,roles('admin','manager','dispatcher','workshop','finance'),async(req,res)=>{
  if(!req.body||typeof req.body!=='object'||Array.isArray(req.body))return res.status(400).json({error:'Invalid state'});
