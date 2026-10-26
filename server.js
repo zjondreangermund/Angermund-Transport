@@ -1518,6 +1518,12 @@ function recalcTripCosts(state,t){
   const hasTollExpense=expenses.some(x=>/^toll$/i.test(String(x.category||'')));
   const legacyToll=hasTollExpense?0:num(t.tolls),allowance=num(t.allowance),other=num(t.other);
   const total=diesel+expense+legacyToll+allowance+other;
+  // Fuel purchases remain truck transactions. Keep actual receipt spend distinct from
+  // estimated consumption per journey so a refill never assigns all fuel to one trip.
+  const allocated=TruckFuelIntervals.estimateTripFuel(state,t);
+  t.estimatedFuelCost=allocated.estimatedCost;
+  t.estimatedFuelLitres=allocated.estimatedLitres;
+  t.fuelAllocationSource=allocated.source;
   t.dieselCost=Number(diesel.toFixed(2));
   t.expenseCost=Number(expense.toFixed(2));
   t.actualTripCost=Number(total.toFixed(2));
