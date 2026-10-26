@@ -8,14 +8,12 @@ function truckFuel(state,truckId){
   return String(r.truckId||trip?.truckId||'')===String(truckId);
  }).sort((a,b)=>date(a).localeCompare(date(b))||n(a.odometer)-n(b.odometer));
  const valid=rows.filter(r=>n(r.odometer)>0&&n(r.litres)>0);
- const intervals=[];
- for(let i=1;i<valid.length;i++){
-  const from=valid[i-1],to=valid[i],distance=n(to.odometer)-n(from.odometer);
+ const full=r=>r.fullTank===true||r.fullTank==='true'||r.fillType==='Full'||r.tankFull===true;
+ const fullFills=valid.filter(full),intervals=[];
+ for(let i=1;i<fullFills.length;i++){
+  const from=fullFills[i-1],to=fullFills[i],distance=n(to.odometer)-n(from.odometer);
   if(distance<=0||distance>10000)continue;
-  // Full-to-full consumption includes all partial purchases after previous full fill.
-  const full=r=>r.fullTank===true||r.fullTank==='true'||r.fillType==='Full'||r.tankFull===true;
-  if(!full(from)||!full(to))continue;
-  const fills=rows.filter(r=>date(r)>=date(from)&&date(r)<=date(to)&&n(r.odometer)>n(from.odometer)&&n(r.odometer)<=n(to.odometer));
+  const fills=valid.filter(r=>n(r.odometer)>n(from.odometer)&&n(r.odometer)<=n(to.odometer));
   const litres=fills.reduce((sum,r)=>sum+n(r.litres),0);
   if(!litres)continue;
   intervals.push({startOdometer:n(from.odometer),endOdometer:n(to.odometer),distance,litres,kmPerL:distance/litres,cost:fills.reduce((sum,r)=>sum+cost(r),0)});
