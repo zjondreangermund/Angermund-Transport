@@ -57,7 +57,8 @@ function update(trip,point,stops){
  // Trips already in transit when the first GPS fix arrives: use the loading
  // geofence as a clearly marked inferred starting point, not a fake GPS event.
  if(i===0&&progress.lastLeftIndex<0&&gps.points<=1&&
-   (trip.startedAt||Number(trip.stage)>=3||/in transit|return/i.test(trip.status||''))&&stops.length>1){
+   (trip.startedAt||Number(trip.stage)>=3||/in transit|return/i.test(trip.status||''))&&stops.length>1&&
+   (!stops[0].locatable||metres(point,stops[0])>stops[0].radiusM+75)){
    progress.lastLeftIndex=0;progress.nextIndex=1;progress.leftAt=null;progress.lastLeftGpsKm=Number(gps.observedKm||0);
    progress.inferredDeparture=true;i=1;
  }
