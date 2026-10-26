@@ -39,7 +39,7 @@
   const hasGps=Number(g?.points)>0;
   const travelled=completed&&!hasGps?total:Math.min(total,observed);
   return{ready:hasGps||completed,total,travelled:Number(travelled.toFixed(1)),remaining:Number(Math.max(0,total-travelled).toFixed(1)),
-   percent:Math.min(100,Math.max(0,travelled/total*100)),verified,source:hasGps?'GPS':'Trip distance'};
+   percent:Number(Math.min(100,Math.max(0,travelled/total*100)).toFixed(1)),verified,source:hasGps?'GPS':'Trip distance'};
  }
  return{windowFor,stops,kmProgress};
 });
