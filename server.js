@@ -3399,6 +3399,7 @@ app.patch('/api/admin/diesel/:id',auth,roles('admin','manager','dispatcher','fin
       const oldTrip=(state.trips||[]).find(x=>x.id===rec.tripId);
       for(const key of ['litres','price','odometer','printedTotal'])if(body[key]!==undefined)rec[key]=num(body[key]);
       for(const key of ['supplier','slip'])if(body[key]!==undefined)rec[key]=String(body[key]||'');
+      if(body.fullTank!==undefined)rec.fullTank=body.fullTank===true;
       if(body.verified!==undefined)rec.verified=Boolean(body.verified);
       if(body.status!==undefined)rec.status=String(body.status||'');
       if(num(rec.litres)<=0){const e=Error('Diesel litres must be greater than zero');e.status=400;throw e}
