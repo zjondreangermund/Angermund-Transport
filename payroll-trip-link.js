@@ -11,12 +11,12 @@ function resolveDriver(state,employee){
   const matches=drivers.filter(d=>normalize(d.name)===name);
   return matches.length===1?matches[0]:null;
 }
-function eligibleTrips(state,driver,periodStart,periodEnd){
+function eligibleTrips(state,driver,periodStart,periodEnd,options={}){
   if(!driver)return [];
   return(state.trips||[]).filter(t=>{
     if(String(t.driverId||'')!==String(driver.id))return false;
     if(/cancelled|canceled|deleted/i.test(String(t.status||'')))return false;
-    const date=String(t.date||'').slice(0,10);
+    const date=String((options.billingDate?(t.deliveredDate||t.completedDate||t.closedDate||t.date):t.date)||'').slice(0,10);
     if(date<periodStart||date>=periodEnd)return false;
     // Do not pay planned/active trips early. Some completed legacy records
     // have a textual status without a populated numeric stage.

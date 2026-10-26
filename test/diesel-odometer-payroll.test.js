@@ -2,7 +2,7 @@
 const test=require('node:test'),a=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const M=require('../public/trip-metrics'),Elig=require('../public/payroll-eligibility'),Link=require('../payroll-trip-link');
 test('partial diesel slip odometers provide known kilometres, without inventing missing departure or return',()=>{
- const t={id:'durban',truckId:'ang10',driverId:'driver',stage:4,date:'2026-10-21'};
+ const t={id:'durban',truckId:'ang10',driverId:'driver',stage:4,date:'2026-10-20'};
  const slips=[{tripId:'durban',truckId:'ang10',driverId:'driver',litres:450,odometer:100500},{tripId:'durban',truckId:'ang10',driverId:'driver',litres:200,odometer:101200}];
  const m=M.distance(t,slips);
  a.equal(m.distance,700);a.equal(m.partial,true);a.match(m.distanceSource,/confirmed portion/i);
@@ -26,7 +26,7 @@ test('separate employee records that match a uniquely named driver are eligible,
 test('October draft payroll uses diesel odometer kilometre evidence for the assigned driver, with a traceable payslip source',()=>{
  const source=fs.readFileSync('server.js','utf8');
  const chunk=(start,end)=>source.slice(source.indexOf(start),source.indexOf(end,source.indexOf(start)));
- const ctx={num:x=>Number(x||0),crypto:require('node:crypto'),TripMetrics:M,PayrollEligibility:Elig,PayrollTripLink:Link,
+ const ctx={num:x=>Number(x||0),crypto:require('node:crypto'),PayrollCycle:require('../payroll-cycle'),PayrollTripLink:require('../payroll-trip-link'),TripMetrics:require('../public/trip-metrics'),TripMetrics:M,PayrollEligibility:Elig,PayrollTripLink:Link,
   ensureTripLegs:(s,t)=>t.legs?.length?t.legs:[t],calculateLegIncome:x=>Number(x.income||0),
   serverSouthAfricaTrip:()=>false,serverFuelMetrics:(s,t)=>M.fuel(t,(s.diesel||[]).filter(x=>x.tripId===t.id)),
   periodBounds:()=>({start:'2026-10-01',end:'2026-11-01'})};
@@ -38,7 +38,7 @@ test('October draft payroll uses diesel odometer kilometre evidence for the assi
  const state={employees:[{id:'emp_anton',name:'Anton',category:'Employee'}],drivers:[{id:'drv_anton',name:'Anton'}],
   trucks:[{id:'ang10',fleetName:'Ang 10'}],routes:[],payProfiles:[],payroll:[],expenses:[],advances:[],loans:[],
   diesel:[{tripId:'trip1',odometer:100500,litres:200},{tripId:'trip1',odometer:101200,litres:200}],
-  trips:[{id:'trip1',number:'AT-123',date:'2026-10-21',truckId:'ang10',driverId:'drv_anton',status:'Completed',stage:5,
+  trips:[{id:'trip1',number:'AT-123',date:'2026-10-20',truckId:'ang10',driverId:'drv_anton',status:'Completed',stage:5,
     legs:[{id:'leg1',load:'Furniture',distance:0}]}]};
  const rows=ctx.generatePayrollPeriod(state,'2026-10');
  a.equal(rows.length,1);a.equal(rows[0].tripKm,700);a.equal(rows[0].tripPay,210);
