@@ -49,7 +49,14 @@ function update(trip,point,stops){
  if(!gps||!Array.isArray(stops)||!stops.length)return null;
  const keys=stops.map(s=>s.id).join('|');
  let progress=gps.geofenceTimeline||{};
- if(progress.sequence!==keys)progress={sequence:keys,nextIndex:0,lastLeftIndex:-1,arrivalIndex:-1,enteredAt:null,leftAt:null,lastLeftGpsKm:0};
+ if(progress.sequence!==keys){
+  const formerIndex=stops.findIndex(stop=>String(stop.id)===String(progress.lastLeftId||''));
+  progress={sequence:keys,nextIndex:formerIndex>=0?formerIndex+1:0,
+   lastLeftIndex:formerIndex>=0?formerIndex:-1,lastLeftId:formerIndex>=0?stops[formerIndex].id:null,
+   arrivalIndex:-1,enteredAt:null,leftAt:progress.leftAt||null,
+   lastLeftGpsKm:formerIndex>=0?Number(progress.lastLeftGpsKm||0):0,
+   inferredDeparture:Boolean(formerIndex>=0&&progress.inferredDeparture)};
+ }
  const at=Date.parse(point.recordedAt),prior=Date.parse(progress.lastAt);
  if(!Number.isFinite(at)||Number.isFinite(prior)&&at<=prior)return gps.geofenceTimeline||null;
  progress.lastAt=point.recordedAt;
@@ -59,7 +66,7 @@ function update(trip,point,stops){
  if(i===0&&progress.lastLeftIndex<0&&gps.points<=1&&
    (trip.startedAt||Number(trip.stage)>=3||/in transit|return/i.test(trip.status||''))&&stops.length>1&&
    (!stops[0].locatable||metres(point,stops[0])>stops[0].radiusM+75)){
-   progress.lastLeftIndex=0;progress.nextIndex=1;progress.leftAt=null;progress.lastLeftGpsKm=Number(gps.observedKm||0);
+   progress.lastLeftIndex=0;progress.lastLeftId=stops[0].id;progress.nextIndex=1;progress.leftAt=null;progress.lastLeftGpsKm=Number(gps.observedKm||0);
    progress.inferredDeparture=true;i=1;
  }
  const next=stops[i];
@@ -70,7 +77,7 @@ function update(trip,point,stops){
   if(inside&&progress.arrivalIndex!==i){
    progress.arrivalIndex=i;progress.enteredAt=point.recordedAt;
   }else if(progress.arrivalIndex===i&&exit){
-   progress.lastLeftIndex=i;progress.nextIndex=i+1;progress.arrivalIndex=-1;
+   progress.lastLeftIndex=i;progress.lastLeftId=next.id;progress.nextIndex=i+1;progress.arrivalIndex=-1;
    progress.enteredAt=null;progress.leftAt=point.recordedAt;
    progress.lastLeftGpsKm=Number(gps.observedKm||0);
    progress.inferredDeparture=false;
