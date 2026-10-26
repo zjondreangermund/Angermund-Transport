@@ -4187,7 +4187,7 @@ app.post('/api/assistant/ask',auth,upload.array('document',20),async(req,res)=>{
     const forbiddenOps=['driver','site_worker','warehouse'].includes(req.user?.role);
     const pages=(Array.isArray(req.body?.context?.pages)?req.body.context.pages:[])
       .filter(x=>x&&typeof x.id==='string'&&/^[a-zA-Z]{2,30}$/.test(x.id))
-      .filter(x=>!forbiddenFinance||!['invoices','reports','monthlyPnl','rates','payroll','loans','insurance'].includes(x.id))
+      .filter(x=>!forbiddenFinance||!['invoices','reports','monthlyPnl','rates','payroll','shunterBonus','loans','insurance'].includes(x.id))
       .filter(x=>!forbiddenOps||!['driverAccounts','settings','imports'].includes(x.id))
       .slice(0,40).map(x=>({id:x.id,label:String(x.label||x.id).slice(0,65),description:String(x.description||'').slice(0,220)}));
     const rawFinancials=req.body?.context?.financials;
