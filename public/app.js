@@ -80,7 +80,7 @@ function legIncomeClient(leg){
   return manual
 }
 function journeyIncome(t){const legs=tripLegs(t);return legs.length?sum(legs,legIncomeClient):num(t.income)}
-function journeyDistance(t){return TripMetrics.distance(t).distance}
+function journeyDistance(t){return TripMetrics.distance(t,linked('diesel','tripId',t.id)).distance}
 function activeJourneyLeg(t){
   const legs=tripLegs(t),open=legs.find(x=>!['Delivered','Invoiced','Closed'].includes(String(x.status||'')));
   return open||legs[legs.length-1]||null
@@ -2346,7 +2346,7 @@ function openEmployeeLoan(id=''){
 }
 function payslipTripTable(p){
   if(!Array.isArray(p.tripBreakdown))return '<p>Trip detail snapshot is unavailable for this older payslip. Refresh a Draft payslip to include it. Approved/Paid totals are preserved.</p>';
-  return '<h3>Trip breakdown</h3><div class="table-wrap"><table><thead><tr><th>Date / trip</th><th>Truck / route / cargo</th><th>km</th><th>Rate/km</th><th>Trip pay</th></tr></thead><tbody>'+p.tripBreakdown.map(x=>'<tr><td>'+esc(x.date)+'<br>'+esc(x.number)+'</td><td>'+esc(x.truck)+'<br>'+esc(x.route)+'<br>'+esc(x.load)+'</td><td>'+num(x.distance).toLocaleString()+'</td><td>'+money(x.rate)+'</td><td>'+money(x.pay)+'</td></tr>').join('')+'</tbody></table></div>';
+  return '<h3>Trip breakdown</h3><div class="table-wrap"><table><thead><tr><th>Date / trip</th><th>Truck / route / cargo</th><th>km</th><th>Rate/km</th><th>Trip pay</th></tr></thead><tbody>'+p.tripBreakdown.map(x=>'<tr><td>'+esc(x.date)+'<br>'+esc(x.number)+'</td><td>'+esc(x.truck)+'<br>'+esc(x.route)+'<br>'+esc(x.load)+'</td><td>'+num(x.distance).toLocaleString()+'<br><small>'+esc(x.distanceSource||'Historical kilometres')+(x.partial?' · Partial distance — review final trip kilometres':'')+'</small></td><td>'+money(x.rate)+'</td><td>'+money(x.pay)+'</td></tr>').join('')+'</tbody></table></div>';
 }
 function openPayslip(id){
   const p=(db.payroll||[]).find(x=>x.id===id);if(!p)return;
@@ -3550,6 +3550,7 @@ function openTrip(id){
     ${carrierOrderPanel(t)}
     ${historicalTripSourcePanel(t)}
     ${tripRequirementsPanel(t)}
+    ${TripMetrics.distance(t,fuel).partial?'<p class="notice">Only kilometres confirmed by diesel slip odometers are available. Driver pay for this trip may increase once final depot/GPS/Excel kilometres are confirmed. No duplicate kilometres are added.</p>':''}
     ${tripClosingDistancePanel(t)}
     ${tripGpsStatus(t)}
     ${['admin','manager','dispatcher','finance'].includes(role)?'<button type="button" class="ghost" id="reconcileTripGps">Recalculate GPS kilometres from saved phone/tracker signals</button>':''}
