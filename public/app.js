@@ -3828,12 +3828,12 @@ function refreshNativeGpsStatus(){
 }
 setInterval(()=>{if(!document.hidden)refreshNativeGpsStatus()},10000);
 // Native GPS status buttons are wired directly after every render or status update.
-function forceAndroidInstallPrompt(message='Latest Android app: v1.4.4'){
+function forceAndroidInstallPrompt(message='Install the latest published Android app'){
   if(!$('appInstallPrompt'))return;
   if($('appInstallStatus'))$('appInstallStatus').innerHTML='<b>'+esc(message)+'</b><br><span>Download and install the APK. Android may ask you to allow installs from this browser.</span>';
   $('appInstallPrompt').classList.remove('hidden')
 }
-function openAndroidInstallPrompt(){forceAndroidInstallPrompt('Angermund Transport Android v1.4.4 is ready to install.')}
+function openAndroidInstallPrompt(){forceAndroidInstallPrompt('Download the latest published Angermund Transport Android app.')}
 // The site/JS loads fresh from Railway automatically. Native APK releases
 // require an Android install confirmation, so check on launch and when active.
 let lastAndroidUpdateCheck=0,androidUpdateInFlight=false,latestAndroidUpdateInfo=null;
