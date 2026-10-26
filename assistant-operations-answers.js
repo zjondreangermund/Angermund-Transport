@@ -60,11 +60,17 @@ function answer(question,state={},user={}){
    }).join('\n')+'\nChange a recurring cutoff in Payroll & Payslips → Edit. Choose exact dates when creating an NBL invoice; its linked draft payslips use those dates. Approved and Paid payslips are not overwritten.','payroll');
  }
  if(ops&&!(finance&&payrollAsked)&&/\b(trips?|loads?|dispatch|imports?)\b/i.test(q)&&/\b(missing|not (?:loaded|loading|showing|there|visible|found)|can.?t (?:see|find)|where (?:is|are)|why|find|search)\b/i.test(q)){
+   const manualRequested=/\bmanual(?:ly)?\b|entered by hand/i.test(q);
+   const cargoRequested=/\b(charcoal|furniture)\b/i.test(q);
+   const specific=/\b(?:trip|tms|order)\s*(?:no\.?|number|#|reference)?\s*([A-Z0-9-]{3,})\b/i.exec(q)?.[1];
+   if(!truck&&!date&&!(specific&&/\d/.test(specific))&&!manualRequested&&!cargoRequested)
+     return result('Please give me a trip number, truck (for example ANG 10), or date so I can check the correct saved record instead of guessing. You can also ask about manual trips.','trips');
    const candidates=(state.trips||[]).filter(t=>{
+     if(manualRequested&&!(t.source==='manual'||/^AT-\d+$/i.test(t.number||'')&&!t.externalTmsId))return false;
+     if(cargoRequested&&![t,...(t.legs||[])].some(x=>/charcoal|furniture/i.test([x.load,x.label,x.notes].join(' '))))return false;
      if(truck&&t.truckId!==truck.id)return false;
      if(date&&![t.date,t.deliveredDate,t.completedDate,t.closedDate].some(d=>String(d||'').slice(0,10)===date))return false;
-     const specific=/\b(?:trip|tms|order)\s*(?:no\.?|number|#|reference)?\s*([A-Z0-9-]{5,})\b/i.exec(q)?.[1];
-     if(specific&&!/^(manual|loaded|missing|showing|import|number|found|where)$/i.test(specific)){
+     if(specific&&/\d/.test(specific)){
        const fields=[t.number,t.id,t.sourceOrderRef,t.externalTmsId,t.sourceTmsId,t.carrierDetails?.tmsId];
        if(!fields.some(x=>eq(x,specific)))return false;
      }
