@@ -110,7 +110,7 @@ function buildEvidence(q,state,role){
         tripReferences:(x.tripBreakdown||[]).slice(0,10).map(t=>({number:t.number,km:t.distance,pay:t.pay}))}))};
   });
  }
- if(finance&&/\b(invoice|invoicing|debtors?|outstanding)\b/i.test(query)){
+ if(finance&&(/\b(invoice|invoicing|debtors?|outstanding)\b/i.test(query)||(state.invoices||[]).some(x=>inText(query,x.number)))){
   evidence.invoices=(state.invoices||[]).filter(x=>inText(query,x.number)||candidate.some(t=>(x.tripIds||[]).includes(t.id)||x.tripId===t.id))
     .slice(0,6).map(x=>({number:safe(x.number,60),status:safe(x.status,40),amount:finite(x.amount),date:safe(x.date,16),
      periodStart:safe(x.periodStart,16),periodEnd:safe(x.periodEnd,16),linkedTrips:(x.tripIds||[]).length}));
