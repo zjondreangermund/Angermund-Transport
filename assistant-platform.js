@@ -3,6 +3,7 @@
 const crypto=require('node:crypto');
 const TruckTrip=require('./assistant-trip-resolver');
 const TripSearch=require('./trip-search');
+const Diagnostics=require('./assistant-diagnostics');
 const Records=require('./record-management');
 const Diesel=require('./manual-diesel');
 const Costing=require('./public/quote-costing');
@@ -221,6 +222,7 @@ async function apply(s,p,actor,role,h={},document=null){
  return{...result,entityId:row?.id||p.entityId||p.tripId,recordType:({quotes:'quote',invoices:'invoice',expenses:'expense',trips:'trip'})[p.collection]||p.collection,tripId:result.tripId||p.tripId||'',page:p.page};
 }
 function read(message,s,role){
+ const diagnosis=Diagnostics.reply(message,s,role);if(diagnosis)return diagnosis;
  if(TripSearch.isQuery(message))return Records.allowed('trips',role)?TripSearch.reply(s,message):{answer:'Your account cannot view those records.',source:'record-permission'};
  const m=/^(?:show|find|list|search|view)\s+(?:my\s+)?(invoices?|quotations?|quotes?|diesel|expenses?|maintenance|trips?|loans?|payroll|tyres?|inspections?|incidents?|overheads?)(?:\s+(.+?))?[?.!]*$/i.exec(String(message||'').trim());
  const tender=/\b(?:tender|tendering)\b/i.test(message)&&!/\b(?:create|generate|delete|edit|change|make)\b/i.test(message);
