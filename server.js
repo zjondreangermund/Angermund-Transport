@@ -3366,10 +3366,7 @@ async function gpsIn(req,res,source){
  let trackedTripId=null;
  if(!req.gpsHistoryOnly&&TripGps.valid(p)){
    const state=await readOpsState();
-   if(source==='driver'&&req.user.role==='driver'){
-     const t=(state.trips||[]).find(t=>t.id===p.tripId&&t.truckId===p.vehicleId&&t.driverId===p.driverId&&!TripLifecycle.completed(t));
-     if(t)trackedTripId=t.id;
-   }else if(source==='android-background'){
+   if(source==='android-background'){
      const t=(state.trips||[]).find(t=>t.id===p.tripId&&t.truckId===p.vehicleId&&t.driverId===p.driverId&&!TripLifecycle.completed(t)&&PhoneTracking.permitsPoint(t,{driverId:p.driverId},p));
      if(t)trackedTripId=t.id;
    }else if(['telematics','truck-device','tracker','vehicle-tracker'].includes(source)){
