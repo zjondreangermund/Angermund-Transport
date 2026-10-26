@@ -3341,8 +3341,15 @@ async function rebuildTripGps(tripId){
   const leg=activeTripLegServer(trip),route=(state.routes||[]).find(r=>r.id===(leg?.routeId||trip.routeId));
   const fences=await operationalGeofences(true),zones=linkedTripZones(route,leg,trip,fences);
   const depots=fences.filter(isCompanyDepot),depot=zones?depotGeofenceForTrip(fences,zones):(depots.length===1?depots[0]:null);
-  const r=zones?{...route,loadLat:zones.load.latitude,loadLon:zones.load.longitude,loadName:zones.load.name,
-   offloadLat:zones.offload.latitude,offloadLon:zones.offload.longitude,offloadName:zones.offload.name}:route;
+  const loadFence=fences.find(f=>String(f.id)===String(leg?.loadingGeofenceId||trip.loadingGeofenceId));
+  const offFence=fences.find(f=>String(f.id)===String(leg?.offloadingGeofenceId||trip.offloadingGeofenceId));
+  const r={...route,
+   loadLat:loadFence?.latitude??zones?.load?.latitude??route?.loadLat,
+   loadLon:loadFence?.longitude??zones?.load?.longitude??route?.loadLon,
+   loadName:loadFence?.name||zones?.load?.name||route?.loadName,
+   offloadLat:offFence?.latitude??zones?.offload?.latitude??route?.offloadLat,
+   offloadLon:offFence?.longitude??zones?.offload?.longitude??route?.offloadLon,
+   offloadName:offFence?.name||zones?.offload?.name||route?.offloadName};
   const progress=TripGps.rebuild(trip,rows,r,depot);
   if(progress)trip.gpsProgress=progress;
   return{tripId:trip.id,rawSignals:rows.length,acceptedSignals:progress?.points||0,
@@ -3393,9 +3400,16 @@ async function gpsIn(req,res,source){
        const leg=activeTripLegServer(trip),route=(state.routes||[]).find(r=>r.id===(leg?.routeId||trip.routeId));
        const depots=fences.filter(isCompanyDepot),zones=linkedTripZones(route,leg,trip,fences),depot=zones?depotGeofenceForTrip(fences,zones):(depots.length===1?depots[0]:null);
        let navRoute=route;
-       // A geofence may have been linked by ID without route latitude/longitude.
-       if(zones)navRoute={...route,loadLat:zones.load.latitude,loadLon:zones.load.longitude,loadName:zones.load.name,
-         offloadLat:zones.offload.latitude,offloadLon:zones.offload.longitude,offloadName:zones.offload.name};
+       // Each site can be linked independently, even if its other leg pin is not set.
+       const linkedLoad=fences.find(f=>String(f.id)===String(leg?.loadingGeofenceId||trip.loadingGeofenceId));
+       const linkedOff=fences.find(f=>String(f.id)===String(leg?.offloadingGeofenceId||trip.offloadingGeofenceId));
+       navRoute={...route,
+         loadLat:linkedLoad?.latitude??zones?.load?.latitude??route?.loadLat,
+         loadLon:linkedLoad?.longitude??zones?.load?.longitude??route?.loadLon,
+         loadName:linkedLoad?.name||zones?.load?.name||route?.loadName,
+         offloadLat:linkedOff?.latitude??zones?.offload?.latitude??route?.offloadLat,
+         offloadLon:linkedOff?.longitude??zones?.offload?.longitude??route?.offloadLon,
+         offloadName:linkedOff?.name||zones?.offload?.name||route?.offloadName};
        const navigation=TripGps.navigation(trip,navRoute,depot,p);
        return{tripId:trip.id,observedKm:trip.gpsProgress.observedKm,points:trip.gpsProgress.points,
          reliable:TripMetrics.gpsReliable(trip),navigation};
