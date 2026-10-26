@@ -4,7 +4,14 @@ const n=v=>Number.isFinite(Number(v))?Number(v):0;
 function gpsReliable(t={}){
  const g=t.gpsProgress||{},first=Date.parse(g.firstAt),last=Date.parse(g.lastAt),
  start=Date.parse(t.startedAt||t.phoneTracking?.startedAt||''),end=Date.parse(t.depotArrival?.at||'');
- return n(g.points)>=12&&n(g.observedKm)>=1&&n(g.gaps)===0&&n(g.rejectedJumps)===0
+ // Before adopting GPS for finance, cross-check against an independent
+ // odometer/Excel/route baseline when available. A partial path must not
+ // replace a 3,000 km journey with 30 km after a GPS restart.
+ const a=n(t.startKm),b=n(t.endKm),legs=Array.isArray(t.legs)?t.legs:[],
+ baseline=a>0&&b>a?b-a:(legs.length&&legs.every(l=>n(l.distance)>0)?
+   legs.reduce((x,l)=>x+n(l.distance),0):n(t.distance));
+ const consistent=!baseline||(n(g.observedKm)>=baseline*.65&&n(g.observedKm)<=baseline*1.5);
+ return consistent&&n(g.points)>=12&&n(g.observedKm)>=1&&n(g.gaps)===0&&n(g.rejectedJumps)===0
   &&Number.isFinite(start)&&Number.isFinite(first)&&Math.abs(first-start)<=300000
   &&Number.isFinite(end)&&Number.isFinite(last)&&Math.abs(end-last)<=300000;
 }
