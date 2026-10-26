@@ -3405,13 +3405,12 @@ function openDieselReview(recordId){
     +'<div class="field"><label>Receipt total</label><input id="drTotal" type="number" step="0.01" value="'+num(x.printedTotal||fuelRecordCost(x))+'"></div>'
     +'<div class="field"><label>Price / litre</label><input id="drPrice" type="number" step="0.0001" value="'+num(x.price)+'"></div>'
     +'<div class="field"><label>Odometer</label><input id="drOdo" type="number" step="1" value="'+num(x.odometer)+'"></div>'
-    +'<div class="field"><label><input type="checkbox" id="drFullTank" '+(x.fullTank?'checked':'')+'> Tank filled completely</label></div>'
     +'<div class="field"><label>Supplier</label><input id="drSupplier" value="'+esc(x.supplier||'')+'"></div>'
     +'<div class="field"><label>Slip / receipt no.</label><input id="drSlip" value="'+esc(x.slip||'')+'"></div></div>'
     +'<div class="diesel-review-summary"><span>Status</span><b>'+(x.verified?'Verified':'Awaiting review')+'</b><span>Driver</span><b>'+esc(driver(x.driverId))+'</b><span>Scope</span><b>'+esc(t.number||'Company / fleet')+'</b></div>'
     +'<div class="form-actions"><button type="button" class="ghost" id="cancelForm">Close</button>'+(uploadId?'<button type="button" class="ghost" id="viewDieselReceipt">View receipt</button>':'')+'<button type="button" class="ghost" id="saveDieselCorrection">Save correction</button><button type="button" class="primary" id="approveDiesel">✓ Approve & verify</button>'+(['admin','finance'].includes(role)?'<button type="button" class="danger" id="deleteDiesel">Delete record</button>':'')+'</div>';
   $('modal').classList.remove('hidden');
-  const body=verified=>({litres:num($('drLitres').value),printedTotal:num($('drTotal').value),price:num($('drPrice').value),odometer:num($('drOdo').value),supplier:$('drSupplier').value.trim(),slip:$('drSlip').value.trim(),fullTank:$('drFullTank').checked,verified});
+  const body=verified=>({litres:num($('drLitres').value),printedTotal:num($('drTotal').value),price:num($('drPrice').value),odometer:num($('drOdo').value),supplier:$('drSupplier').value.trim(),slip:$('drSlip').value.trim(),verified});
   const save=async verified=>{try{await api('/api/admin/diesel/'+encodeURIComponent(recordId),{method:'PATCH',body:body(verified)});$('modal').classList.add('hidden');await refreshCentralState(false);if(x.tripId)openTrip(x.tripId);else{page='diesel';render()}notify(verified?'Diesel slip verified':'Diesel values corrected')}catch(e){notify(e.message)}};
   $('cancelForm').onclick=()=>{$('modal').classList.add('hidden');if(x.tripId)openTrip(x.tripId)};
   if($('viewDieselReceipt'))$('viewDieselReceipt').onclick=()=>x.receiptSource==='company'?openCompanyReceiptFile(uploadId):openDriverUploadFile(uploadId);
@@ -3503,6 +3502,17 @@ function openLoadEdit(tripId){
   };
 }
 
+function tripClosingDistancePanel(t){
+  const slips=linked('diesel','tripId',t.id),m=TripMetrics.lastRefillRemainder(t,slips,2.2);
+  const edit=['admin','manager','dispatcher'].includes(role);
+  return '<section class="panel"><h3>Distance after last diesel stop / return to depot</h3>'
+    +'<p>Diesel slips stay linked to this trip. The truck can continue driving after the last refill; those kilometres still count towards the trip distance and driver pay. No extra diesel purchase is created.</p>'
+    +'<p><b>'+(m.ready?m.km.toLocaleString()+' km since last refill':esc(m.reason))+'</b>'
+    +(m.ready?'<br><small>Last diesel-slip odometer: '+num(m.lastSlipOdometer).toLocaleString()+' km · '+(m.estimatedEnd?'Estimated final odometer from Excel/route distance':'Recorded depot arrival odometer')+': '+num(m.closingOdometer).toLocaleString()+' km</small>':'')
+    +(m.ready&&m.km>0?'<br><small>Estimated fuel used since last refill: '+num(m.estimatedLitres).toFixed(1)+' L at assumed 2.2 km/L. This is <b>not</b> an actual purchase, invoice or verified fuel efficiency.</small>':'')+'</p>'
+    +(edit?'<div class="form-grid"><div class="field"><label>Trip departure odometer (km)</label><input id="tripClosingStartKm" type="number" min="0" step="1" value="'+num(t.startKm)+'"></div><div class="field"><label>Depot arrival / final odometer (km)</label><input id="tripClosingEndKm" type="number" min="1" step="1" value="'+(num(t.endKm)||'')+'" placeholder="Enter reading at Windhoek depot"></div></div><button type="button" class="ghost" id="saveTripClosingOdometer">Save arrival reading</button>':'')
+    +'<p><small>Trip kilometres: actual departure-to-arrival odometers first; otherwise Excel or saved journey distance (estimated). The final segment is already within the trip total and must not be added twice. Refuel-derived km/L can remain provisional until fuel is reconciled.</small></p></section>';
+}
 function openTrip(id){
   const t=get('trips',id),legs=tripLegs(t),fuel=linked('diesel','tripId',id),expenses=linked('expenses','tripId',id),issues=linked('tripIssues','tripId',id),settlement=tripSettlement(t),m=settlement.fuel;
   const dieselSpend=tripDieselSpend(t),expenseSpend=tripRouteExpenseSpend(t),totalCost=tripCost(t),contribution=tripProfit(t);
@@ -3526,10 +3536,11 @@ function openTrip(id){
     ${carrierOrderPanel(t)}
     ${historicalTripSourcePanel(t)}
     ${tripRequirementsPanel(t)}
+    ${tripClosingDistancePanel(t)}
     <div class="journey-leg-toolbar"><h3>Journey legs / loads</h3><div><button type="button" class="ghost" id="addJourneyLeg">+ Add leg</button><button type="button" class="primary" id="addReturnLeg">↩ Add return / backload</button></div></div>
     <div class="journey-leg-list">${legs.map(x=>journeyLegCard(t,x)).join('')}</div>
     <div class="split-3">
-      <div><h3>Diesel performance</h3><p>${m.ready?`${m.kmPerL.toFixed(2)} km/L<br>${m.litresPerKm.toFixed(3)} L/km<br>${m.litresPer100Km.toFixed(1)} L/100 km`:'Awaiting distance and diesel'}<br>${fuel.length} slip(s) · ${num(m.litres).toFixed(2)} L</p></div>
+      <div><h3>Diesel performance</h3><p>${m.ready?`${m.kmPerL.toFixed(2)} km/L<br>${m.litresPerKm.toFixed(3)} L/km<br>${m.litresPer100Km.toFixed(1)} L/100 km`:'Awaiting distance and diesel'}<br>${fuel.length} slip(s) · ${num(m.litres).toFixed(2)} L<br><small>Indicative only: diesel bought on this trip may not equal diesel consumed, especially when the truck returns without refuelling.</small></p></div>
       <div><h3>Driver settlement</h3><p>Trip pay ${money(settlement.tripPay)}<br><small>${journeyDistance(t).toLocaleString()} km × ${money(settlement.tripRate)}/km</small><br>Approved expenses ${money(settlement.reimbursable)}<br>Advances ${money(settlement.advances)}<br><b>Amount due ${money(settlement.due)}</b></p></div>
       <div><h3>Invoice control</h3><p>${legs.filter(x=>x.invoiceId).length}/${legs.length} leg invoices created.<br>${legs.length>1?'Each client/load invoices separately.':'Single-load journeys can use the normal invoice flow.'}</p></div>
     </div>
@@ -3553,6 +3564,14 @@ function openTrip(id){
     </div>`;
   $('modal').classList.remove('hidden');
   $('cancelForm').onclick=()=>$('modal').classList.add('hidden');
+  if($('saveTripClosingOdometer'))$('saveTripClosingOdometer').onclick=async()=>{
+    try{
+      const startKm=Number($('tripClosingStartKm').value),endRaw=$('tripClosingEndKm').value;
+      if(!endRaw.trim())return notify('Enter the final depot odometer reading');
+      await api('/api/admin/trips/'+encodeURIComponent(id)+'/closing-odometer',{method:'PATCH',body:{startKm,endKm:Number(endRaw)}});
+      await refreshCentralState(false);openTrip(id);notify('Trip closing odometer saved. Full journey kilometres updated; diesel slips unchanged. Refresh draft payroll if applicable.');
+    }catch(e){notify(e.message)}
+  };
   if($('editLoadDetails'))$('editLoadDetails').onclick=()=>openLoadEdit(id);
   if($('saveTripDriver'))$('saveTripDriver').onclick=()=>saveTripDriverAssignment(id);
   $('refreshTripValues').onclick=async()=>{await refreshCentralState(false);openTrip(id);notify('Journey values refreshed')};
