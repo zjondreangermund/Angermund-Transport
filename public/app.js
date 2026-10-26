@@ -1490,6 +1490,17 @@ function tripPlaceDetails(t){
   return '<div class="driver-trip-meta">'+[['Loading',c.origin],['Offloading',c.destination]].map(([label,p])=>'<div><b>'+label+'</b><br>'+esc([p?.name,p?.address,p?.city,p?.country,p?.postalCode].filter(Boolean).join(', ')||'Not supplied')+'</div>').join('')+'</div>';
 }
 document.addEventListener('click',e=>{const b=e.target.closest('[data-trip-tracking]');if(b){e.stopPropagation();setTripPhoneTracking(b.dataset.tripTracking,b.dataset.active==='true')}});
+function tripGpsStatus(t){
+ const g=t?.gpsProgress;if(!g)return '<div class="driver-small-status"><span>📍 GPS distance: waiting for valid signals</span></div>';
+ const reliable=TripMetrics.gpsReliable(t),recent=Date.now()-Date.parse(g.lastAt||0)<=10*60000;
+ const nav=g.navigation;
+ return '<section class="policy"><b>📍 GPS journey · '+num(g.observedKm).toFixed(1)+' km observed</b>'
+  +'<p>'+(reliable?'Verified GPS journey distance':recent?'GPS tracking active · distance provisional':'GPS coverage incomplete / signal paused')+' · '+num(g.points)+' valid signals'
+  +(num(g.gaps)?' · '+num(g.gaps)+' coverage gap(s)':'')+'</p>'
+  +(nav?'<p><b>Next geofence: '+esc(nav.next)+'</b><br>'+num(nav.toNextKm).toFixed(1)+' km TO next pin (straight line)'
+     +'<br>'+num(nav.fromPreviousKm).toFixed(1)+' km travelled FROM '+esc(nav.previous||'previous geofence')+' (GPS track)</p>':'<p>Geofence distances pending a linked loading, offloading or depot position.</p>')
+  +'<small>GPS kilometre totals are calculated from accepted location signals. Road distance may be greater than the straight-line distance to a geofence.</small></section>';
+}
 function driverPortal(){
   const preview=role!=='driver';
   const did=preview?(driverPreviewId||currentDriver()):currentDriver();
@@ -1532,6 +1543,7 @@ function driverPortal(){
       <div class="driver-trip-top"><div><small>${legs.length>1?`CURRENT LEG ${num(leg?.sequence)}/${legs.length}`:'CURRENT TRIP'}</small><h2>${esc(t.number)} · ${esc(truck(t.truckId))}</h2></div>${badge(leg?.status||t.status)}</div>
       <div class="driver-route">${esc(route(leg?.routeId||t.routeId))}</div>
       ${tripPlaceDetails(t)}
+      ${tripGpsStatus(t)}
 
       <div class="driver-trip-meta"><span>📦 ${esc(leg?.load||t.load||'Load')}</span><span>🏢 ${esc(client(leg?.clientId||t.clientId))}</span></div>
       ${legs.length>1?`<div class="driver-leg-progress">${legs.map(x=>`<span class="${x.id===leg?.id?'current':x.pod?'done':''}">${x.sequence}</span>`).join('')}</div>`:''}
@@ -3504,9 +3516,10 @@ function openLoadEdit(tripId){
 
 function tripClosingDistancePanel(t){
   const slips=linked('diesel','tripId',t.id),m=TripMetrics.lastRefillRemainder(t,slips,2.2);
-  const edit=['admin','manager','dispatcher'].includes(role);
+  const reliable=TripMetrics.gpsReliable(t),edit=['admin','manager','dispatcher'].includes(role)&&!reliable;
   return '<section class="panel"><h3>Distance after last diesel stop / return to depot</h3>'
     +'<p>Diesel slips stay linked to this trip. The truck can continue driving after the last refill; those kilometres still count towards the trip distance and driver pay. No extra diesel purchase is created.</p>'
+    +(reliable?'<p><b>Verified GPS journey: '+num(t.gpsProgress.observedKm).toFixed(1)+' km.</b> Manual closing kilometres are locked because GPS covered the whole trip.</p>':'')
     +'<p><b>'+(m.ready?m.km.toLocaleString()+' km since last refill':esc(m.reason))+'</b>'
     +(m.ready?'<br><small>Last diesel-slip odometer: '+num(m.lastSlipOdometer).toLocaleString()+' km · '+(m.estimatedEnd?'Estimated final odometer from Excel/route distance':'Recorded depot arrival odometer')+': '+num(m.closingOdometer).toLocaleString()+' km</small>':'')
     +(m.ready&&m.km>0?'<br><small>Estimated fuel used since last refill: '+num(m.estimatedLitres).toFixed(1)+' L at assumed 2.2 km/L. This is <b>not</b> an actual purchase, invoice or verified fuel efficiency.</small>':'')+'</p>'
@@ -3520,7 +3533,8 @@ function openTrip(id){
   $('entryForm').innerHTML='<section class="panel status-'+TripLifecycle.phase(t).key+'"><span class="ledger-status">'+esc(TripLifecycle.phase(t).label)+'</span>'+ledgerProgress(t)+'</section>'+tripPhoneTrackingControls(t)+shunterReconDetail(t)+
     `<div class="trip-live-summary">
       <div><span>Journey income</span><b>${money(journeyIncome(t))}</b></div>
-      <div><span>Distance</span><b>${journeyDistance(t).toLocaleString()} km</b><small>${esc(TripMetrics.distance(t).distanceSource)}</small></div><div><span>Trip contribution / km</span><b>${journeyDistance(t)>0?money(tripProfit(t)/journeyDistance(t))+'/km':'Distance missing'}</b><small>Revenue less recorded trip costs; before company overheads</small></div>
+      <div><span>Distance</span><b>${journeyDistance(t).toLocaleString()} km</b><small>${esc(TripMetrics.distance(t).distanceSource)}</small></div>
+      <div><span>GPS signals</span><b>${num(t.gpsProgress?.observedKm).toFixed(1)} km</b><small>${num(t.gpsProgress?.points)} fix(es) · ${TripMetrics.gpsReliable(t)?'Verified complete track':'Partial / provisional'}</small></div><div><span>Trip contribution / km</span><b>${journeyDistance(t)>0?money(tripProfit(t)/journeyDistance(t))+'/km':'Distance missing'}</b><small>Revenue less recorded trip costs; before company overheads</small></div>
       <div><span>Diesel</span><b>${money(dieselSpend)}</b></div>
       <div><span>Route expenses</span><b>${money(expenseSpend)}</b></div>
       <div><span>Total trip cost</span><b>${money(totalCost)}</b></div>
@@ -3537,6 +3551,7 @@ function openTrip(id){
     ${historicalTripSourcePanel(t)}
     ${tripRequirementsPanel(t)}
     ${tripClosingDistancePanel(t)}
+    ${tripGpsStatus(t)}
     <div class="journey-leg-toolbar"><h3>Journey legs / loads</h3><div><button type="button" class="ghost" id="addJourneyLeg">+ Add leg</button><button type="button" class="primary" id="addReturnLeg">↩ Add return / backload</button></div></div>
     <div class="journey-leg-list">${legs.map(x=>journeyLegCard(t,x)).join('')}</div>
     <div class="split-3">
