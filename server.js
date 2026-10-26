@@ -26,6 +26,7 @@ const {applyOperationalCutoff:applyOperationalCutoffDb}=require('./operational-c
 const {CUTOFF:OPS_CUTOFF,VERSION:OPS_CUTOFF_VERSION,importAllowed,pruneOperationalHistory}=require('./operational-cutoff');
 const PayrollEligibility=require('./public/payroll-eligibility');
 const PayrollTripLink=require('./payroll-trip-link');
+const PayrollWorkCycles=require('./payroll-work-cycles');
 const TripPayrollDiagnostics=require('./trip-payroll-diagnostics');
 const {allowed:canManageRecord,deleteRecord,editRecord}=require('./record-management');
 const {calculate:calculateInvoiceCharges}=require('./public/invoice-charges');
@@ -1572,7 +1573,7 @@ function payrollProfile(state,employeeId){
   let p=state.payProfiles.find(x=>(x.employeeId||x.driverId)===employeeId);
   if(!p){
     const prior=(state.payroll||[]).filter(x=>x.employeeId===employeeId).sort((a,b)=>String(b.period||'').localeCompare(String(a.period||'')))[0],emp=workforceEmployee(state,employeeId);
-    p={driverId:employeeId,employeeId,baseSalary:num(emp?.baseSalary)||num(prior?.base),tripRatePerKm:num(prior?.tripRatePerKm),taxNumber:'',payeThreshold:8000,payeDefault:num(emp?.payeDefault)||num(prior?.paye),sscDefault:num(emp?.sscDefault)||num(prior?.ssc),overtimeRate:0,standardDays:num(prior?.days)||22,otherDeductionDefault:num(prior?.deductions),autoGenerate:true};
+    p={driverId:employeeId,employeeId,baseSalary:num(emp?.baseSalary)||num(prior?.base),tripRatePerKm:num(prior?.tripRatePerKm),taxNumber:'',payeThreshold:8000,payeDefault:num(emp?.payeDefault)||num(prior?.paye),sscDefault:num(emp?.sscDefault)||num(prior?.ssc),overtimeRate:0,standardDays:PayrollWorkCycles.isDefaultShunterDriver(state,workforceDriver(state,emp))?20:(num(prior?.days)||22),otherDeductionDefault:num(prior?.deductions),autoGenerate:true};
     state.payProfiles.push(p)
   }
   if(!PayrollEligibility.isDriver(workforceEmployee(state,employeeId),state.drivers||[]))p.tripRatePerKm=0;
@@ -1591,9 +1592,16 @@ function applyPayrollLoanRepayments(state,row,userId=''){
   row.loanBreakdown=actual;row.loanDeduction=Number(actual.reduce((a,x)=>a+num(x.amount),0).toFixed(2));row.loanRepaymentsPosted=true;row.net=Number((num(row.gross)+num(row.reimbursements)-num(row.advances)-num(row.paye)-num(row.ssc)-num(row.deductions)-num(row.loanDeduction)).toFixed(2));return row
 }
 function calculatePayrollRecord(state,employee,period,existing=null){
-  const p=payrollProfile(state,employee.id),driver=workforceDriver(state,employee),{start,end}=periodBounds(period);
+  const p=payrollProfile(state,employee.id),driver=workforceDriver(state,employee),cycle=PayrollWorkCycles.bounds(period),
+    {start,end}=periodBounds(period);
   const inPeriod=d=>String(d||'')>=start&&String(d||'')<end;
-  const trips=driver?PayrollTripLink.eligibleTrips(state,driver,start,end):[];
+  // Long-distance work belongs to the same closing cycle as NBL invoices.
+  // A shunter's monthly workdays are separate from its base salary and never
+  // earn a per-kilometre payment on ANG 4 / ANG 5 journeys.
+  const trips=driver?PayrollTripLink.eligibleTrips(state,driver,cycle.tripStart,cycle.tripEndExclusive,
+    {dateField:'billing'}).filter(t=>!PayrollWorkCycles.isShunter(t)):[];
+  const shunterDays=driver?PayrollWorkCycles.workdays(state,driver,start,end):[];
+  const shunterDailyBonus=Number((shunterDays.length*PayrollWorkCycles.DAILY_BONUS).toFixed(2));
   const tripKm=trips.reduce((a,t)=>a+serverTripLegSummary(state,t).distance,0),tripRatePerKm=driver?num(existing?.tripRatePerKm??p.tripRatePerKm):0;
   const tripPay=trips.reduce((a,t)=>a+serverTripLegSummary(state,t).distance*serverTripRate(state,t,tripRatePerKm),0);
   const tripBreakdown=trips.map(t=>{const evidence=TripMetrics.distance(t,(state.diesel||[]).filter(x=>x.tripId===t.id)),distance=evidence.distance,rate=serverTripRate(state,t,tripRatePerKm),legs=t.legs?.length?t.legs:[t];return{tripId:t.id,number:t.number||t.id,date:t.date,truck:(state.trucks||[]).find(x=>x.id===t.truckId)?.fleetName||t.truckId||'',route:legs.map(l=>(state.routes||[]).find(x=>x.id===l.routeId)?.name||'').filter(Boolean).join(' → '),load:legs.map(l=>l.load||'').filter(Boolean).join(' / '),distance,distanceSource:evidence.distanceSource,partial:Boolean(evidence.partial),rate,pay:Number((distance*rate).toFixed(2))}});
@@ -1602,12 +1610,17 @@ function calculatePayrollRecord(state,employee,period,existing=null){
   const advances=driver?(state.advances||[]).filter(x=>x.driverId===driver.id&&inPeriod(x.date)&&x.status!=='Reconciled').reduce((a,x)=>a+num(x.amount),0):0;
   const overtimeHours=num(existing?.overtimeHours??existing?.overtime),overtimeRate=num(existing?.overtimeRate)||num(p.overtimeRate),overtimePay=overtimeHours*overtimeRate;
   const base=num(existing?.base)||num(p.baseSalary)||num(employee.baseSalary),days=num(existing?.days)||num(p.standardDays)||22;
-  const gross=base+tripPay+overtimePay,payeThreshold=num(p.payeThreshold)||8000;
+  const gross=base+tripPay+shunterDailyBonus+overtimePay,payeThreshold=num(p.payeThreshold)||8000;
   const configuredPaye=existing?.paye!==undefined?num(existing.paye):num(p.payeDefault),paye=gross>payeThreshold?configuredPaye:0;
   const ssc=existing?.ssc!==undefined?num(existing.ssc):num(p.sscDefault),deductions=existing?.deductions!==undefined?num(existing.deductions):num(p.otherDeductionDefault);
   const loanInfo=employeeLoanDeduction(state,employee.id,period,existing),loanDeduction=existing?.status==='Paid'?num(existing.loanDeduction):loanInfo.amount,loanBreakdown=existing?.status==='Paid'&&Array.isArray(existing.loanBreakdown)?existing.loanBreakdown:loanInfo.breakdown;
   const net=gross+reimbursements-advances-paye-ssc-deductions-loanDeduction;
-  return{id:existing?.id||'pay_'+crypto.randomUUID(),period,employeeId:employee.id,days,overtimeHours,overtimeRate,overtimePay:Number(overtimePay.toFixed(2)),base:Number(base.toFixed(2)),tripKm:Number(tripKm.toFixed(2)),tripRatePerKm:Number(tripRatePerKm.toFixed(4)),tripPay:Number(tripPay.toFixed(2)),incentive:0,fuelSavingBonus:0,reimbursements:Number(reimbursements.toFixed(2)),advances:Number(advances.toFixed(2)),paye:Number(paye.toFixed(2)),payeThreshold:Number(payeThreshold.toFixed(2)),ssc:Number(ssc.toFixed(2)),deductions:Number(deductions.toFixed(2)),loanDeduction:Number(loanDeduction.toFixed(2)),loanBreakdown,gross:Number(gross.toFixed(2)),net:Number(net.toFixed(2)),tripCount:trips.length,tripBreakdown:existing?.status==='Paid'?existing.tripBreakdown:tripBreakdown,status:existing?.status||'Draft',loanRepaymentsPosted:Boolean(existing?.loanRepaymentsPosted),generatedAt:new Date().toISOString(),autoGenerated:existing?.autoGenerated??true,taxNumber:p.taxNumber||'',setupRequired:!(num(p.baseSalary)>0),jobTitle:employee.jobTitle||employee.title||''}
+  return{id:existing?.id||'pay_'+crypto.randomUUID(),period,employeeId:employee.id,days,overtimeHours,overtimeRate,overtimePay:Number(overtimePay.toFixed(2)),base:Number(base.toFixed(2)),tripKm:Number(tripKm.toFixed(2)),tripRatePerKm:Number(tripRatePerKm.toFixed(4)),tripPay:Number(tripPay.toFixed(2)),shunterDailyBonus,
+    shunterWorkdays:shunterDays.length,shunterDailyRate:PayrollWorkCycles.DAILY_BONUS,
+    shunterBonusBreakdown:existing?.status==='Paid'?existing.shunterBonusBreakdown:shunterDays,
+    tripBillingStart:cycle.tripStart,tripBillingEnd:cycle.tripEndInclusive,
+    shunterPeriodStart:start,shunterPeriodEnd:new Date(Date.parse(end+'T00:00:00Z')-86400000).toISOString().slice(0,10),
+    incentive:0,fuelSavingBonus:0,reimbursements:Number(reimbursements.toFixed(2)),advances:Number(advances.toFixed(2)),paye:Number(paye.toFixed(2)),payeThreshold:Number(payeThreshold.toFixed(2)),ssc:Number(ssc.toFixed(2)),deductions:Number(deductions.toFixed(2)),loanDeduction:Number(loanDeduction.toFixed(2)),loanBreakdown,gross:Number(gross.toFixed(2)),net:Number(net.toFixed(2)),tripCount:trips.length,tripBreakdown:existing?.status==='Paid'?existing.tripBreakdown:tripBreakdown,status:existing?.status||'Draft',loanRepaymentsPosted:Boolean(existing?.loanRepaymentsPosted),generatedAt:new Date().toISOString(),autoGenerated:existing?.autoGenerated??true,taxNumber:p.taxNumber||'',setupRequired:!(num(p.baseSalary)>0),jobTitle:employee.jobTitle||employee.title||''}
 }
 function generatePayrollPeriod(state,period,auto=false){
   state.payroll??=[];
