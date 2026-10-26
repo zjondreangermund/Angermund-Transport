@@ -88,7 +88,7 @@
   launch.onclick=()=>toggle(panel.hidden);
   host.querySelector('.assistant-close').onclick=()=>toggle(false);
   host.querySelectorAll('[data-example]').forEach(b=>b.onclick=()=>ask(b.dataset.example));
-  function bubble(who,message,pageId,action,proposal){
+  function bubble(who,message,pageId,action,proposal,records){
     const row=document.createElement('div');row.className='assistant-row assistant-row-'+who;
     const msg=document.createElement('p');msg.textContent=message;row.appendChild(msg);
     if(who==='assistant'&&window.speechSynthesis){const speak=document.createElement('button');speak.type='button';speak.className='assistant-read';speak.textContent='🔊 Read aloud';speak.onclick=()=>{voice?.stop();speechSynthesis.cancel();const utterance=new SpeechSynthesisUtterance(String(message).slice(0,2500));utterance.lang='en-ZA';speechSynthesis.speak(utterance)};row.appendChild(speak)}
@@ -102,6 +102,10 @@
         const b=document.createElement('button');b.type='button';b.className='assistant-go';b.textContent=action==='new_trip'?'Open new trip form →':'Open new task form →';
         b.onclick=()=>{const ok=action==='new_trip'?bridge()?.openNewTrip():bridge()?.openNewTask();if(ok)toggle(false)};row.appendChild(b);
       }
+    }
+    if(who==='assistant'&&Array.isArray(records))for(const record of records){
+      const button=document.createElement('button');button.type='button';button.className='assistant-go';button.textContent='Open '+record.label+' →';
+      button.onclick=async()=>{try{await bridge()?.reload?.();if(record.kind==='trip'&&bridge()?.openTrip?.(record.id))toggle(false);else if(bridge()?.openRecord?.(record.kind,record.id))toggle(false);}catch(e){button.textContent=e.message||'Could not open record'}};row.appendChild(button);
     }
     if(who==='assistant'&&proposal?.id){
       const box=document.createElement('div');box.className='assistant-approval-card';
@@ -174,7 +178,7 @@
       const result=await response.json();
       if(!response.ok)throw Error(result.error||'Unable to answer');
       const reply=String(result.answer||'No answer available.');
-      bubble('assistant',reply,result.page,result.action,result.proposal||null);
+      bubble('assistant',reply,result.page,result.action,result.proposal||null,result.records);
       turns.push({role:'user',content:text},{role:'assistant',content:reply});
       if(result.proposal)clearAttachment();
     }catch(e){
