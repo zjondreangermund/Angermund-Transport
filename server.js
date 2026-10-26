@@ -27,6 +27,7 @@ const {CUTOFF:OPS_CUTOFF,VERSION:OPS_CUTOFF_VERSION,importAllowed,pruneOperation
 const PayrollEligibility=require('./public/payroll-eligibility');
 const PayrollTripLink=require('./payroll-trip-link');
 const PayrollCycle=require('./payroll-cycle');
+const AssistantOperationsAnswers=require('./assistant-operations-answers');
 const TripPayrollDiagnostics=require('./trip-payroll-diagnostics');
 const {allowed:canManageRecord,deleteRecord,editRecord}=require('./record-management');
 const {calculate:calculateInvoiceCharges}=require('./public/invoice-charges');
@@ -1592,7 +1593,7 @@ function applyPayrollLoanRepayments(state,row,userId=''){
   row.loanBreakdown=actual;row.loanDeduction=Number(actual.reduce((a,x)=>a+num(x.amount),0).toFixed(2));row.loanRepaymentsPosted=true;row.net=Number((num(row.gross)+num(row.reimbursements)-num(row.advances)-num(row.paye)-num(row.ssc)-num(row.deductions)-num(row.loanDeduction)).toFixed(2));return row
 }
 function calculatePayrollRecord(state,employee,period,existing=null){
-  const p=payrollProfile(state,employee.id),driver=workforceDriver(state,employee),shunter=PayrollCycle.shunterDriver(state,driver,p),cycle=PayrollCycle.bounds(period,driver,shunter,existing),{start,end}=cycle;
+  const p=payrollProfile(state,employee.id),driver=workforceDriver(state,employee),shunter=PayrollCycle.shunterDriver(state,driver,p),cycle=PayrollCycle.bounds(period,driver,shunter,existing,p),{start,end}=cycle;
   const inPeriod=d=>String(d||'')>=start&&String(d||'')<end;
   const trips=driver?PayrollTripLink.eligibleTrips(state,driver,start,end,{billingDate:!shunter}).filter(t=>!PayrollCycle.isShunter(state,t)):[];
   const tripKm=trips.reduce((a,t)=>a+serverTripLegSummary(state,t).distance,0),tripRatePerKm=driver?num(existing?.tripRatePerKm??p.tripRatePerKm):0;
@@ -2722,6 +2723,7 @@ app.patch('/api/payroll/profiles/:driverId',auth,roles('admin','manager','financ
       const employee=workforceEmployee(state,did);if(!employee){const e=Error('Employee not found');e.status=404;throw e}
       const p=payrollProfile(state,did);
       for(const key of ['baseSalary','tripRatePerKm','payeDefault','sscDefault','overtimeRate','standardDays','otherDeductionDefault'])if(body[key]!==undefined)p[key]=num(body[key]);
+      if(body.cutoffDay!==undefined){const day=Number(body.cutoffDay);if(!Number.isInteger(day)||day<1||day>31)throw Object.assign(Error('Cutoff day must be between 1 and 31'),{status:400});p.cutoffDay=day;}
       for(const key of ['shunterBonusAmount','shunterWorkingDays'])if(body[key]!==undefined){const v=Number(body[key]);if(!Number.isFinite(v)||v<0||(key==='shunterWorkingDays'&&v<=0))throw Error('Enter a valid shunter bonus and working-day divisor');p[key]=v;}
       if(body.payBasis!==undefined){if(!['auto','shunter','transport'].includes(body.payBasis))throw Error('Invalid pay basis');if(body.payBasis==='auto')delete p.payBasis;else p.payBasis=body.payBasis;}
       if(!PayrollEligibility.isDriver(employee,state.drivers||[]))p.tripRatePerKm=0;
@@ -4051,7 +4053,10 @@ app.post('/api/assistant/ask',auth,upload.array('document',20),async(req,res)=>{
     // Permission-scoped capability list comes from the server, never the browser.
     const capabilities=[...AssistantPlatform.catalog(req.user.role),...AssistantBusiness.catalog(req.user.role)];
     if(/^(?:help|what can you do|show capabilities|list actions)[?.! ]*$/i.test(message))return res.json({answer:capabilities.length?'You can ask for changes permitted by your account: '+[...new Set(capabilities.map(x=>({master_create:'Create master records',master_edit:'Edit master records',master_archive:'Archive master records',nbl_invoice:'NBL consolidated billing',shunter_invoice:'Shunter billing',receipt_assign:'Reassign slips',trip:'Create trips',quote:'Quotations',invoice:'Invoices',payment:'Record received payments',payroll_profile:'Payroll profiles and salaries',payroll:'Generate payroll drafts',overhead:'Record overheads',settings:'Operational settings',pod:'Attach PODs',diesel:'Capture diesel',expense:'Capture purchases',maintenance:'Workshop work orders',edit:'Edit records',delete:'Delete records'})[x.operation]||x.operation))].join(', ')+'. Also loans/tasks/assignments, grouped jobs, daily brief, truck profit comparisons (YYYY-MM), tender document review, voice dictation, action history and undo. Attach slips/PODs or use numbered lines to map batch files. Review every change before saving.':'You can ask questions about pages available to your account and dictate instructions. Business changes require the responsible staff role.',source:'capabilities',capabilities});
-    const recordReply=AssistantPlatform.read(message,await readOpsState(),req.user.role);
+    const recordState=await readOpsState();
+    const operationsReply=AssistantOperationsAnswers.answer(message,recordState,req.user);
+    if(operationsReply)return res.json(operationsReply);
+    const recordReply=AssistantPlatform.read(message,recordState,req.user.role);
     if(recordReply)return res.json(recordReply);
     let platformRequest=AssistantPlatform.parse(message);
     const wantsPlatform=/\b(delete|remove|edit|change|update|set|create|generate|make|bought|purchased|record|capture|add|assign|move|link|attach|upload|filled)\b/i.test(message)&&/\b(invoice|quotation|quote|tender|part|parts|repair|repairs|expense|diesel|disel|fuel|POD|slip|receipt|overhead|maintenance|tyre|inspection|incident|payment|payroll|trip|workshop)\b/i.test(message);
