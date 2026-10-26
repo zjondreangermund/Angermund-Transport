@@ -28,6 +28,7 @@ const PayrollEligibility=require('./public/payroll-eligibility');
 const PayrollTripLink=require('./payroll-trip-link');
 const PayrollCycle=require('./payroll-cycle');
 const AssistantOperationsAnswers=require('./assistant-operations-answers');
+const AssistantIntelligence=require('./assistant-intelligence');
 const TripPayrollDiagnostics=require('./trip-payroll-diagnostics');
 const {allowed:canManageRecord,deleteRecord,editRecord}=require('./record-management');
 const {calculate:calculateInvoiceCharges}=require('./public/invoice-charges');
@@ -3891,17 +3892,18 @@ async function assistantNaturalCommand(text){
   // The DB resolver, role gate and explicit approval are enforced separately.
   try{
     const system='Rewrite this employee request for the Angermund Transport assistant into one concise canonical command if it explicitly requests an operation. Never change a question into an instruction. Do not invent missing people, amounts, trip numbers or dates. Available patterns: (1) Add loan to PERSON for N$AMOUNT monthly deduction N$AMOUNT; (2) Pause PERSON loan; (3) Change PERSON loan monthly deduction to N$AMOUNT; (4) Create task to DESCRIPTION tomorrow high priority; (5) Assign driver PERSON to trip TRIPNUMBER; (6) Assign truck FLEETNUMBER to trip TRIPNUMBER; (7) Record toll/parking/permit fee expense N$AMOUNT for trip TRIPNUMBER; (8) Change trip OLDNUMBER number to NEWNUMBER; (9) Switch truck FLEET from planned to departing; (10) Set task "EXACT TITLE" priority to High; (11) Set task "EXACT TITLE" due YYYY-MM-DD; (12) Mark task "EXACT TITLE" in progress; (13) Assign task "EXACT TITLE" to driver PERSON; (14) Add note to trip TRIPNUMBER: NOTE; (15) Set order reference for trip TRIPNUMBER to REFERENCE. For unsupported or incomplete requests, preserve the original text unchanged. Never include details the user did not say. Return JSON only.';
+    const model=AssistantIntelligence.chooseModel('translation');
     const response=await fetch('https://api.openai.com/v1/responses',{
       method:'POST',signal:AbortSignal.timeout(9500),
       headers:{Authorization:'Bearer '+OPENAI_API_KEY,'Content-Type':'application/json'},
-      body:JSON.stringify({model:process.env.SITE_ASSISTANT_MODEL||'gpt-6-luna',store:false,max_output_tokens:230,
+      body:JSON.stringify({model,store:false,max_output_tokens:230,
         input:[{role:'system',content:system},{role:'user',content:String(text).slice(0,1200)}],
         text:{format:{type:'json_schema',name:'operation_translation',strict:true,
           schema:{type:'object',properties:{command:{type:'string'},complete:{type:'boolean'}},required:['command','complete'],additionalProperties:false}}}
       })
     });
     if(!response.ok)return text;
-    const result=await response.json();
+    const result=await response.json();AssistantIntelligence.usageTracker.record(model,result.usage,'translation');
     const output=(result.output||[]).flatMap(x=>x.content||[]).find(x=>x.type==='output_text')?.text||result.output_text;
     const translated=JSON.parse(String(output||'{}'));
     return translated.complete&&typeof translated.command==='string'&&translated.command.length<1100?translated.command:text;
@@ -3927,9 +3929,11 @@ const assistantPlatformHelpers={
 };
 async function assistantPlatformRequest(message,capabilities,pending=null){
  try{
-  const response=await fetch('https://api.openai.com/v1/responses',{method:'POST',signal:AbortSignal.timeout(15000),headers:{Authorization:'Bearer '+OPENAI_API_KEY,'Content-Type':'application/json'},body:JSON.stringify({model:process.env.SITE_ASSISTANT_MODEL||'gpt-6-luna',store:false,max_output_tokens:900,input:[{role:'system',content:'Extract one explicitly requested platform operation as JSON, or operation unsupported for questions. Today in Namibia is '+new Date(Date.now()+7200000).toISOString().slice(0,10)+'. Resolve today/tomorrow only when explicitly stated by the user. Never invent dates, entities, amounts, references, tax rates or missing details. Resolve no IDs: use exact names/references supplied by the user. Only operations in this catalog: '+JSON.stringify(capabilities)+'. values is a JSON string object containing user-supplied fields only. Supported keys: driver,income,tons,pallets,startKm,type,cost,trip,truck,date,amount,litres,total,price,odometer,supplier,slip,receiptNo,category,notes,leg,route,client,actualKm,namibiaKm,tenderKm,load,costInputs,period,cycleMonth,periodStart,periodEnd. Edit may instead use a supported field name. For quote amount means selling price excluding VAT; costInputs optional overrides of saved costing defaults. Delete/edit target is exact record reference, invoice or quote number, receipt number or ID. Invoice target can be the truck fleet number; resolve its eligible load and ask for a date if ambiguous. receipt_assign target is posted slip reference. POD target can be a truck fleet number. Never invent an AT-number. No arbitrary code, API URLs, IDs, status approvals or payments. If unsupported return unsupported. Do not turn a question into a command.'},{role:'user',content:(pending?'Unfinished user request: '+JSON.stringify(pending)+'\nUser clarification: ':'')+message}],text:{format:{type:'json_schema',name:'platform_request',strict:true,schema:{type:'object',properties:{operation:{type:'string'},collection:{type:'string'},target:{type:'string'},values:{type:'string'}},required:['operation','collection','target','values'],additionalProperties:false}}}})});
+  const model=AssistantIntelligence.chooseModel('classification');
+  const response=await fetch('https://api.openai.com/v1/responses',{method:'POST',signal:AbortSignal.timeout(15000),headers:{Authorization:'Bearer '+OPENAI_API_KEY,'Content-Type':'application/json'},body:JSON.stringify({model,store:false,max_output_tokens:900,input:[{role:'system',content:'Extract one explicitly requested platform operation as JSON, or operation unsupported for questions. Today in Namibia is '+new Date(Date.now()+7200000).toISOString().slice(0,10)+'. Resolve today/tomorrow only when explicitly stated by the user. Never invent dates, entities, amounts, references, tax rates or missing details. Resolve no IDs: use exact names/references supplied by the user. Only operations in this catalog: '+JSON.stringify(capabilities)+'. values is a JSON string object containing user-supplied fields only. Supported keys: driver,income,tons,pallets,startKm,type,cost,trip,truck,date,amount,litres,total,price,odometer,supplier,slip,receiptNo,category,notes,leg,route,client,actualKm,namibiaKm,tenderKm,load,costInputs,period,cycleMonth,periodStart,periodEnd. Edit may instead use a supported field name. For quote amount means selling price excluding VAT; costInputs optional overrides of saved costing defaults. Delete/edit target is exact record reference, invoice or quote number, receipt number or ID. Invoice target can be the truck fleet number; resolve its eligible load and ask for a date if ambiguous. receipt_assign target is posted slip reference. POD target can be a truck fleet number. Never invent an AT-number. No arbitrary code, API URLs, IDs, status approvals or payments. If unsupported return unsupported. Do not turn a question into a command.'},{role:'user',content:(pending?'Unfinished user request: '+JSON.stringify(pending)+'\nUser clarification: ':'')+message}],text:{format:{type:'json_schema',name:'platform_request',strict:true,schema:{type:'object',properties:{operation:{type:'string'},collection:{type:'string'},target:{type:'string'},values:{type:'string'}},required:['operation','collection','target','values'],additionalProperties:false}}}})});
   if(!response.ok)return null;
-  const data=await response.json(),output=(data.output||[]).flatMap(x=>x.content||[]).find(x=>x.type==='output_text')?.text||data.output_text;
+  const data=await response.json();AssistantIntelligence.usageTracker.record(model,data.usage,'classification');
+  const output=(data.output||[]).flatMap(x=>x.content||[]).find(x=>x.type==='output_text')?.text||data.output_text;
   const request=JSON.parse(output||'{}');if(request.operation==='unsupported')return null;
   if(!capabilities.some(c=>c.operation===request.operation&&c.collection===request.collection))return null;
   request.values=JSON.parse(request.values||'{}');return request;
@@ -3937,10 +3941,11 @@ async function assistantPlatformRequest(message,capabilities,pending=null){
 }
 async function assistantJobJSON(system,message,attachment){
  if(!OPENAI_API_KEY)throw Error('Server AI is not configured for this interpretation.');
+ const model=AssistantIntelligence.chooseModel(/tender|attachment|requirement/i.test(system)?'tender':'multi-step',message);
  const content=[{type:'input_text',text:message}];
  if(attachment){if(attachment.mimetype==='application/pdf')content.push({type:'input_file',filename:attachment.originalname,file_data:'data:application/pdf;base64,'+attachment.buffer.toString('base64')});else content.push({type:'input_image',image_url:'data:'+attachment.mimetype+';base64,'+attachment.buffer.toString('base64')});}
- const response=await fetch('https://api.openai.com/v1/responses',{method:'POST',signal:AbortSignal.timeout(45000),headers:{Authorization:'Bearer '+OPENAI_API_KEY,'Content-Type':'application/json'},body:JSON.stringify({model:process.env.SITE_ASSISTANT_MODEL||'gpt-6-luna',store:false,max_output_tokens:3000,input:[{role:'system',content:system},{role:'user',content}],text:{format:{type:'json_schema',name:'job_requests',strict:true,schema:{type:'object',properties:{requests:{type:'string'}},required:['requests'],additionalProperties:false}}}})});
- if(!response.ok)throw Error('AI service could not prepare this job. Try explicit commands or retry.');const data=await response.json(),output=(data.output||[]).flatMap(o=>o.content||[]).find(o=>o.type==='output_text')?.text||data.output_text;return JSON.parse(output||'{}');
+ const response=await fetch('https://api.openai.com/v1/responses',{method:'POST',signal:AbortSignal.timeout(45000),headers:{Authorization:'Bearer '+OPENAI_API_KEY,'Content-Type':'application/json'},body:JSON.stringify({model,store:false,max_output_tokens:3000,input:[{role:'system',content:system},{role:'user',content}],text:{format:{type:'json_schema',name:'job_requests',strict:true,schema:{type:'object',properties:{requests:{type:'string'}},required:['requests'],additionalProperties:false}}}})});
+ if(!response.ok)throw Error('AI service could not prepare this job. Try explicit commands or retry.');const data=await response.json();AssistantIntelligence.usageTracker.record(model,data.usage,'job-planning');const output=(data.output||[]).flatMap(o=>o.content||[]).find(o=>o.type==='output_text')?.text||data.output_text;return JSON.parse(output||'{}');
 }
 const assistantJobs=AssistantJobs.install(app,{
  ...assistantPlatformHelpers,auth,read:readOpsState,mutate:mutateOpsState,key:OPENAI_API_KEY,scan:analyzeReceiptHybrid,archive:archiveStoredFile,jsonAI:assistantJobJSON,audioUpload:upload.single('audio'),
