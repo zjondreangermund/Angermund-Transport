@@ -19,7 +19,7 @@ test('Excel/route distance may estimate the final refuelling-to-depot leg but ne
 test('trip-linked slips only: later other-trip refills do not distort the previous return',()=>{
  const a={id:'a',startKm:1000,endKm:2000},aFuel=[{tripId:'a',odometer:1500,litres:200}];
  assert.equal(M.lastRefillRemainder(a,aFuel).km,500);
- assert.equal(M.lastRefillRemainder(a,[...aFuel,{tripId:'b',odometer:2100,litres:100}]).ready,false);
+ assert.equal(M.lastRefillRemainder(a,[...aFuel,{tripId:'b',odometer:2100,litres:100}]).km,500);
 });
 test('missing depot reading and mismatched diesel odometers get clear diagnostics',()=>{
  assert.match(M.lastRefillRemainder({id:'x'},[{odometer:8000}]).reason,/Enter depot arrival/);
