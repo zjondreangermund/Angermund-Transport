@@ -12,6 +12,7 @@ const AssistantPlatform=require('./assistant-platform');
 const AssistantJobs=require('./assistant-jobs');
 const AssistantBusiness=require('./assistant-business');
 const AssistantInsights=require('./assistant-live-insights');
+const TripMetrics=require('./public/trip-metrics');
 const PushDelivery=require('./push-delivery-policy');
 const TripSites=require('./trip-site-geofences');
 const {resolveMobileGps}=require('./mobile-gps');
@@ -1494,7 +1495,7 @@ function syncTripFromLegs(state,t){
   return t
 }
 function serverTripLegSummary(state,t){
-  const legs=ensureTripLegs(state,t);return{count:legs.length,income:legs.reduce((a,x)=>a+calculateLegIncome(x),0),distance:legs.reduce((a,x)=>a+num(x.distance),0)}
+  const legs=ensureTripLegs(state,t);return{count:legs.length,income:legs.reduce((a,x)=>a+calculateLegIncome(x),0),distance:TripMetrics.distance(t).distance}
 }
 function driverFuelRecordCost(x){const total=num(x.printedTotal)||num(x.total);return total>0?total:num(x.litres)*num(x.price)}
 function recalcTripCosts(state,t){
@@ -1518,11 +1519,8 @@ function periodBounds(period){
   const [y,m]=period.split('-').map(Number),start=new Date(Date.UTC(y,m-1,1)),end=new Date(Date.UTC(y,m,1));
   return{start:start.toISOString().slice(0,10),end:end.toISOString().slice(0,10)}
 }
-function serverFuelMetrics(state,t){
-  const records=(state.diesel||[]).filter(x=>x.tripId===t.id),litres=records.reduce((a,x)=>a+num(x.litres),0),distance=serverTripLegSummary(state,t).distance,ready=distance>0&&litres>0;
-  const spend=records.reduce((a,x)=>a+(num(x.printedTotal)||num(x.total)||num(x.litres)*num(x.price)),0);
-  return{distance,litres,ready,kmPerL:ready?distance/litres:0,pricePerL:litres>0&&records.every(x=>(num(x.printedTotal)||num(x.total)||num(x.litres)*num(x.price))>0)?spend/litres:0}
-}
+function serverFuelMetrics(state,t){return TripMetrics.fuel(t,(state.diesel||[]).filter(x=>x.tripId===t.id))}
+
 function serverSouthAfricaTrip(state,t){
   const legs=ensureTripLegs(state,t);return legs.some(l=>{const r=(state.routes||[]).find(x=>x.id===l.routeId);return /south africa|durban|johannesburg|rosslyn|cape town|ottery|gauteng/i.test(String(r?.name||'')+' '+String(r?.notes||''))})
 }
@@ -1568,6 +1566,7 @@ function calculatePayrollRecord(state,employee,period,existing=null){
   const trips=driver?(state.trips||[]).filter(t=>t.driverId===driver.id&&inPeriod(t.date)&&num(t.stage)>=3):[];
   const tripKm=trips.reduce((a,t)=>a+serverTripLegSummary(state,t).distance,0),tripRatePerKm=driver?num(existing?.tripRatePerKm??p.tripRatePerKm):0;
   const tripPay=trips.reduce((a,t)=>a+serverTripLegSummary(state,t).distance*serverTripRate(state,t,tripRatePerKm),0);
+  const tripBreakdown=trips.map(t=>{const distance=serverTripLegSummary(state,t).distance,rate=serverTripRate(state,t,tripRatePerKm),legs=t.legs?.length?t.legs:[t];return{tripId:t.id,number:t.number||t.id,date:t.date,truck:(state.trucks||[]).find(x=>x.id===t.truckId)?.fleetName||t.truckId||'',route:legs.map(l=>(state.routes||[]).find(x=>x.id===l.routeId)?.name||'').filter(Boolean).join(' → '),load:legs.map(l=>l.load||'').filter(Boolean).join(' / '),distance,rate,pay:Number((distance*rate).toFixed(2))}});
   const incentive=0;
   const reimbursements=driver?(state.expenses||[]).filter(x=>x.driverId===driver.id&&inPeriod(x.date)&&x.reimbursable!==false&&x.status==='Approved').reduce((a,x)=>a+num(x.amount),0):0;
   const advances=driver?(state.advances||[]).filter(x=>x.driverId===driver.id&&inPeriod(x.date)&&x.status!=='Reconciled').reduce((a,x)=>a+num(x.amount),0):0;
@@ -1578,7 +1577,7 @@ function calculatePayrollRecord(state,employee,period,existing=null){
   const ssc=existing?.ssc!==undefined?num(existing.ssc):num(p.sscDefault),deductions=existing?.deductions!==undefined?num(existing.deductions):num(p.otherDeductionDefault);
   const loanInfo=employeeLoanDeduction(state,employee.id,period,existing),loanDeduction=existing?.status==='Paid'?num(existing.loanDeduction):loanInfo.amount,loanBreakdown=existing?.status==='Paid'&&Array.isArray(existing.loanBreakdown)?existing.loanBreakdown:loanInfo.breakdown;
   const net=gross+reimbursements-advances-paye-ssc-deductions-loanDeduction;
-  return{id:existing?.id||'pay_'+crypto.randomUUID(),period,employeeId:employee.id,days,overtimeHours,overtimeRate,overtimePay:Number(overtimePay.toFixed(2)),base:Number(base.toFixed(2)),tripKm:Number(tripKm.toFixed(2)),tripRatePerKm:Number(tripRatePerKm.toFixed(4)),tripPay:Number(tripPay.toFixed(2)),incentive:0,fuelSavingBonus:0,reimbursements:Number(reimbursements.toFixed(2)),advances:Number(advances.toFixed(2)),paye:Number(paye.toFixed(2)),payeThreshold:Number(payeThreshold.toFixed(2)),ssc:Number(ssc.toFixed(2)),deductions:Number(deductions.toFixed(2)),loanDeduction:Number(loanDeduction.toFixed(2)),loanBreakdown,gross:Number(gross.toFixed(2)),net:Number(net.toFixed(2)),tripCount:trips.length,status:existing?.status||'Draft',loanRepaymentsPosted:Boolean(existing?.loanRepaymentsPosted),generatedAt:new Date().toISOString(),autoGenerated:existing?.autoGenerated??true,taxNumber:p.taxNumber||'',setupRequired:!(num(p.baseSalary)>0),jobTitle:employee.jobTitle||employee.title||''}
+  return{id:existing?.id||'pay_'+crypto.randomUUID(),period,employeeId:employee.id,days,overtimeHours,overtimeRate,overtimePay:Number(overtimePay.toFixed(2)),base:Number(base.toFixed(2)),tripKm:Number(tripKm.toFixed(2)),tripRatePerKm:Number(tripRatePerKm.toFixed(4)),tripPay:Number(tripPay.toFixed(2)),incentive:0,fuelSavingBonus:0,reimbursements:Number(reimbursements.toFixed(2)),advances:Number(advances.toFixed(2)),paye:Number(paye.toFixed(2)),payeThreshold:Number(payeThreshold.toFixed(2)),ssc:Number(ssc.toFixed(2)),deductions:Number(deductions.toFixed(2)),loanDeduction:Number(loanDeduction.toFixed(2)),loanBreakdown,gross:Number(gross.toFixed(2)),net:Number(net.toFixed(2)),tripCount:trips.length,tripBreakdown:existing?.status==='Paid'?existing.tripBreakdown:tripBreakdown,status:existing?.status||'Draft',loanRepaymentsPosted:Boolean(existing?.loanRepaymentsPosted),generatedAt:new Date().toISOString(),autoGenerated:existing?.autoGenerated??true,taxNumber:p.taxNumber||'',setupRequired:!(num(p.baseSalary)>0),jobTitle:employee.jobTitle||employee.title||''}
 }
 function generatePayrollPeriod(state,period,auto=false){
   state.payroll??=[];
