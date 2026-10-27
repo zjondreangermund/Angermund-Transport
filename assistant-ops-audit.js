@@ -23,7 +23,7 @@ function isAuditRequest(q){
      &&(/\bang[\s-]*\d+\b/i.test(text)||/\b(?:trip|order)\s*(?:#|no\.?|number)?\s*[A-Z0-9]*\d+[A-Z0-9-]*\b/i.test(text)));
 }
 function wantsTasks(q){
- return /\b(?:create|prepare|make|add)\s+(?:(?:follow.?up|review|action|missing)\s+)?tasks?\b/i.test(q)&&
+ return /\b(?:create|prepare|make|add)\s+(?:(?:follow.?up|review|action|missing|audit)\s+)?tasks?\b/i.test(q)&&
   /\b(?:audit|investigate|from (?:this|the) audit|issues|check)\b/i.test(q);
 }
 function dateFromQuestion(q){
