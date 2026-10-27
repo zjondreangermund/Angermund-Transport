@@ -1,6 +1,7 @@
 'use strict';
 const crypto=require('node:crypto'),P=require('./assistant-platform'),B=require('./assistant-business'),O=require('./assistant-operations'),X=require('./assistant-extra-actions'),T=require('./assistant-trip-actions');
 const Audit=require('./assistant-ops-audit');
+const Followup=require('./assistant-followup');
 
 const DOMAIN=['trips','trucks','drivers','employees','clients','routes','trailers','diesel','expenses','invoices','payments','quotes','payroll','payProfiles','loans','tasks','permits','maintenance','tyres','inspections','incidents','advances','tripIssues','shunterRecons','monthlyCosts','settings','company','deletedPayrollPeriods','recordHistory','recordDeletionVersion','assistantDocumentHashes'];
 const day=()=>new Date(Date.now()+7200000).toISOString().slice(0,10),hash=P.snapshot;
@@ -103,7 +104,7 @@ function install(app,h){
  }
  async function handle(req,res){
   const raw=String(req.body.message||'').trim(),state=await h.read(),saved=session(state)[req.user.sub],memory=saved?.role===req.user.role?saved:null;
-  req.assistantMemory=memory;req.body.message=resolveMessage(raw,memory);wrap(req,res,raw);const q=req.body.message;
+  req.assistantMemory=memory;req.body.message=resolveMessage(Followup.resolve(raw,memory,req.body.history),memory);wrap(req,res,raw);const q=req.body.message;
   if(memory?.pending&&Date.now()-memory.pending.at<600000){
    if(/^cancel[.! ]*$/i.test(q)){await h.mutate(s=>{if(s.assistantSessions?.[req.user.sub])delete s.assistantSessions[req.user.sub].pending});res.json({answer:'Unfinished job cancelled. Nothing was saved.',source:'job-cancelled'});return true;}
    const dt=/^(?:on |date )?(20\d{2}-\d{2}-\d{2})[.! ]*$/i.exec(q)?.[1];
