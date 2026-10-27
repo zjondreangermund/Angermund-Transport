@@ -2,6 +2,7 @@
 // Read-only, explicitly scoped business queries. The AI may select an intent,
 // but NEVER supplies record facts, database fields, permissions, or SQL.
 const Link=require('./payroll-trip-link');
+const TripProfit=require('./assistant-trip-profit');
 const Cycle=require('./payroll-cycle');
 const BusinessAudit=require('./assistant-business-audit');
 const Metrics=require('./public/trip-metrics');
@@ -9,7 +10,7 @@ const normalize=v=>String(v||'').toLowerCase().normalize('NFKD').replace(/[\u030
 const iso=v=>String(v||'').slice(0,10), cash=n=>'N$ '+Number(n||0).toFixed(2);
 const office=new Set(['admin','manager','dispatcher','finance']),finance=new Set(['admin','manager','finance']);
 const roster=new Set(['admin','manager','finance']);
-const modeNames=new Set([...BusinessAudit.modes,'driver_trips','employee_tenure','worker_loans','vehicle_location','unpaid_invoices','missing_pod','pending_diesel','truck_status','record_totals','driver_payroll','payroll_period','aggregate']);
+const modeNames=new Set([...BusinessAudit.modes,'trip_profit','driver_trips','employee_tenure','worker_loans','vehicle_location','unpaid_invoices','missing_pod','pending_diesel','truck_status','record_totals','driver_payroll','payroll_period','aggregate']);
 const writeAction=/^\s*(?:add|create|delete|remove|edit|change|set|assign|move|approve|pay|mark|update|capture|upload|generate|cancel|start|stop|finish)\b/i;
 function dayLocal(now=new Date()){
  return new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Windhoek',year:'numeric',month:'2-digit',day:'2-digit'}).format(now);
@@ -38,6 +39,8 @@ function parseDates(q,now=new Date()){
  if(matches.length===1)return{from:matches[0],to:matches[0],kind:'date'};
  const period=/\b(20\d{2})[-/](0?[1-9]|1[0-2])\b/.exec(q);
  if(period){const y=+period[1],m=+period[2];return{from:safeDate(y,m,1),to:new Date(Date.UTC(y,m,0)).toISOString().slice(0,10),kind:'month'};}
+ const namedMonth=/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)(?:\s+(20\d{2}))?\b/i.exec(q);
+ if(namedMonth){const y=Number(namedMonth[2]||year),m=monthNames.indexOf(namedMonth[1].slice(0,3).toLowerCase())+1;return{from:safeDate(y,m,1),to:new Date(Date.UTC(y,m,0)).toISOString().slice(0,10),kind:'month'};}
  if(/\b(?:this month|current month)\b/i.test(q)){const y=+dayLocal(now).slice(0,4),m=+dayLocal(now).slice(5,7);return{from:safeDate(y,m,1),to:new Date(Date.UTC(y,m,0)).toISOString().slice(0,10),kind:'month'}}
  if(/\b(?:last month|previous month)\b/i.test(q)){const x=new Date(Date.UTC(+dayLocal(now).slice(0,4),+dayLocal(now).slice(5,7)-2,1));return{from:x.toISOString().slice(0,10),to:new Date(Date.UTC(x.getUTCFullYear(),x.getUTCMonth()+1,0)).toISOString().slice(0,10),kind:'month'}}
  return{from:null,to:null,kind:'all'};
@@ -70,6 +73,7 @@ function resolveTruck(q,state,target=null){
 }
 function parse(q){
  const x=String(q||'').trim(),n=normalize(x);if(!x||writeAction.test(x))return null;
+ if(TripProfit.detects(x))return{mode:'trip_profit'};
  const investigation=BusinessAudit.detect(x);
  if(investigation)return{mode:investigation};
  // Direct routing is free and independent of a model. Unknown read questions
@@ -168,6 +172,7 @@ function run(plan,q,s={},user={},extra={}){
  const mode=plan?.mode,role=String(user.role||'');
  if(!allowed(mode,role))return result('You do not have permission to view these business records.',null);
  if(BusinessAudit.modes.has(mode))return BusinessAudit.run(mode,q,s,user,{...extra,person:plan.person});
+ if(mode==='trip_profit')return TripProfit.run(q,s,{dates:parseDates(q,extra.now||new Date()),truck:resolveTruck(q,s,plan.truck),truckRequested:/\bang[\s-]*\d+\b/i.test(q+' '+(plan.truck||'')),person:resolvePerson(q,s,{target:plan.person})});
  if(mode==='aggregate')return aggregate(plan,q,s,role,extra);
  const dates=parseDates(q,extra.now||new Date());
  if(mode==='payroll_period'){
