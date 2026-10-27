@@ -1603,7 +1603,7 @@ function calculatePayrollRecord(state,employee,period,existing=null){
   const tripKm=trips.reduce((a,t)=>a+serverTripLegSummary(state,t).distance,0),tripRatePerKm=driver?num(existing?.tripRatePerKm??p.tripRatePerKm):0;
   const tripPay=trips.reduce((a,t)=>a+serverTripLegSummary(state,t).distance*serverTripRate(state,t,tripRatePerKm),0);
   const tripBreakdown=trips.map(t=>{const evidence=TripMetrics.distance(t,(state.diesel||[]).filter(x=>x.tripId===t.id)),distance=evidence.distance,rate=serverTripRate(state,t,tripRatePerKm),legs=t.legs?.length?t.legs:[t];return{tripId:t.id,number:t.number||t.id,date:t.date,truck:(state.trucks||[]).find(x=>x.id===t.truckId)?.fleetName||t.truckId||'',route:legs.map(l=>(state.routes||[]).find(x=>x.id===l.routeId)?.name||'').filter(Boolean).join(' → '),load:legs.map(l=>l.load||'').filter(Boolean).join(' / '),distance,distanceSource:evidence.distanceSource,partial:Boolean(evidence.partial),manualEarlyPay:Boolean(existing?.manualTripIds?.includes(t.id)),rate,pay:Number((distance*rate).toFixed(2))}});
-  const shunterBonus=PayrollCycle.bonus(state,driver,start,end,p);
+  const shunterBonus=shunter?PayrollCycle.bonus(state,driver,start,end,p):{amount:0,rate:0,days:[],count:0};
   const incentive=0;
   const reimbursements=driver?(state.expenses||[]).filter(x=>x.driverId===driver.id&&inPeriod(x.date)&&x.reimbursable!==false&&x.status==='Approved').reduce((a,x)=>a+num(x.amount),0):0;
   const advances=driver?(state.advances||[]).filter(x=>x.driverId===driver.id&&inPeriod(x.date)&&x.status!=='Reconciled').reduce((a,x)=>a+num(x.amount),0):0;
