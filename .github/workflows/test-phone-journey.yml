@@ -39,6 +39,8 @@ on:
       - 'test/manual-trip-route.test.js'
       - 'server.js'
       - 'payroll-cycle.js'
+      - 'payroll-manual-trips.js'
+      - 'test/payroll-manual-trips.test.js'
       - 'assistant-operations-answers.js'
       - 'test/payroll-cycle.test.js'
       - 'test/shunter-cutoff-assistant.test.js'
@@ -83,6 +85,8 @@ on:
       - 'test/manual-trip-route.test.js'
       - 'server.js'
       - 'payroll-cycle.js'
+      - 'payroll-manual-trips.js'
+      - 'test/payroll-manual-trips.test.js'
       - 'assistant-operations-answers.js'
       - 'test/payroll-cycle.test.js'
       - 'test/shunter-cutoff-assistant.test.js'
@@ -111,6 +115,8 @@ jobs:
         run: node --test test/assistant-ops-audit.test.js
       - name: Verify selective AI model routing, cost controls and private live evidence
         run: node --test test/assistant-intelligence.test.js
+      - name: Verify after-cutoff early-pay allocations and no double trip earnings
+        run: node --test test/payroll-manual-trips.test.js
       - name: Verify configurable cutoff, shunter bonuses and assistant record answers
         run: node --test test/payroll-cycle.test.js test/shunter-cutoff-assistant.test.js
       - name: Verify trip-linked diesel and post-refuel return kilometres
