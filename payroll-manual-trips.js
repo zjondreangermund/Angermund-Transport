@@ -10,7 +10,7 @@ const completed=t=>!/(cancelled|canceled|deleted)/i.test(String(t.status||''))&&
   (Number(t.stage||0)>=3||/delivered|completed|complete|invoiced/i.test(String(t.status||'')));
 const billingDate=t=>date(t.deliveredDate||t.completedDate||t.closedDate||t.date);
 const frozen=p=>['Approved','Paid'].includes(p.status);
-const tripIds=p=>Array.isArray(p.manualTripIds)?p.manualTripIds.map(String):[];
+const tripIds=p=>Array.isArray(p?.manualTripIds)?p.manualTripIds.map(String):[];
 function matchedByOtherPayslip(state,trip,employeeId,targetId){
  const claims=[];
  for(const p of state.payroll||[]){
