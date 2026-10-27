@@ -44,6 +44,8 @@ on:
       - 'test/payroll-km-diagnostics.test.js'
       - 'test/payroll-manual-trips.test.js'
       - 'assistant-operations-answers.js'
+      - 'assistant-record-query.js'
+      - 'test/assistant-record-query.test.js'
       - 'test/payroll-cycle.test.js'
       - 'test/shunter-cutoff-assistant.test.js'
       - 'public/app.js'
@@ -92,6 +94,8 @@ on:
       - 'test/payroll-km-diagnostics.test.js'
       - 'test/payroll-manual-trips.test.js'
       - 'assistant-operations-answers.js'
+      - 'assistant-record-query.js'
+      - 'test/assistant-record-query.test.js'
       - 'test/payroll-cycle.test.js'
       - 'test/shunter-cutoff-assistant.test.js'
       - 'public/app.js'
@@ -119,6 +123,8 @@ jobs:
         run: node --test test/assistant-ops-audit.test.js
       - name: Verify selective AI model routing, cost controls and private live evidence
         run: node --test test/assistant-intelligence.test.js
+      - name: Verify real staff/trip/loan/GPS questions from chat screenshots
+        run: node --test test/assistant-record-query.test.js
       - name: Verify missing km diagnostics and auto-refresh on verified diesel/odometer changes
         run: node --test test/payroll-km-diagnostics.test.js
       - name: Verify after-cutoff early-pay allocations and no double trip earnings
