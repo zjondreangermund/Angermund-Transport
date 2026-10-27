@@ -2403,8 +2403,60 @@ function openEmployeeLoan(id=''){
 function payslipCycleSummary(p){return '<p><b>Pay period:</b> '+esc(p.periodStart||p.period)+' to '+esc(p.periodEnd||'month end')+'</p>'+(num(p.shunterDays)?'<p><b>Shunter daily bonus:</b> '+num(p.shunterDays)+' days × '+money(p.shunterDailyRate)+' = '+money(p.shunterBonus)+'</p><p>'+esc((p.shunterDayBreakdown||[]).map(d=>d.date).join(', '))+'</p>':'');}
 function payslipTripTable(p){
   if(!Array.isArray(p.tripBreakdown))return '<p>Trip detail snapshot is unavailable for this older payslip. Refresh a Draft payslip to include it. Approved/Paid totals are preserved.</p>';
-  return '<h3>Trip breakdown</h3><div class="table-wrap"><table><thead><tr><th>Date / trip</th><th>Truck / route / cargo</th><th>km</th><th>Rate/km</th><th>Trip pay</th></tr></thead><tbody>'+p.tripBreakdown.map(x=>'<tr><td>'+esc(x.date)+'<br>'+esc(x.number)+'</td><td>'+esc(x.truck)+'<br>'+esc(x.route)+'<br>'+esc(x.load)+'</td><td>'+num(x.distance).toLocaleString()+'<br><small>'+esc(x.distanceSource||'Historical kilometres')+(x.partial?' · Partial distance — review final trip kilometres':'')+'</small></td><td>'+money(x.rate)+'</td><td>'+money(x.pay)+'</td></tr>').join('')+'</tbody></table></div>';
+  return '<h3>Trip breakdown</h3><div class="table-wrap"><table><thead><tr><th>Date / trip</th><th>Truck / route / cargo</th><th>km</th><th>Rate/km</th><th>Trip pay</th></tr></thead><tbody>'+p.tripBreakdown.map(x=>'<tr><td>'+esc(x.date)+'<br>'+esc(x.number)+(x.manualEarlyPay?'<br><small><b>Paid early · after cutoff</b></small>':'')+'</td><td>'+esc(x.truck)+'<br>'+esc(x.route)+'<br>'+esc(x.load)+'</td><td>'+num(x.distance).toLocaleString()+'<br><small>'+esc(x.distanceSource||'Historical kilometres')+(x.partial?' · Partial distance — review final trip kilometres':'')+'</small></td><td>'+money(x.rate)+'</td><td>'+money(x.pay)+'</td></tr>').join('')+'</tbody></table></div>';
 }
+function payrollManualTripSection(p){
+ const ids=(p.manualTripIds||[]).map(String),locked=['Approved','Paid'].includes(p.status);
+ const assigned=ids.map(id=>(db.trips||[]).find(t=>t.id===id)).filter(Boolean);
+ return '<div class="panel" style="margin-top:14px"><div class="toolbar"><div><h3>Extra trips paid early</h3><p class="muted-copy">Bring a completed trip from after the NBL payroll cutoff into this driver’s payslip. The same trip is excluded from later payroll, including the next month. Invoice cutoff dates do not change.</p></div>'+
+   (locked?'': '<button type="button" class="primary" id="psAddTrip">+ Add trip after cutoff</button>')+
+   '</div><p><b>'+ids.length+'</b> manual allocation'+(ids.length===1?'':'s')+(locked?' · This payslip is locked.':' · Draft: changes can still be reversed.')+'</p>'+
+   (assigned.length?'<div class="table-wrap"><table><thead><tr><th>Trip</th><th>Trip / delivery date</th><th>Truck</th><th>Allocation</th></tr></thead><tbody>'+
+     assigned.map(t=>'<tr><td><b>'+esc(t.number||t.id)+'</b></td><td>'+esc(t.date||'')+' / '+esc(t.deliveredDate||t.completedDate||t.date||'')+'</td>'+
+       '<td>'+esc((db.trucks||[]).find(x=>x.id===t.truckId)?.fleetName||t.truckId||'')+'</td><td>'+
+       (locked?'Paid early on this payslip':'<button type="button" class="link-button psRemoveEarlyTrip" data-trip-id="'+esc(t.id)+'">Remove early allocation</button>')+
+     '</td></tr>').join('')+'</tbody></table></div>':'')+
+   (locked?'':'<div id="psCarryoverEditor" aria-live="polite"></div>')+
+   '<small>Changing a Draft payslip recalculates its trip earnings and any existing later Draft payslip. Approved and Paid payslips are never changed by this allocation tool.</small></div>';
+}
+async function openPayslipTripPicker(id){
+ const section=$('psCarryoverEditor');if(!section)return;
+ section.textContent='Checking saved trips after this cutoff…';
+ try{
+   const results=await api('/api/payroll/'+encodeURIComponent(id)+'/extra-trips');
+   if(!results.candidates?.length){
+     section.textContent='No completed, unpaid, after-cutoff trips are available for this driver. Trips already assigned to other payslips or belonging to another driver are excluded.';
+     return;
+   }
+   section.innerHTML='<div class="field"><label for="psEarlyTripSelect">Available trips after '+esc(results.periodEnd)+' (driver only)</label>'+
+     '<select id="psEarlyTripSelect">'+results.candidates.map(t=>'<option value="'+esc(t.id)+'">'+esc(t.number)+' · '+esc(t.deliveryDate||t.date)+' · '+esc((db.trucks||[]).find(x=>x.id===t.truckId)?.fleetName||'')+' · '+esc(t.load||'')+'</option>').join('')+'</select>'+
+     '<small>Only trips not already allocated or finalized elsewhere appear here. Adding a trip changes driver pay, not the NBL invoice cutoff.</small></div>'+
+     '<button type="button" class="primary" id="psConfirmEarlyTrip">Add selected trip to this payslip</button>';
+   $('psConfirmEarlyTrip').onclick=async()=>{
+     const tripId=$('psEarlyTripSelect')?.value;if(!tripId)return;
+     if(!confirm('Move this completed after-cutoff trip into the selected driver payslip? It will be excluded from next payroll.'))return;
+     const button=$('psConfirmEarlyTrip');button.disabled=true;
+     try{
+       await api('/api/payroll/'+encodeURIComponent(id)+'/extra-trips',{method:'POST',body:{tripId}});
+       await refreshCentralState(false);openPayslip(id);notify('Trip added to this payroll period; automatically excluded from later payslips');
+     }catch(e){button.disabled=false;notify(e.message)}
+   };
+ }catch(e){section.textContent='Could not load eligible trips: '+e.message}
+}
+function wirePayslipExtraTrips(id,p){
+ if(['Approved','Paid'].includes(p.status))return;
+ const button=$('psAddTrip');if(button)button.onclick=()=>openPayslipTripPicker(id);
+ document.querySelectorAll('.psRemoveEarlyTrip').forEach(btn=>btn.onclick=async()=>{
+   const tripId=btn.dataset.tripId;
+   if(!confirm('Remove this early allocation from the Draft payslip? The trip will be eligible again in its normal future payroll cutoff.'))return;
+   btn.disabled=true;
+   try{
+     await api('/api/payroll/'+encodeURIComponent(id)+'/extra-trips/'+encodeURIComponent(tripId),{method:'DELETE'});
+     await refreshCentralState(false);openPayslip(id);notify('Manual trip allocation removed; original cutoff eligibility restored');
+   }catch(e){btn.disabled=false;notify(e.message)}
+ });
+}
+
 function openPayslip(id){
   const p=(db.payroll||[]).find(x=>x.id===id);if(!p)return;
   const d=employeeRecord(p.employeeId),profile=clientPayProfile(p.employeeId),kmEligible=employeeGetsKmPay(d);
@@ -2417,8 +2469,8 @@ function openPayslip(id){
     +'<div class="field"><label>PAYE</label><input id="psPaye" type="number" step="0.01" value="'+(belowPayeThreshold?0:num(p.paye))+'" '+(belowPayeThreshold?'disabled':'')+'><small>'+(belowPayeThreshold?'No PAYE: gross is at/below '+money(payeThreshold):'PAYE applies above '+money(payeThreshold))+'</small></div><div class="field"><label>SSC</label><input id="psSsc" type="number" step="0.01" value="'+num(p.ssc)+'"></div>'
     +'<div class="field"><label>Other deductions</label><input id="psDeduct" type="number" step="0.01" value="'+num(p.deductions)+'"></div><div class="field"><label>Status</label><select id="psStatus">'+['Draft','Approved','Paid'].map(x=>'<option '+(x===p.status?'selected':'')+'>'+x+'</option>').join('')+'</select></div></div>'
     +'<div class="payslip-lines"><div><span>Trip kilometres</span><b>'+num(p.tripKm).toLocaleString()+' km · '+(num(p.tripRatePerKm||profile.tripRatePerKm)>0?money(p.tripRatePerKm||profile.tripRatePerKm)+'/km':'route rates')+' = '+money(p.tripPay)+'</b></div><div><span>Approved expense reimbursement</span><b>'+money(p.reimbursements)+'</b></div><div><span>Unreconciled advances</span><b>- '+money(p.advances)+'</b></div><div><span>Employee loan repayment</span><b>- '+money(p.loanDeduction)+'</b></div>'+((p.loanBreakdown||[]).map(x=>'<div><span>↳ Loan '+esc(x.reference||x.loanId||'')+'</span><b>'+money(x.amount)+'</b></div>').join(''))+'<div><span>Trips included</span><b>'+num(p.tripCount)+'</b></div></div>'
-    +payslipCycleSummary(p)+payslipTripTable(p)+'<div class="form-actions"><button type="button" class="ghost" id="cancelForm">Cancel</button><button type="button" class="ghost" id="printPayslipModal">Print payslip</button><button type="button" class="danger" data-manage-delete="payroll" data-record-id="'+esc(id)+'">Delete payslip</button><button class="primary">Save payslip</button></div>';
-  $('modal').classList.remove('hidden');$('cancelForm').onclick=()=>$('modal').classList.add('hidden');$('printPayslipModal').onclick=()=>printPayslip(id);
+    +payslipCycleSummary(p)+payslipTripTable(p)+payrollManualTripSection(p)+'<div class="form-actions"><button type="button" class="ghost" id="cancelForm">Cancel</button><button type="button" class="ghost" id="printPayslipModal">Print payslip</button><button type="button" class="danger" data-manage-delete="payroll" data-record-id="'+esc(id)+'">Delete payslip</button><button class="primary">Save payslip</button></div>';
+  $('modal').classList.remove('hidden');$('cancelForm').onclick=()=>$('modal').classList.add('hidden');$('printPayslipModal').onclick=()=>printPayslip(id);wirePayslipExtraTrips(id,p);
   $('entryForm').onsubmit=async e=>{e.preventDefault();try{await api('/api/payroll/'+encodeURIComponent(id),{method:'PATCH',body:{days:num($('psDays').value),base:num($('psBase').value),tripRatePerKm:kmEligible?num($('psTripRate').value):0,overtimeHours:num($('psOtHours').value),overtimeRate:num($('psOtRate').value),paye:belowPayeThreshold?0:num($('psPaye').value),ssc:num($('psSsc').value),deductions:num($('psDeduct').value),status:$('psStatus').value}});$('modal').classList.add('hidden');await refreshCentralState(false);notify('Payslip updated')}catch(err){notify(err.message)}};
 }
 function printPayslip(id){
