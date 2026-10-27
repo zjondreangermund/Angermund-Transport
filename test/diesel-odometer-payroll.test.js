@@ -26,7 +26,7 @@ test('separate employee records that match a uniquely named driver are eligible,
 test('October draft payroll uses diesel odometer kilometre evidence for the assigned driver, with a traceable payslip source',()=>{
  const source=fs.readFileSync('server.js','utf8');
  const chunk=(start,end)=>source.slice(source.indexOf(start),source.indexOf(end,source.indexOf(start)));
- const ctx={num:x=>Number(x||0),crypto:require('node:crypto'),PayrollCycle:require('../payroll-cycle'),PayrollTripLink:require('../payroll-trip-link'),TripMetrics:require('../public/trip-metrics'),TripMetrics:M,PayrollEligibility:Elig,PayrollTripLink:Link,
+ const ctx={num:x=>Number(x||0),crypto:require('node:crypto'),PayrollCycle:require('../payroll-cycle'),PayrollTripLink:require('../payroll-trip-link'),TripMetrics:require('../public/trip-metrics'),TripMetrics:M,PayrollEligibility:Elig,PayrollTripLink:Link,PayrollManualTrips:require('../payroll-manual-trips'),
   ensureTripLegs:(s,t)=>t.legs?.length?t.legs:[t],calculateLegIncome:x=>Number(x.income||0),
   serverSouthAfricaTrip:()=>false,serverFuelMetrics:(s,t)=>M.fuel(t,(s.diesel||[]).filter(x=>x.tripId===t.id)),
   periodBounds:()=>({start:'2026-10-01',end:'2026-11-01'})};
