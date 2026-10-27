@@ -2753,7 +2753,13 @@ app.patch('/api/payroll/profiles/:driverId',auth,roles('admin','manager','financ
       for(const key of ['baseSalary','tripRatePerKm','payeDefault','sscDefault','overtimeRate','standardDays','otherDeductionDefault'])if(body[key]!==undefined)p[key]=num(body[key]);
       if(body.cutoffDay!==undefined){const day=Number(body.cutoffDay);if(!Number.isInteger(day)||day<1||day>31)throw Object.assign(Error('Cutoff day must be between 1 and 31'),{status:400});p.cutoffDay=day;}
       for(const key of ['shunterBonusAmount','shunterWorkingDays'])if(body[key]!==undefined){const v=Number(body[key]);if(!Number.isFinite(v)||v<0||(key==='shunterWorkingDays'&&v<=0))throw Error('Enter a valid shunter bonus and working-day divisor');p[key]=v;}
-      if(body.payBasis!==undefined){if(!['auto','shunter','transport'].includes(body.payBasis))throw Error('Invalid pay basis');if(body.payBasis==='auto')delete p.payBasis;else p.payBasis=body.payBasis;}
+      if(body.payBasis!==undefined){
+        if(!['auto','shunter','transport'].includes(body.payBasis))throw Error('Invalid pay basis');
+        const actualShunter=PayrollCycle.shunterDriver(state,workforceDriver(state,employee),p);
+        if(body.payBasis==='shunter'&&!actualShunter)throw Object.assign(Error('Only ANG 4 or ANG 5 assigned drivers can be shunters. Update the Fleet truck assignment first.'),{status:409});
+        if(body.payBasis==='transport'&&actualShunter)throw Object.assign(Error('The driver is assigned to ANG 4 or ANG 5. Update Fleet before changing their payroll category.'),{status:409});
+        if(body.payBasis==='auto')delete p.payBasis;else p.payBasis=body.payBasis;
+      }
       if(!PayrollEligibility.isDriver(employee,state.drivers||[]))p.tripRatePerKm=0;
       if(body.taxNumber!==undefined)p.taxNumber=String(body.taxNumber||'');
       if(body.autoGenerate!==undefined)p.autoGenerate=Boolean(body.autoGenerate);
