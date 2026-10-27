@@ -219,7 +219,7 @@ function run(plan,q,s={},user={},extra={}){
    (gps?'\nLatest GPS timestamp: '+String(gps.recordedAt||'not recorded'):'\nNo live position verified.'),'dispatch');
   if(!gps)return result((truck.fleetName||truck.id)+': no GPS fix is saved in the tracking data available to this assistant. '+status+
     ' This cannot confirm its physical location. Check the tracker connection and GPS page.','tracking');
-  const at=Date.parse(gps.recordedAt),age=Number.isFinite(at)?Math.max(0,Date.now()-at):Infinity,valid=Number.isFinite(Number(gps.latitude))&&Number.isFinite(Number(gps.longitude));
+  const at=Date.parse(gps.recordedAt),age=Number.isFinite(at)?Math.max(0,(extra.now||new Date()).getTime()-at):Infinity,valid=Number.isFinite(Number(gps.latitude))&&Number.isFinite(Number(gps.longitude));
   if(!valid)return result((truck.fleetName||truck.id)+': the saved position has no usable coordinates. '+status,'tracking');
   const recent=age<=15*60_000,lat=Number(gps.latitude),lng=Number(gps.longitude);
   const link='https://www.google.com/maps?q='+lat+','+lng;
