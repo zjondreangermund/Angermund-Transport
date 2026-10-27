@@ -10,6 +10,8 @@
         <button type="button" data-example="Where do I see my monthly income?">Monthly income</button>
         <button type="button" data-example="Where do I see unpaid invoices?">Unpaid invoices</button>
         <button type="button" data-example="Which trucks are available?">Available trucks</button>
+        <button type="button" data-audit-example data-example="Investigate ANG 10 latest trip">Investigate trip</button>
+        <button type="button" data-audit-example data-example="Prepare audit tasks for ANG 10 latest trip">Prepare review tasks</button>
         <button type="button" data-example="Show overdue tasks">Overdue tasks</button>
         <button type="button" data-example="How do I create a new trip?">Create trip</button>
         <button type="button" data-example="Add loan to Josef for N$2000 monthly deduction N$200">Employee loan</button>
@@ -68,6 +70,8 @@
     const financial=bridge()?.context?.()?.pages?.some(x=>x.id==='monthlyPnl');
     const monthly=host.querySelector('[data-example="Where do I see my monthly income?"]');
     if(monthly)monthly.hidden=!financial;
+    const canAudit=['admin','manager','finance','dispatcher'].includes(bridge()?.context?.()?.role);
+    host.querySelectorAll('[data-audit-example]').forEach(b=>b.hidden=!canAudit);
     const loans=host.querySelector('[data-example^="Add loan to"]');
     if(loans)loans.hidden=!bridge()?.context?.()?.pages?.some(x=>x.id==='loans');
     const assign=host.querySelector('[data-example^="Assign driver"]');
