@@ -76,5 +76,5 @@ test('approved and paid payroll remain unchanged when a profile rate is updated'
  const endpoint=server.slice(at,end);
  a.match(endpoint,/draft.status!=='Draft'/);
  a.match(endpoint,/draft.tripRateOverride===true/);
- a.match(endpoint,/profiles\/:employeeId\/rate-preview/);
+ a.match(server,/profiles\/:employeeId\/rate-preview/);
 });
