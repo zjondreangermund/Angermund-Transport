@@ -1,6 +1,6 @@
 'use strict';
 const test=require('node:test'),a=require('node:assert/strict'),C=require('../payroll-cycle'),Link=require('../payroll-trip-link'),fs=require('node:fs'),vm=require('node:vm');
-function context(){const src=fs.readFileSync('server.js','utf8'),c={PayrollManualTrips:require('../payroll-manual-trips'),PayrollCycle:C,PayrollTripLink:Link,PayrollEligibility:require('../public/payroll-eligibility'),TripMetrics:require('../public/trip-metrics'),crypto:require('node:crypto'),num:x=>Number(x||0),serverTripLegSummary:(s,t)=>({distance:t.distance||0}),serverTripRate:()=>.5};vm.createContext(c);for(const [start,end] of [['function workforceEmployees(','function monthPeriod('],['function syncNblDriverPayroll(','function buildNblConsolidatedInvoice(']])vm.runInContext(src.slice(src.indexOf(start),src.indexOf(end,src.indexOf(start))),c);return c;}
+function context(){const src=fs.readFileSync('server.js','utf8'),c={PayrollManualTrips:require('../payroll-manual-trips'),PayrollCycle:C,PayrollTripLink:Link,PayrollEligibility:require('../public/payroll-eligibility'),TripMetrics:require('../public/trip-metrics'),crypto:require('node:crypto'),num:x=>Number(x||0),serverTripLegSummary:(s,t)=>({distance:t.distance||0}),serverTripRate:(state,trip,configured)=>configured>0?configured:.5};vm.createContext(c);for(const [start,end] of [['function workforceEmployees(','function monthPeriod('],['function syncNblDriverPayroll(','function buildNblConsolidatedInvoice(']])vm.runInContext(src.slice(src.indexOf(start),src.indexOf(end,src.indexOf(start))),c);return c;}
 const state=()=>({drivers:[{id:'d',name:'Driver'}],employees:[{id:'e',driverId:'d',name:'Driver',jobTitle:'Driver',baseSalary:3000}],trucks:[{id:'trk_ang4',fleetName:'Ang 4',defaultDriverId:'d'}],trips:[],payProfiles:[],payroll:[],loans:[],expenses:[],advances:[]});
 test('transport cutoff handles year boundaries and exact invoice date overrides',()=>{
  a.deepEqual(C.bounds('2027-01',{},false),{start:'2026-12-21',end:'2027-01-21',periodEnd:'2027-01-20',basis:'nbl-cycle'});
@@ -43,4 +43,38 @@ test('only drivers assigned to ANG4 or ANG5 receive monthly shunter pay plus wor
  a.equal(p.periodStart,'2026-10-01');a.equal(p.periodEnd,'2026-10-31');
  a.equal(p.tripKm,0);a.equal(p.tripPay,0);
  a.equal(p.shunterDays,1);a.equal(p.shunterBonus,400);
+});
+
+test('new fixed profile trip-pay rate replaces inherited zero on existing Draft payslip',()=>{
+ const state0=state();state0.trucks=[];state0.trips=[{id:'run',driverId:'d',date:'2026-10-12',stage:4,status:'Delivered',distance:200}];
+ state0.payProfiles=[{employeeId:'e',baseSalary:3000,tripRatePerKm:0,cutoffDay:20}];
+ const c=context(),before=c.calculatePayrollRecord(state0,state0.employees[0],'2026-10');
+ a.equal(before.tripRatePerKm,0);a.equal(before.tripKm,200);a.equal(before.tripPay,100);
+ state0.payProfiles[0].tripRatePerKm=1.35;
+ const after=c.calculatePayrollRecord(state0,state0.employees[0],'2026-10',before);
+ a.equal(after.tripRatePerKm,1.35);
+ a.equal(after.tripPay,270);
+ a.equal(after.tripBreakdown[0].rate,1.35);
+ a.equal(after.tripRateOverride,false);
+});
+test('manual payslip rate wins over employee rate and resetting to zero restores inherited rate',()=>{
+ const st=state();st.trucks=[];st.trips=[{id:'run',driverId:'d',date:'2026-10-12',stage:4,status:'Delivered',distance:120}];
+ st.payProfiles=[{employeeId:'e',tripRatePerKm:1.2}];
+ const c=context();let p=c.calculatePayrollRecord(st,st.employees[0],'2026-10');
+ a.equal(p.tripPay,144);
+ p={...p,tripRateOverride:true,tripRatePerKm:1.8};
+ let next=c.calculatePayrollRecord(st,st.employees[0],'2026-10',p);
+ a.equal(next.tripPay,216);a.equal(next.tripRateOverride,true);
+ p={...next,tripRateOverride:false,tripRatePerKm:0};
+ next=c.calculatePayrollRecord(st,st.employees[0],'2026-10',p);
+ a.equal(next.tripRatePerKm,1.2);a.equal(next.tripPay,144);
+});
+test('approved and paid payroll remain unchanged when a profile rate is updated',()=>{
+ const server=fs.readFileSync('server.js','utf8');
+ const at=server.indexOf("app.patch('/api/payroll/profiles/:driverId'");
+ const end=server.indexOf("app.get('/api/payroll/:id/extra-trips'",at);
+ const endpoint=server.slice(at,end);
+ a.match(endpoint,/draft.status!=='Draft'/);
+ a.match(endpoint,/draft.tripRateOverride===true/);
+ a.match(server,/profiles\/:employeeId\/rate-preview/);
 });
