@@ -207,4 +207,4 @@ function broad(mode,q,s,user,period){
    '\nCheck source documents and saved links before taking action.',page,source:'live-audit',
    records:listed.map(t=>({id:t.id,kind:'trip',label:t.number||t.id}))};
 }
-module.exports={detect,run,getPeriod,resolveEmployee,driverReport,modes};
+module.exports={detect,run,getPeriod,resolveEmployee,driverReport,formatReport,modes};
