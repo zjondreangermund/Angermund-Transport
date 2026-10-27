@@ -2792,16 +2792,6 @@ app.patch('/api/payroll/profiles/:driverId',auth,roles('admin','manager','financ
       const employee=workforceEmployee(state,did);if(!employee){const e=Error('Employee not found');e.status=404;throw e}
       const p=payrollProfile(state,did);
       for(const key of ['baseSalary','tripRatePerKm','payeDefault','sscDefault','overtimeRate','standardDays','otherDeductionDefault'])if(body[key]!==undefined)p[key]=num(body[key]);
-      if(body.tripRatePerKm!==undefined){
-        if(!Number.isFinite(Number(body.tripRatePerKm))||Number(body.tripRatePerKm)<0)
-          throw Object.assign(Error('Driver rate must be a positive amount or zero for legacy automatic rate.'),{status:400});
-        // Driver rate updates apply to Draft payroll immediately, not to Paid or Approved.
-        for(const draft of state.payroll||[]){
-          if(draft.employeeId!==employee.id||draft.status!=='Draft'||draft.tripRateOverride===true)continue;
-          const next=calculatePayrollRecord(state,employee,draft.period,draft);
-          Object.assign(draft,next);draft.updatedAt=new Date().toISOString();
-        }
-      }
       if(body.cutoffDay!==undefined){const day=Number(body.cutoffDay);if(!Number.isInteger(day)||day<1||day>31)throw Object.assign(Error('Cutoff day must be between 1 and 31'),{status:400});p.cutoffDay=day;}
       for(const key of ['shunterBonusAmount','shunterWorkingDays'])if(body[key]!==undefined){const v=Number(body[key]);if(!Number.isFinite(v)||v<0||(key==='shunterWorkingDays'&&v<=0))throw Error('Enter a valid shunter bonus and working-day divisor');p[key]=v;}
       if(body.payBasis!==undefined){
@@ -2814,6 +2804,15 @@ app.patch('/api/payroll/profiles/:driverId',auth,roles('admin','manager','financ
       if(!PayrollEligibility.isDriver(employee,state.drivers||[]))p.tripRatePerKm=0;
       if(body.taxNumber!==undefined)p.taxNumber=String(body.taxNumber||'');
       if(body.autoGenerate!==undefined)p.autoGenerate=Boolean(body.autoGenerate);
+      if(body.tripRatePerKm!==undefined){
+        if(!Number.isFinite(Number(body.tripRatePerKm))||Number(body.tripRatePerKm)<0)
+          throw Object.assign(Error('Driver rate must be zero or a positive amount.'),{status:400});
+        for(const draft of state.payroll||[]){
+          if(draft.employeeId!==employee.id||draft.status!=='Draft'||draft.tripRateOverride===true)continue;
+          Object.assign(draft,calculatePayrollRecord(state,employee,draft.period,draft));
+          draft.updatedAt=new Date().toISOString();
+        }
+      }
       p.updatedAt=new Date().toISOString();p.updatedBy=req.user.sub;
       return p
     });
