@@ -145,7 +145,11 @@ function run(mode,q,s,user={},options={}){
    return{answer:'Specify the driver to check after-cutoff trip allocations.',page:'payroll',source:'live-audit'};
   }
   const r=driverReport(s,reportName.employee,period);
-  let answer=formatReport(r,mode);
+  let answer=mode==='driver_slip_audit'&&!finance.has(role)?
+   (r.employee.name+' · '+period+' · '+r.candidates.length+' matching saved trip(s):\n'+
+    r.candidates.slice(0,14).map(t=>t.number+' · '+t.truck+' · '+t.status+' · '+t.dieselSlips+' linked fuel slips ('+t.verifiedSlips+' verified)'+
+     (t.dieselSlips?'':'. Check uploaded receipts and trip linking; a slip is not required for km earnings if valid journey distance is saved.')).join('\n')):
+   formatReport(r,mode);
   if(mode==='payroll_early_trip_check'){
    const early=(r.payslip?.manualTripIds||[]).map(id=>(s.trips||[]).find(t=>t.id===id)).filter(Boolean);
    answer+='\nManually paid-early trips on this payslip: '+early.length+
