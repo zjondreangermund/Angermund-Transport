@@ -23,13 +23,13 @@ function detect(q){
   return 'driver_earnings_audit';
  if(has(phrase,/\b(?:payslip|payroll|salary|salaries|earnings|trip pay|trip money|driver pay)\b/i)&&has(phrase,/\b(?:why|0\b|zero|missing|not|no |excluded|eligible|check|investigate|diagnos|trip|km|wrong|double|show)\b/i))
   return 'driver_earnings_audit';
- if(has(phrase,/\b(?:slips?|receipts?|fuel|diesel)\b/i)&&has(phrase,/\b(?:missing|not|which|all|every|check|link|have|has|without|unverified|verified)\b/i)&&has(phrase,/\b(?:driver|trip|victon|josef|anton|rudolf|elia|marakia|joel|truck|ang[\s-]*\d+|slips?)\b/i))
+ if(has(phrase,/\b(?:slips?|receipts?|fuel|diesel)\b/i)&&has(phrase,/\b(?:missing|not|which|all|every|check|link|have|has|without)\b/i)&&has(phrase,/\b(?:drivers?|trips?|truck|ang[\s-]*\d+)\b|\b(?:for|of)\s+[A-Z][a-z]{2,}/i))
   return 'driver_slip_audit';
  if(has(phrase,/\b(?:which|who|all|find|check|list|show|why)\b/i)&&has(phrase,/\b(?:payslips?|payroll|drivers?|staff)\b/i)&&has(phrase,/\b(?:zero|missing|no trips|without|not paid|no km|discrepanc|shortpaid)\b/i))
   return 'payroll_gap_summary';
  if(has(phrase,/\b(?:trips?|loads?)\b/i)&&has(phrase,/\b(?:without|no|missing|unassigned)\b/i)&&has(phrase,/\b(?:driver|truck|assignment)\b/i))
   return 'unassigned_trip_audit';
- if(has(phrase,/\b(?:unbilled|uninvoiced|not invoiced|awaiting invoice|ready to bill|ready for billing)\b/i)&&has(phrase,/\b(?:trip|load|delivery|deliveries)\b/i))
+ if(has(phrase,/\b(?:unbilled|uninvoiced|not invoiced|awaiting invoice|ready to bill|ready for billing)\b/i)&&has(phrase,/\b(?:trips?|loads?|delivery|deliveries)\b/i))
   return 'unbilled_completed_audit';
  if(has(phrase,/\b(?:km|kilomet|distance|odometer)\b/i)&&has(phrase,/\b(?:missing|zero|no |wrong|partial|not calculated|check|find)\b/i)&&has(phrase,/\b(?:trips?|drivers?|truck|fleet)\b/i))
   return 'trip_distance_audit';
