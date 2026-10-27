@@ -7,7 +7,7 @@ const normalize=v=>String(v||'').toLowerCase().normalize('NFKD').replace(/[\u030
 const iso=v=>String(v||'').slice(0,10), cash=n=>'N$ '+Number(n||0).toFixed(2);
 const office=new Set(['admin','manager','dispatcher','finance']),finance=new Set(['admin','manager','finance']);
 const roster=new Set(['admin','manager','finance']);
-const modeNames=new Set(['driver_trips','employee_tenure','worker_loans','vehicle_location','unpaid_invoices','missing_pod','pending_diesel','truck_status','record_totals','driver_payroll']);
+const modeNames=new Set(['driver_trips','employee_tenure','worker_loans','vehicle_location','unpaid_invoices','missing_pod','pending_diesel','truck_status','record_totals','driver_payroll','aggregate']);
 const writeAction=/^\s*(?:add|create|delete|remove|edit|change|set|assign|move|approve|pay|mark|update|capture|upload|generate|cancel|start|stop|finish)\b/i;
 function dayLocal(now=new Date()){
  return new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Windhoek',year:'numeric',month:'2-digit',day:'2-digit'}).format(now);
@@ -84,6 +84,7 @@ function parse(q){
 }
 function allowed(mode,role){
  if(!modeNames.has(mode))return false;
+ if(mode==='aggregate')return office.has(role);
  if(['vehicle_location','truck_status','driver_trips','missing_pod','pending_diesel','record_totals'].includes(mode))return office.has(role);
  return finance.has(role);
 }
@@ -92,9 +93,74 @@ function personError(q,s,target){
  const x=resolvePerson(q,s,{target});
  return{x,answer:x.ambiguous?'Multiple staff records match that name: '+x.candidates.join(', ')+'. Please specify the full name.':'No matching staff or driver record was found for the name in this question. Check Drivers & Staff for the correct name.'};
 }
+
+const aggregateCatalog={
+ trips:{role:'office',fields:['distance','income','tons'],date:'date',page:'trips'},
+ diesel:{role:'office',fields:['litres','printedTotal','total','odometer'],date:'date',page:'diesel'},
+ expenses:{role:'finance',fields:['amount'],date:'date',page:'roadCharges'},
+ invoices:{role:'finance',fields:['amount','balance','paidAmount'],date:'date',page:'invoices'},
+ loans:{role:'finance',fields:['amount','balance','monthlyDeduction'],date:'date',page:'loans'},
+ payroll:{role:'finance',fields:['tripKm','tripPay','gross','net','shunterBonus'],date:'period',page:'payroll'},
+ maintenance:{role:'office',fields:['amount','cost'],date:'date',page:'workshop'},
+ trucks:{role:'office',fields:[],date:null,page:'fleet'},
+ drivers:{role:'office',fields:[],date:null,page:'driverAccounts'},
+ employees:{role:'finance',fields:[],date:'dateEmployed',page:'driverAccounts'},
+ tasks:{role:'office',fields:[],date:'due',page:'tasks'}
+};
+function aggregate(p,q,s,role,extra){
+ const spec=aggregateCatalog[p.collection],metric=p.metric||'count';
+ if(!spec||!['count','sum','list'].includes(metric))return null;
+ if(spec.role==='finance'&&!finance.has(role))return result('You cannot access those finance records.',null);
+ if(metric==='sum'&&!spec.fields.includes(p.field))return result('That amount cannot be safely calculated from this data field. Specify litres, amount, tripKm or another supported quantity.',spec.page);
+ const period=p.from&&p.to&&parseDates(p.from+' to '+p.to,extra.now)?.from?parseDates(p.from+' to '+p.to,extra.now):parseDates(q,extra.now);
+ const person=resolvePerson(q,s,{target:p.person}),truck=resolveTruck(q,s,p.truck);
+ if(p.person&&!person.match)return result('The employee or driver named in your question could not be uniquely matched. Check the exact saved name.',spec.page);
+ if(p.truck&&!truck)return result('The truck number is not uniquely matched in saved fleet records.',spec.page);
+ const employees=s.employees||[],drivers=s.drivers||[],dateKey=spec.date,
+     wantedDriver=person.match?.driver?.id,employeeId=person.match?.person?.id;
+ const records=(s[p.collection]||[]).filter(x=>{
+   if(p.status&&normalize(x.status)!==normalize(p.status))return false;
+   if(dateKey&&period?.from){
+     const value=String(x[dateKey]||'');
+     const d=dateKey==='period'?value.slice(0,7)+'-01':iso(value);
+     if(d<period.from||d>period.to)return false;
+   }
+   if(truck){
+     if(p.collection==='trucks')return x.id===truck.id;
+     if(p.collection==='drivers')return false;
+     if(![x.truckId,x.vehicleId].some(id=>id===truck.id)){
+       if(p.collection==='diesel'&&x.tripId&&(s.trips||[]).find(t=>t.id===x.tripId)?.truckId===truck.id)return true;
+       return false;
+     }
+   }
+   if(person.match){
+     if(p.collection==='employees')return x.id===employeeId;
+     if(p.collection==='drivers')return x.id===wantedDriver;
+     if(['loans','payroll'].includes(p.collection))return x.employeeId===employeeId;
+     if(['trips','diesel','expenses','tasks'].includes(p.collection)){
+       const linkedDriver=p.collection==='diesel'&&(s.trips||[]).find(t=>t.id===x.tripId)?.driverId;
+       return wantedDriver&&[x.driverId,linkedDriver].some(id=>id===wantedDriver);
+     }
+   }
+   return true;
+ });
+ const summary=(metric==='sum'?records.reduce((a,r)=>a+Number(r[p.field]||0),0):records.length);
+ const suffix=period?.from?' from '+period.from+' to '+period.to:' across saved history';
+ const label=metric==='sum'?p.field+' total':metric==='list'?'records found':'records';
+ const answer='Saved '+p.collection+' '+label+': '+(metric==='sum'?(p.field==='amount'||p.field==='balance'||p.field==='paidAmount'||p.field==='gross'||p.field==='net'||p.field==='tripPay'||p.field==='income'||p.field==='printedTotal'||p.field==='total'?cash(summary):summary.toFixed(2)):summary)+
+   suffix+(p.status?' · status '+p.status:'')+
+   (p.person?' · '+p.person:'')+(p.truck?' · '+p.truck:'')+'.'+
+   (metric==='list'&&records.length?'\n'+records.slice(0,12).map(x=>
+      String(x.number||x.name||x.fleetName||x.reference||x.id||'Record')+' · '+String(x.status||'')+' · '+String(x.date||x.period||'')
+    ).join('\n'):'')+
+    '\nOnly saved app records were counted. Imported-but-uncommitted or external data are not included.';
+ return result(answer,spec.page,p.collection==='trips'?records.slice(0,12).map(t=>({kind:'trip',id:t.id,label:t.number||t.id})):[]);
+}
+
 function run(plan,q,s={},user={},extra={}){
  const mode=plan?.mode,role=String(user.role||'');
  if(!allowed(mode,role))return result('You do not have permission to view these business records.',null);
+ if(mode==='aggregate')return aggregate(plan,q,s,role,extra);
  const dates=parseDates(q,extra.now||new Date());
  if(mode==='driver_trips'||mode==='employee_tenure'||mode==='driver_payroll'){
   const{ x,answer:error}=personError(q,s,plan?.person);
