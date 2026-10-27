@@ -3520,8 +3520,21 @@ async function openDriverUploadFile(uploadId){
 function openDieselReview(recordId){
   const x=(db.diesel||[]).find(r=>r.id===recordId);if(!x)return notify('Diesel record not found');
   const t=get('trips',x.tripId),uploadId=x.receiptUploadId||(x.receiptUploadIds||[])[0]||'';
+  const relatedDiesel=(db.diesel||[]).filter(d=>d.tripId===x.tripId),metric=TripMetrics.distance(t,relatedDiesel),
+    savedOdometers=relatedDiesel.filter(d=>num(d.odometer)>0).length,
+    linkedDriver=Boolean(t.driverId),
+    tripCompleted=num(t.stage)>=3||/delivered|completed|invoiced/i.test(String(t.status||'')),
+    showClosingKm=Boolean(t.id&&['admin','manager','dispatcher'].includes(role));
+  const mileageStatus=!t.id?'This diesel record is not linked to a saved trip: review its trip association before payroll.':
+    !linkedDriver?'The trip has no assigned driver. Diesel evidence alone cannot identify who must be paid. Assign the correct trip driver.':
+    !tripCompleted?'This trip is still Planned or not payroll-eligible. Delivery or completion status must be confirmed.':
+    !metric.distance?(savedOdometers===1?'Only one fuel-slip odometer is recorded. The number '+num(x.odometer).toLocaleString()+' is a reading, not kilometres travelled. Record real departure and arrival readings, confirmed GPS distance or a complete journey route.':'No reliable trip distance is saved. Check start and end odometers, linked slips and route/GPS evidence.'):
+    metric.partial?'Only '+num(metric.distance).toLocaleString()+' km are confirmed between readings. This is part of the journey, not guaranteed full trip mileage. Review before final pay.':
+    num(metric.distance).toLocaleString()+' km available from '+metric.distanceSource+'. Draft payslip kilometres recalculate when evidence is saved; Approved and Paid remain locked.';
+
   $('modalTitle').textContent='Review diesel · '+(t.number||truck(x.truckId)||'Company fuel');
   $('entryForm').innerHTML='<div class="notice"><b>Check the captured values against the receipt.</b><br>Correct anything that OCR/driver capture got wrong, then approve. Trip totals recalculate immediately.</div>'
+    +'<div class="notice"><b>Driver trip kilometres:</b> '+esc(mileageStatus)+(t.id?' <small>Saved fuel-slip odometer: '+num(x.odometer).toLocaleString()+'. Driver trip pay uses travelled km, not the odometer number itself.</small>':'')+'</div>'
     +'<div class="form-grid"><div class="field"><label>Litres</label><input id="drLitres" type="number" step="0.01" value="'+num(x.litres)+'"></div>'
     +'<div class="field"><label>Receipt total</label><input id="drTotal" type="number" step="0.01" value="'+num(x.printedTotal||fuelRecordCost(x))+'"></div>'
     +'<div class="field"><label>Price / litre</label><input id="drPrice" type="number" step="0.0001" value="'+num(x.price)+'"></div>'
@@ -3529,12 +3542,24 @@ function openDieselReview(recordId){
     +'<div class="field"><label>Supplier</label><input id="drSupplier" value="'+esc(x.supplier||'')+'"></div>'
     +'<div class="field"><label>Slip / receipt no.</label><input id="drSlip" value="'+esc(x.slip||'')+'"></div></div>'
     +'<div class="diesel-review-summary"><span>Status</span><b>'+(x.verified?'Verified':'Awaiting review')+'</b><span>Driver</span><b>'+esc(driver(x.driverId))+'</b><span>Scope</span><b>'+esc(t.number||'Company / fleet')+'</b></div>'
+    +(showClosingKm?'<details class="panel" style="margin-top:12px"><summary><b>Enter verified trip departure and depot arrival odometers</b></summary><p class="muted-copy">These must be actual full-trip readings from the truck, not estimates or copied fuel-slip values. Saving verified readings will refresh the driver’s Draft payroll.</p><div class="form-grid"><div class="field"><label>Trip departure odometer</label><input type="number" id="drTripStartKm" min="1" step="1" value="'+(num(t.startKm)>0?num(t.startKm):'')+'" placeholder="Actual depot departure reading"></div><div class="field"><label>Depot arrival odometer</label><input type="number" id="drTripEndKm" min="1" step="1" value="'+(num(t.endKm)>0?num(t.endKm):'')+'" placeholder="Actual return reading"></div></div><button type="button" class="ghost" id="saveDieselTripKm">Save verified full-trip readings</button></details>':'')
     +'<div class="form-actions"><button type="button" class="ghost" id="cancelForm">Close</button>'+(uploadId?'<button type="button" class="ghost" id="viewDieselReceipt">View receipt</button>':'')+'<button type="button" class="ghost" id="saveDieselCorrection">Save correction</button><button type="button" class="primary" id="approveDiesel">✓ Approve & verify</button>'+(['admin','finance'].includes(role)?'<button type="button" class="danger" id="deleteDiesel">Delete record</button>':'')+'</div>';
   $('modal').classList.remove('hidden');
   const body=verified=>({litres:num($('drLitres').value),printedTotal:num($('drTotal').value),price:num($('drPrice').value),odometer:num($('drOdo').value),supplier:$('drSupplier').value.trim(),slip:$('drSlip').value.trim(),verified});
   const save=async verified=>{try{await api('/api/admin/diesel/'+encodeURIComponent(recordId),{method:'PATCH',body:body(verified)});$('modal').classList.add('hidden');await refreshCentralState(false);if(x.tripId)openTrip(x.tripId);else{page='diesel';render()}notify(verified?'Diesel slip verified':'Diesel values corrected')}catch(e){notify(e.message)}};
   $('cancelForm').onclick=()=>{$('modal').classList.add('hidden');if(x.tripId)openTrip(x.tripId)};
   if($('viewDieselReceipt'))$('viewDieselReceipt').onclick=()=>x.receiptSource==='company'?openCompanyReceiptFile(uploadId):openDriverUploadFile(uploadId);
+  if($('saveDieselTripKm'))$('saveDieselTripKm').onclick=async()=>{
+    const a=Number($('drTripStartKm')?.value),b=Number($('drTripEndKm')?.value);
+    if(!Number.isFinite(a)||a<=0||!Number.isFinite(b)||b<=a)return notify('Enter actual departure and arrival odometers; the arrival must exceed departure');
+    if(!confirm('Confirm these are the truck’s actual trip start and return odometer readings, not fuel-slip estimates?'))return;
+    try{
+      const button=$('saveDieselTripKm');button.disabled=true;
+      await api('/api/admin/trips/'+encodeURIComponent(t.id)+'/closing-odometer',{method:'PATCH',body:{startKm:a,endKm:b}});
+      await refreshCentralState(false);openDieselReview(recordId);
+      notify('Complete trip distance saved; affected Draft driver payslips recalculated');
+    }catch(err){const button=$('saveDieselTripKm');if(button)button.disabled=false;notify(err.message)}
+  };
   $('saveDieselCorrection').onclick=()=>save(Boolean(x.verified));
   $('approveDiesel').onclick=()=>save(true);
   if($('deleteDiesel'))$('deleteDiesel').onclick=async()=>{if(!confirm('Delete this diesel record from '+(t.number||truck(x.truckId)||'company fuel')+'? The archived receipt file will be retained.'))return;try{await api('/api/admin/diesel/'+encodeURIComponent(recordId),{method:'DELETE'});$('modal').classList.add('hidden');await refreshCentralState(false);if(x.tripId)openTrip(x.tripId);else{page='diesel';render()}notify('Diesel record deleted and totals recalculated')}catch(e){notify(e.message)}};
