@@ -65,7 +65,7 @@ function resolve(q,state,focus=null){
      /\bactive|ongoing|current|in transit\b/i.test(q)?underway:
      completed.length?completed:underway.length?underway:available;
    if(!chosen.length)return{error:'No matching non-cancelled trip was saved for '+truck.fleetName+'. Check active filters or the import preview.'};
-   const recordedDate=t=>iso(t.deliveredDate||t.completedDate||t.closedDate||t.date);
+   const recordedDate=t=>[t.date,t.deliveredDate,t.completedDate,t.closedDate].map(iso).filter(Boolean).sort().at(-1)||'';
    const sorted=chosen.slice().sort((a,b)=>recordedDate(b).localeCompare(recordedDate(a))||String(b.id).localeCompare(String(a.id)));
    if(sorted.length>1&&recordedDate(sorted[0])===recordedDate(sorted[1]))return{error:'Multiple trips share the latest date for '+truck.fleetName+'. Give a trip number.',suggestions:sorted.slice(0,5)};
    return{trips:sorted.slice(0,1),scope:completed.length?'latest completed truck trip':underway.length?'latest active truck trip':'latest saved truck trip'};
