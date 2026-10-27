@@ -15,6 +15,9 @@ on:
       - 'test/site-assistant.test.js'
       - 'assistant-trip-actions.js'
       - 'assistant-intelligence.js'
+      - 'assistant-ops-audit.js'
+      - 'assistant-jobs.js'
+      - 'test/assistant-ops-audit.test.js'
       - 'test/assistant-intelligence.test.js'
       - 'assistant-operations.js'
       - 'assistant-extra-actions.js'
@@ -54,6 +57,9 @@ on:
       - 'test/site-assistant.test.js'
       - 'assistant-trip-actions.js'
       - 'assistant-intelligence.js'
+      - 'assistant-ops-audit.js'
+      - 'assistant-jobs.js'
+      - 'test/assistant-ops-audit.test.js'
       - 'test/assistant-intelligence.test.js'
       - 'assistant-operations.js'
       - 'assistant-extra-actions.js'
@@ -95,6 +101,8 @@ jobs:
         run: node --test test/trip-gps-progress.test.js test/phone-trip-tracking.test.js test/depot-arrival.test.js
       - name: Verify diesel slip odometers contribute to driver payroll
         run: node --test test/diesel-odometer-payroll.test.js test/payroll-trip-link.test.js test/trip-diagnostics.test.js
+      - name: Verify linked cross-module audit and approval-only review tasks
+        run: node --test test/assistant-ops-audit.test.js
       - name: Verify selective AI model routing, cost controls and private live evidence
         run: node --test test/assistant-intelligence.test.js
       - name: Verify configurable cutoff, shunter bonuses and assistant record answers

@@ -1,5 +1,7 @@
 'use strict';
 const crypto=require('node:crypto'),P=require('./assistant-platform'),B=require('./assistant-business'),O=require('./assistant-operations'),X=require('./assistant-extra-actions'),T=require('./assistant-trip-actions');
+const Audit=require('./assistant-ops-audit');
+
 const DOMAIN=['trips','trucks','drivers','employees','clients','routes','trailers','diesel','expenses','invoices','payments','quotes','payroll','payProfiles','loans','tasks','permits','maintenance','tyres','inspections','incidents','advances','tripIssues','shunterRecons','monthlyCosts','settings','company','deletedPayrollPeriods','recordHistory','recordDeletionVersion','assistantDocumentHashes'];
 const day=()=>new Date(Date.now()+7200000).toISOString().slice(0,10),hash=P.snapshot;
 const fail=(message,status=400)=>{throw Object.assign(Error(message),{status})};
@@ -108,6 +110,23 @@ function install(app,h){
    if(dt&&memory.pending.requests.length===1&&!memory.pending.requests[0].command){const r=structuredClone(memory.pending.requests[0]);r.values={...r.values,date:dt};if(r.needsDocument){if(!req.files?.[0])fail('Attach the document again to complete this request.');r.document=req.files[0];delete r.needsDocument;}await stage(req,res,[r],'Complete unfinished request');return true;}
   }
   if(/^(?:clear|forget|reset) (?:our |my |the )?(?:conversation|chat|memory)[.! ]*$/i.test(q)){await h.mutate(s=>{if(s.assistantSessions)delete s.assistantSessions[req.user.sub]});res.json=res.json;res.json({answer:'Conversation cleared. Saved business records are unchanged.',source:'memory-cleared'});return true;}
+  if(Audit.isAuditRequest(q)){
+   const report=Audit.run(q,state,req.user,memory?.focus);
+   if(Audit.wantsTasks(q)){
+    if(!['admin','manager','dispatcher'].includes(req.user.role))fail('This role cannot create review tasks. The audit itself remains read-only.',403);
+    if((req.files||[]).length)fail('Remove document attachments when preparing review tasks; no evidence is uploaded by this action.');
+    const commands=Audit.taskCommands(report,state);
+    if(commands.length){
+     await stage(req,res,commands.map(command=>({command})),'Prepare investigation follow-up tasks',[
+       'Findings are not automatically repaired. New tasks will be created only after approval.',
+       'Audit summary: '+report.answer.slice(0,650)
+     ]);
+     return true;
+    }
+    res.json({...report,answer:report.answer+'\nNo new review tasks are needed or safe to prepare from this audit.'});return true;
+   }
+   res.json(report);return true;
+  }
   if(/\b(?:daily brief|needs attention|business checks|what should i do|outstanding work|morning brief)\b/i.test(q)){res.json(B.briefing(state,req.user.role));return true;}
   if(/\b(?:why|compare|analyse|analyze)\b/i.test(q)&&/\b(?:profit|contribution)\b/i.test(q)){res.json(B.profit(state,q,req.user.role));return true;}
   if(/^(?:show )?(?:action history|my changes|recent changes)[.! ]*$/i.test(q)){const xs=(state.assistantActions||[]).filter(x=>x.userId===req.user.sub);res.json({answer:xs.slice(0,10).map(x=>x.at+' · '+x.description+(x.undoneAt?' · Undone':'')).join('\n')||'No assistant jobs saved yet.',source:'action-history'});return true;}
