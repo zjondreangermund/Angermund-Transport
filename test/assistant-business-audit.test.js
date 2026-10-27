@@ -1,6 +1,7 @@
 'use strict';
 const test=require('node:test'),assert=require('node:assert/strict'),fs=require('node:fs');
 const Audit=require('../assistant-business-audit'),Query=require('../assistant-record-query');
+const audit=(q,s,user)=>Audit.run(Audit.detect(q),q,s,user);
 const state=()=>({
  employees:[{id:'eV',name:'Victon Kufinya',jobTitle:'Driver',driverId:'dV',status:'Active'},
    {id:'eA',name:'Anton',jobTitle:'Driver',driverId:'dA',status:'Active'}],
@@ -21,7 +22,7 @@ test('invoices are not needed for completed transport trips to earn payable kilo
  const s=state(),r=Audit.driverReport(s,s.employees[0],'2026-10');
  assert.equal(s.invoices.length,0);assert.equal(r.expectedKm,800);
  assert.equal(r.eligibleCount,2);assert.equal(r.savedKm,0);
- const answer=Audit.run('Why is Victon Kufinya salary trip pay zero in October 2026?',s,{role:'finance'});
+ const answer=audit('Why is Victon Kufinya salary trip pay zero in October 2026?',s,{role:'finance'});
  assert.match(answer.answer,/NBL-100/);
  assert.match(answer.answer,/NBL-101/);
  assert.match(answer.answer,/Invoicing is NOT a prerequisite/);
@@ -37,7 +38,7 @@ test('latest saved payroll period and delivery-date cutoff diagnose excluded tri
 });
 test('one diesel slip cannot be demanded for payroll when full trip readings exist',()=>{
  const s=state();
- const report=Audit.run('Does Victon have diesel slips for all trips?',s,{role:'finance'});
+ const report=audit('Does Victon have diesel slips for all trips?',s,{role:'finance'});
  assert.match(report.answer,/NBL-100.*1 linked diesel slips/);
  assert.match(report.answer,/NBL-101.*0 linked diesel slips/);
  assert.match(report.answer,/does NOT prove no trip occurred/);
@@ -45,7 +46,7 @@ test('one diesel slip cannot be demanded for payroll when full trip readings exi
 });
 test('if a trip has only slip odometer without end reading the report says no payable distance',()=>{
  const s=state();s.trips[0].startKm=0;s.trips[0].endKm=0;s.trips[0].distance=0;
- const ans=Audit.run('Why does Victon have zero km on payslip?',s,{role:'admin'}).answer;
+ const ans=audit('Why does Victon have zero km on payslip?',s,{role:'admin'}).answer;
  assert.match(ans,/No payable full-trip distance/);assert.match(ans,/NBL-100/);
 });
 test('unlinked driver and missing status are distinguished from invoicing and no diesel',()=>{
@@ -57,18 +58,18 @@ test('unlinked driver and missing status are distinguished from invoicing and no
 });
 test('dispatcher cannot see payroll or salaries through slip audit, while finance can',()=>{
  const s=state();
- assert.match(Audit.run('Why is Victon Kufinya payslip zero km?',s,{role:'dispatcher'}).answer,/Finance payroll records/);
- const ops=Audit.run('Which of Victon trips are missing diesel slips?',s,{role:'dispatcher'});
+ assert.match(audit('Why is Victon Kufinya payslip zero km?',s,{role:'dispatcher'}).answer,/Finance payroll records/);
+ const ops=audit('Which of Victon trips are missing diesel slips?',s,{role:'dispatcher'});
  assert.ok(ops.answer.includes('NBL-101'));
  assert.equal(ops.answer.includes('N$'),false);
  assert.equal(ops.answer.includes('payslip Draft'),false);
 });
 test('general checks cover absent links, completed unbilled trips, missing km and duplicates',()=>{
  const s=state();s.trips[0].driverId=null;s.trips[1].startKm=0;s.trips[1].endKm=0;s.diesel.push({...s.diesel[0],id:'f2'});
- assert.match(Audit.run('Find trips without driver assignments',s,{role:'manager'}).answer,/NBL-100/);
- assert.match(Audit.run('Which completed trips are uninvoiced?',s,{role:'finance'}).answer,/NBL-101/);
- assert.match(Audit.run('Which completed trips have missing distance km?',s,{role:'dispatcher'}).answer,/NBL-101/);
- assert.match(Audit.run('Check duplicate diesel slips',s,{role:'finance'}).answer,/ds a: 2 records/);
+ assert.match(audit('Find trips without driver assignments',s,{role:'manager'}).answer,/NBL-100/);
+ assert.match(audit('Which completed trips are uninvoiced?',s,{role:'finance'}).answer,/NBL-101/);
+ assert.match(audit('Which completed trips have missing distance km?',s,{role:'dispatcher'}).answer,/NBL-101/);
+ assert.match(audit('Check duplicate diesel slips',s,{role:'finance'}).answer,/ds a: 2 records/);
 });
 test('route ordinary questions and preserve approved and paid snapshots',()=>{
  const s=state(),before=JSON.stringify(s);
@@ -87,7 +88,7 @@ test('route ordinary questions and preserve approved and paid snapshots',()=>{
 });
 test('finalized payslips cannot be modified by auditing or be interpreted as Drafts',()=>{
  const s=state();s.payroll[0].status='Paid';
- const ans=Audit.run('Why is Victon payroll 0 km?',s,{role:'finance'}).answer;
+ const ans=audit('Why is Victon payroll 0 km?',s,{role:'finance'}).answer;
  assert.match(ans,/Finalized payslip is locked/);
  assert.equal(s.payroll[0].status,'Paid');assert.equal(s.payroll[0].tripKm,0);
 });
