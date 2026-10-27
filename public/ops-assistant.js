@@ -17,6 +17,7 @@
         <button type="button" data-example="Add loan to Josef for N$2000 monthly deduction N$200">Employee loan</button>
         <button type="button" data-example="Create task to check ANG 12 tomorrow, high priority">Create task</button>
         <button type="button" data-example="What can you do?">All actions</button>
+        <button type="button" data-example="How can we improve trip profit margins this month?">Improve profit margins</button>
         <button type="button" data-example="Record parts expense N$1200 for truck ANG 12 on 2026-10-24">Parts purchase</button>
         <button type="button" data-example="Create invoice for truck ANG 12">Invoice</button>
         <button type="button" data-example="Attach POD to truck ANG 12">Attach POD</button>
@@ -92,9 +93,46 @@
   launch.onclick=()=>toggle(panel.hidden);
   host.querySelector('.assistant-close').onclick=()=>toggle(false);
   host.querySelectorAll('[data-example]').forEach(b=>b.onclick=()=>ask(b.dataset.example));
+
+  function formatReply(message){
+    // Render text safely: no HTML or AI-generated markup is interpreted.
+    const body=document.createElement('div');body.className='assistant-message';
+    const lines=String(message||'').split(/\r?\n/);
+    let trip=null,metrics=null;
+    for(const raw of lines){
+      const line=raw.trim();
+      if(!line){trip=null;metrics=null;continue}
+      if(/^[A-Z][A-Z &/–—-]{3,}$/.test(line)&&line.length<42){
+        trip=null;metrics=null;
+        const h=document.createElement('h3');h.className='assistant-message-heading';h.textContent=line;
+        body.appendChild(h);continue;
+      }
+      if(/^\d+\.\s+\S+\s+·\s+.*\s+·\s+20\d{2}-\d{2}-\d{2}$/.test(line)){
+        trip=document.createElement('div');trip.className='assistant-trip-result';
+        const title=document.createElement('strong');title.textContent=line;
+        trip.appendChild(title);body.appendChild(trip);metrics=null;continue;
+      }
+      if(trip&&/^(Income\s+N\$|Contribution\s+N\$|Review:)/i.test(line)){
+        const detail=document.createElement('div');detail.className=/^Review:/i.test(line)?'assistant-result-warning':'assistant-result-detail';
+        detail.textContent=line;trip.appendChild(detail);continue;
+      }
+      trip=null;
+      if(/^(?:Period|Reviewed|Revenue|Recorded costs|Operating contribution|Weighted margin):\s*/i.test(line)){
+        const index=line.indexOf(':'),metric=document.createElement('div');metric.className='assistant-summary-metric';
+        const title=document.createElement('span');title.textContent=line.slice(0,index)+':';
+        const value=document.createElement('strong');value.textContent=line.slice(index+1).trim();
+        metric.append(title,value);body.appendChild(metric);continue;
+      }
+      const item=document.createElement(/^\d+\.\s/.test(line)?'div':'p');
+      item.className=/^\d+\.\s/.test(line)?'assistant-advice-item':/^Review:|^Warning:|^Provisional:/i.test(line)?'assistant-result-warning':'assistant-message-paragraph';
+      item.textContent=line;body.appendChild(item);
+    }
+    return body;
+  }
+
   function bubble(who,message,pageId,action,proposal,records){
     const row=document.createElement('div');row.className='assistant-row assistant-row-'+who;
-    const msg=document.createElement('p');msg.textContent=message;row.appendChild(msg);
+    row.appendChild(formatReply(message));
     if(who==='assistant'&&window.speechSynthesis){const speak=document.createElement('button');speak.type='button';speak.className='assistant-read';speak.textContent='🔊 Read aloud';speak.onclick=()=>{voice?.stop();speechSynthesis.cancel();const utterance=new SpeechSynthesisUtterance(String(message).slice(0,2500));utterance.lang='en-ZA';speechSynthesis.speak(utterance)};row.appendChild(speak)}
     if(who==='assistant'&&(pageId||action)){
       const ctx=bridge()?.context?.(),info=(ctx?.pages||[]).find(p=>p.id===pageId);
@@ -107,10 +145,12 @@
         b.onclick=()=>{const ok=action==='new_trip'?bridge()?.openNewTrip():bridge()?.openNewTask();if(ok)toggle(false)};row.appendChild(b);
       }
     }
-    if(who==='assistant'&&Array.isArray(records))for(const record of records){
-      const button=document.createElement('button');button.type='button';button.className='assistant-go';button.textContent='Open '+record.label+' →';
-      button.onclick=async()=>{try{await bridge()?.reload?.();if(record.kind==='trip'&&bridge()?.openTrip?.(record.id))toggle(false);else if(bridge()?.openRecord?.(record.kind,record.id))toggle(false);}catch(e){button.textContent=e.message||'Could not open record'}};row.appendChild(button);
+    const recordLinks=document.createElement('div');recordLinks.className='assistant-record-links';
+    if(who==='assistant'&&Array.isArray(records))for(const record of records.slice(0,6)){
+      const button=document.createElement('button');button.type='button';button.className='assistant-go';button.textContent='Open '+record.label+' ↗';
+      button.onclick=async()=>{try{await bridge()?.reload?.();if(record.kind==='trip'&&bridge()?.openTrip?.(record.id))toggle(false);else if(bridge()?.openRecord?.(record.kind,record.id))toggle(false);}catch(e){button.textContent=e.message||'Could not open record'}};recordLinks.appendChild(button);
     }
+    if(recordLinks.children.length)row.appendChild(recordLinks);
     if(who==='assistant'&&proposal?.id){
       const box=document.createElement('div');box.className='assistant-approval-card';
       const title=document.createElement('b');title.textContent='Review change — not saved';box.appendChild(title);
