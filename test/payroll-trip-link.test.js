@@ -24,6 +24,6 @@ test('pay only trips assigned to that driver, including legacy completed status'
 test('server payroll uses linked driver and does not regenerate approved payslips',()=>{
  const fs=require('node:fs'),src=fs.readFileSync('server.js','utf8');
  assert.match(src,/PayrollTripLink\.resolveDriver\(state,employee\)/);
- assert.match(src,/PayrollTripLink\.eligibleTrips\(state,driver,start,end,/);
+ assert.match(src,/PayrollManualTrips\.selectedTrips\(state,employee\.id,driver,existing,start,end\)/);
  assert.match(src,/if\(existing&&\['Approved','Paid'\]\.includes\(existing\.status\)\)/);
 });
