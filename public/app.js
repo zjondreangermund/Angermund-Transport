@@ -2309,10 +2309,7 @@ function shunterBonuses(){
     return t.defaultDriverId===e.id||t.defaultDriverId===e.driverId||(d&&String(d.name||'').trim().toLowerCase()===String(e.name||'').trim().toLowerCase());
   });
   const employees=workforce().filter(e=>e.active!==false&&e.status!=='Inactive'&&employeeGetsKmPay(e));
-  const shunters=employees.filter(e=>{
-    const p=clientPayProfile(e.id);
-    return p.payBasis==='shunter'||(p.payBasis!=='transport'&&isAssigned(e));
-  });
+  const shunters=employees.filter(isAssigned);
   const period=payrollPeriodFilter||today().slice(0,7);
   const rows=shunters.map(e=>{
     const p=clientPayProfile(e.id),pool=Number(p.shunterBonusAmount??8000),days=Number(p.shunterWorkingDays??20),daily=days>0?pool/days:0;
@@ -2332,23 +2329,18 @@ function shunterBonuses(){
   return '<section class="panel"><div class="toolbar"><div><h2>Shunter Bonus</h2><p class="muted-copy">Set each driver’s monthly bonus pool and working-day divisor once. Saved amounts repeat every month until you change them. Only verified days driven earn a bonus; multiple loads on one day count once.</p></div><button type="button" class="ghost" id="openPayrollFromBonus">Open payslips</button></div>'+
     '<div class="notice"><b>Calculation:</b> Daily bonus = monthly bonus pool ÷ working-day divisor. Shunter monthly earnings include basic salary plus days driven × daily bonus. A saved change does not rewrite Approved or Paid payslips; refresh Draft payslips after editing.</div>'+
     '<div class="table-wrap shunter-bonus-table"><table><thead><tr><th>Shunter driver / truck</th><th>Monthly bonus pool (N$)</th><th>Working days</th><th>Daily bonus</th><th>Current '+esc(period)+' payslip</th><th></th></tr></thead><tbody>'+
-    (rows||'<tr><td colspan="6">No shunter drivers configured yet. Choose a driver below to assign shunter pay.</td></tr>')+'</tbody></table></div>'+
-    (available.length?'<div class="toolbar" style="margin-top:18px"><label for="shunterAssignEmployee">Add shunter driver</label><select id="shunterAssignEmployee">'+available.map(e=>'<option value="'+esc(e.id)+'">'+esc(e.name)+'</option>').join('')+'</select><button type="button" class="ghost" id="addShunterEmployee">Set as shunter</button></div>':'')+
+    (rows||'<tr><td colspan="6">No ANG 4 or ANG 5 driver is assigned. Update the Fleet truck driver assignments first.</td></tr>')+'</tbody></table></div>'+
+    '<small>Only ANG 4 and ANG 5 assigned drivers qualify for shunter monthly pay. Change the assigned driver in Fleet; an old Shunter pay setting cannot override a transport driver.</small>'+
     '</section>';
 }
 function wireShunterBonus(){
   const open=$('openPayrollFromBonus');if(open)open.onclick=()=>go('payroll');
-  const assign=$('addShunterEmployee');if(assign)assign.onclick=async()=>{
-    const id=$('shunterAssignEmployee')?.value;if(!id)return;
-    try{await api('/api/payroll/profiles/'+encodeURIComponent(id),{method:'PATCH',body:{payBasis:'shunter',shunterBonusAmount:8000,shunterWorkingDays:20}});await refreshCentralState(false);notify('Shunter pay basis saved. Set the individual bonus and save it.') }
-    catch(e){notify(e.message)}
-  };
   document.querySelectorAll('.save-shunter-bonus').forEach(b=>b.onclick=async()=>{
     const row=b.closest('[data-shunter-employee]'),id=row?.dataset.shunterEmployee;
     const amount=Number(row?.querySelector('[data-shunter-amount]')?.value),days=Number(row?.querySelector('[data-shunter-days]')?.value);
     if(!id||!Number.isFinite(amount)||amount<0||!Number.isInteger(days)||days<1)return notify('Enter a valid bonus and whole number of working days');
     b.disabled=true;
-    try{await api('/api/payroll/profiles/'+encodeURIComponent(id),{method:'PATCH',body:{payBasis:'shunter',shunterBonusAmount:amount,shunterWorkingDays:days}});await refreshCentralState(false);notify('Shunter bonus saved for '+employeeName(id)+'. Amount repeats until changed.')}
+    try{await api('/api/payroll/profiles/'+encodeURIComponent(id),{method:'PATCH',body:{shunterBonusAmount:amount,shunterWorkingDays:days}});await refreshCentralState(false);notify('Shunter bonus saved for '+employeeName(id)+'. Amount repeats until changed.')}
     catch(e){b.disabled=false;notify(e.message)}
   });
 }
@@ -2359,7 +2351,7 @@ function openPayrollProfile(driverId){
   $('entryForm').innerHTML='<div class="notice"><b>Trip pay:</b> existing N$0.30/0.40/0.50 local km/L tiers or N$0.60/km for South Africa; enter a rate to override. There is currently no separate driver fuel-saving bonus.</div>'
     +'<div class="form-grid"><div class="field"><label>Basic monthly salary</label><input id="ppBase" type="number" step="0.01" value="'+num(p.baseSalary)+'"></div>'
     +'<div class="field"><label>Trip pay / km (0 = route default)</label><input id="ppTripRate" type="number" step="0.01" value="'+(kmEligible?num(p.tripRatePerKm):0)+'" '+(kmEligible?'':'disabled')+'><small>'+(kmEligible?'':'Not applicable — kilometre pay is for drivers only')+'</small></div>'
-    +'<div class="field"><label>Driver pay basis</label><select id="ppPayBasis">'+[['auto','Automatic from assigned truck'],['shunter','Shunter'],['transport','Transport']].map(([v,l])=>'<option value="'+v+'" '+((p.payBasis||'auto')===v?'selected':'')+'>'+l+'</option>').join('')+'</select></div>'
+    +'<div class="field"><label>Driver pay basis</label><p><b>'+((db.trucks||[]).some(t=>(['trk_ang4','trk_ang5'].includes(t.id)||/^ang\s*0?[45]$/i.test(t.fleetName||''))&&[d.id,d.driverId].includes(t.defaultDriverId))?'Monthly shunter — ANG 4 / ANG 5':'Transport driver — cutoff to cutoff')+'</b></p><small>Determined from truck assignments in Fleet. A stale payroll Shunter setting cannot change a long-distance driver.</small></div>'
     +'<div class="field"><label>Transport cutoff day (1–31)</label><input id="ppCutoffDay" type="number" min="1" max="31" step="1" value="'+(p.cutoffDay??20)+'"><small>The month closes on this day (clamped to month end). A saved NBL invoice always overrides its driver payroll with its exact dates.</small></div>'
     +'<div class="field"><label>Shunter bonus pool</label><input id="ppShunterBonus" type="number" min="0" step="0.01" value="'+(p.shunterBonusAmount??8000)+'"></div><div class="field"><label>Shunter working-day divisor</label><input id="ppShunterDays" type="number" min="1" value="'+(p.shunterWorkingDays??20)+'"><small>Daily bonus = pool ÷ divisor, paid once per recorded driving day.</small></div>'
     +'<div class="field"><label>Tax number</label><input id="ppTax" value="'+esc(p.taxNumber||'')+'"></div>'
@@ -2372,7 +2364,7 @@ function openPayrollProfile(driverId){
     +'<div class="field"><label>Auto-generate month end</label><select id="ppAuto"><option value="true" '+(p.autoGenerate!==false?'selected':'')+'>Yes</option><option value="false" '+(p.autoGenerate===false?'selected':'')+'>No</option></select></div>'
     +'<div class="form-actions full"><button type="button" class="ghost" id="cancelForm">Cancel</button><button class="primary">Save payroll setup</button></div></div>';
   $('modal').classList.remove('hidden');$('cancelForm').onclick=()=>$('modal').classList.add('hidden');
-  $('entryForm').onsubmit=async e=>{e.preventDefault();try{await api('/api/payroll/profiles/'+encodeURIComponent(driverId),{method:'PATCH',body:{payBasis:$('ppPayBasis').value,cutoffDay:Number($('ppCutoffDay').value),shunterBonusAmount:num($('ppShunterBonus').value),shunterWorkingDays:num($('ppShunterDays').value),baseSalary:num($('ppBase').value),tripRatePerKm:kmEligible?num($('ppTripRate').value):0,taxNumber:$('ppTax').value.trim(),payeThreshold:num($('ppPayeThreshold').value)||8000,payeDefault:num($('ppPaye').value),sscDefault:num($('ppSsc').value),overtimeRate:num($('ppOtRate').value),standardDays:num($('ppDays').value)||22,otherDeductionDefault:num($('ppDeduction').value),autoGenerate:$('ppAuto').value==='true'}});$('modal').classList.add('hidden');await refreshCentralState(false);notify('Payroll setup saved for '+d.name)}catch(err){notify(err.message)}};
+  $('entryForm').onsubmit=async e=>{e.preventDefault();try{await api('/api/payroll/profiles/'+encodeURIComponent(driverId),{method:'PATCH',body:{cutoffDay:Number($('ppCutoffDay').value),shunterBonusAmount:num($('ppShunterBonus').value),shunterWorkingDays:num($('ppShunterDays').value),baseSalary:num($('ppBase').value),tripRatePerKm:kmEligible?num($('ppTripRate').value):0,taxNumber:$('ppTax').value.trim(),payeThreshold:num($('ppPayeThreshold').value)||8000,payeDefault:num($('ppPaye').value),sscDefault:num($('ppSsc').value),overtimeRate:num($('ppOtRate').value),standardDays:num($('ppDays').value)||22,otherDeductionDefault:num($('ppDeduction').value),autoGenerate:$('ppAuto').value==='true'}});$('modal').classList.add('hidden');await refreshCentralState(false);notify('Payroll setup saved for '+d.name)}catch(err){notify(err.message)}};
 }
 function openEmployeeLoan(id=''){
   const loan=id?(db.loans||[]).find(x=>x.id===id):null,editing=Boolean(loan),v=loan||{employeeId:'',date:today(),startPeriod:payrollPeriodFilter||today().slice(0,7),amount:0,balance:0,monthlyDeduction:0,reference:'',notes:'',status:'Active'};
