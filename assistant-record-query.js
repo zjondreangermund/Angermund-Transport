@@ -3,12 +3,13 @@
 // but NEVER supplies record facts, database fields, permissions, or SQL.
 const Link=require('./payroll-trip-link');
 const Cycle=require('./payroll-cycle');
+const BusinessAudit=require('./assistant-business-audit');
 const Metrics=require('./public/trip-metrics');
 const normalize=v=>String(v||'').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/\bang[\s-]*0*(\d+)\b/g,'ang$1').replace(/[^a-z0-9]+/g,' ').trim();
 const iso=v=>String(v||'').slice(0,10), cash=n=>'N$ '+Number(n||0).toFixed(2);
 const office=new Set(['admin','manager','dispatcher','finance']),finance=new Set(['admin','manager','finance']);
 const roster=new Set(['admin','manager','finance']);
-const modeNames=new Set(['driver_trips','employee_tenure','worker_loans','vehicle_location','unpaid_invoices','missing_pod','pending_diesel','truck_status','record_totals','driver_payroll','payroll_period','aggregate']);
+const modeNames=new Set([...BusinessAudit.modes,'driver_trips','employee_tenure','worker_loans','vehicle_location','unpaid_invoices','missing_pod','pending_diesel','truck_status','record_totals','driver_payroll','payroll_period','aggregate']);
 const writeAction=/^\s*(?:add|create|delete|remove|edit|change|set|assign|move|approve|pay|mark|update|capture|upload|generate|cancel|start|stop|finish)\b/i;
 function dayLocal(now=new Date()){
  return new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Windhoek',year:'numeric',month:'2-digit',day:'2-digit'}).format(now);
@@ -69,6 +70,8 @@ function resolveTruck(q,state,target=null){
 }
 function parse(q){
  const x=String(q||'').trim(),n=normalize(x);if(!x||writeAction.test(x))return null;
+ const investigation=BusinessAudit.detect(x);
+ if(investigation)return{mode:investigation};
  // Direct routing is free and independent of a model. Unknown read questions
  // can be classified by the inexpensive planner and resolved by this same tool.
  if(/\b(where|location|position|locate|gps)\b/i.test(x)&&(/\bang[\s-]*\d+/i.test(x)||/\btruck\b/i.test(x)))return{mode:'vehicle_location'};
@@ -86,6 +89,7 @@ function parse(q){
 }
 function allowed(mode,role){
  if(!modeNames.has(mode))return false;
+ if(BusinessAudit.modes.has(mode))return role==='admin'||role==='manager'||role==='finance'||role==='dispatcher';
  if(mode==='aggregate')return office.has(role);
  if(mode==='payroll_period')return finance.has(role);
  if(['vehicle_location','truck_status','driver_trips','missing_pod','pending_diesel','record_totals'].includes(mode))return office.has(role);
@@ -163,6 +167,7 @@ function aggregate(p,q,s,role,extra){
 function run(plan,q,s={},user={},extra={}){
  const mode=plan?.mode,role=String(user.role||'');
  if(!allowed(mode,role))return result('You do not have permission to view these business records.',null);
+ if(BusinessAudit.modes.has(mode))return BusinessAudit.run(mode,q,s,user,{...extra,person:plan.person});
  if(mode==='aggregate')return aggregate(plan,q,s,role,extra);
  const dates=parseDates(q,extra.now||new Date());
  if(mode==='payroll_period'){

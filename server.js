@@ -30,6 +30,7 @@ const PayrollCycle=require('./payroll-cycle');
 const PayrollManualTrips=require('./payroll-manual-trips');
 const AssistantOperationsAnswers=require('./assistant-operations-answers');
 const AssistantRecordQuery=require('./assistant-record-query');
+const BusinessAudit=require('./assistant-business-audit');
 const AssistantIntelligence=require('./assistant-intelligence');
 const TripPayrollDiagnostics=require('./trip-payroll-diagnostics');
 const {allowed:canManageRecord,deleteRecord,editRecord}=require('./record-management');
@@ -1466,6 +1467,20 @@ app.patch('/api/admin/trips/:tripId/closing-odometer',auth,roles('admin','manage
   });
   res.json(changed.result);
  }catch(e){res.status(e.status||500).json({error:e.message})}
+});
+app.get('/api/admin/payroll-investigation',auth,roles('admin','manager','finance'),async(req,res)=>{
+ try{
+  const state=await readOpsState(),id=String(req.query.employeeId||''),period=String(req.query.period||monthPeriod(new Date()));
+  periodBounds(period);
+  const employee=workforceEmployee(state,id);
+  if(!employee)return res.status(404).json({error:'Employee not found in saved payroll records'});
+  const report=BusinessAudit.driverReport(state,employee,period);
+  const answer=BusinessAudit.formatReport(report,'driver_earnings_audit');
+  res.json({employee:employee.name,period,answer,tripCount:report.eligibleCount,
+   expectedKm:report.expectedKm,savedKm:report.savedKm,savedPay:report.savedPay,
+   payslipStatus:report.payslip?.status||null,trips:report.candidates.slice(0,50),
+   notice:'Read-only. Invoicing is not required for driver trip pay. Only verified edits and Draft payroll refresh can change amounts.'});
+ }catch(e){res.status(e.status||400).json({error:e.message})}
 });
 app.get('/api/admin/trip-payroll-diagnostics',auth,roles('admin','manager','finance'),async(req,res)=>{
  try{const state=await readOpsState();res.json(TripPayrollDiagnostics.inspect(state,String(req.query.period||monthPeriod(new Date()))))}
@@ -4215,7 +4230,7 @@ async function planAssistantReadQuestion(message){
  if(!/\b(?:trip|load|truck|ang\s*\d|driver|employee|staff|worker|loan|salary|payroll|payslip|invoice|diesel|fuel|slip|expense|maintenance|GPS|POD|tasks?)\b/i.test(message))return null;
  try{
   const model=AssistantIntelligence.chooseModel('classification');
-  const intentGuide='Return one JSON object selecting an OPTIONAL read-only application tool. Modes: driver_trips, employee_tenure, worker_loans, vehicle_location, unpaid_invoices, missing_pod, pending_diesel, truck_status, record_totals, driver_payroll, aggregate, none. For aggregate: collection among trips,diesel,expenses,invoices,loans,payroll,maintenance,trucks,drivers,employees,tasks; metric count,sum,list; field ONLY for sum, valid among distance,income,tons,litres,printedTotal,total,odometer,amount,balance,paidAmount,monthlyDeduction,tripKm,tripPay,gross,net,shunterBonus,cost. Optional filters person,truck,status,from,to. Do not invent identifiers. If the question cannot be answered using these tools return mode none. NEVER select a mutation or infer business facts. Return JSON only.';
+  const intentGuide='Return one JSON object selecting an OPTIONAL read-only application tool. Modes: driver_trips, employee_tenure, worker_loans, vehicle_location, unpaid_invoices, missing_pod, pending_diesel, truck_status, record_totals, driver_payroll, payroll_period, driver_earnings_audit, driver_slip_audit, payroll_gap_summary, unassigned_trip_audit, truck_slip_audit, unbilled_completed_audit, trip_distance_audit, payroll_early_trip_check, fleet_data_quality, diesel_duplicate_audit, aggregate, none. Use driver_earnings_audit for missing trip kilometres/pay and driver_slip_audit for missing diesel slips. Invoicing is not required for trip payroll. For aggregate: collection among trips,diesel,expenses,invoices,loans,payroll,maintenance,trucks,drivers,employees,tasks; metric count,sum,list; field ONLY for sum, valid among distance,income,tons,litres,printedTotal,total,odometer,amount,balance,paidAmount,monthlyDeduction,tripKm,tripPay,gross,net,shunterBonus,cost. Optional filters person,truck,status,from,to. Do not invent identifiers. If the question cannot be answered using these tools return mode none. NEVER select a mutation or infer business facts. Return JSON only.';
   const response=await fetch('https://api.openai.com/v1/responses',{method:'POST',signal:AbortSignal.timeout(12000),headers:{Authorization:'Bearer '+OPENAI_API_KEY,'Content-Type':'application/json'},
    body:JSON.stringify({model,store:false,max_output_tokens:320,input:[{role:'system',content:[{type:'input_text',text:intentGuide}]},{role:'user',content:[{type:'input_text',text:message.slice(0,1200)}]}]})});
   if(!response.ok)return null;
@@ -4248,7 +4263,7 @@ app.post('/api/assistant/ask',auth,upload.array('document',20),async(req,res)=>{
     try{if(await assistantJobs.handle(req,res))return;message=String(req.body.message||message);}catch(e){return res.status(e.status===403?403:e.status===429?429:200).json({answer:e.message,error:e.status===403?e.message:undefined,source:'workflow-clarification'});}
     // Permission-scoped capability list comes from the server, never the browser.
     const capabilities=[...AssistantPlatform.catalog(req.user.role),...AssistantBusiness.catalog(req.user.role)];
-    if(/^(?:help|what can you do|show capabilities|list actions)[?.! ]*$/i.test(message))return res.json({answer:capabilities.length?'You can ask for changes permitted by your account: '+[...new Set(capabilities.map(x=>({master_create:'Create master records',master_edit:'Edit master records',master_archive:'Archive master records',nbl_invoice:'NBL consolidated billing',shunter_invoice:'Shunter billing',receipt_assign:'Reassign slips',trip:'Create trips',quote:'Quotations',invoice:'Invoices',payment:'Record received payments',payroll_profile:'Payroll profiles and salaries',payroll:'Generate payroll drafts',overhead:'Record overheads',settings:'Operational settings',pod:'Attach PODs',diesel:'Capture diesel',expense:'Capture purchases',maintenance:'Workshop work orders',edit:'Edit records',delete:'Delete records'})[x.operation]||x.operation))].join(', ')+'. Also loans/tasks/assignments, grouped jobs, daily brief, truck profit comparisons (YYYY-MM), tender document review, voice dictation, action history and undo. Attach slips/PODs or use numbered lines to map batch files. Review every change before saving.':'You can ask questions about pages available to your account and dictate instructions. Business changes require the responsible staff role.',source:'capabilities',capabilities});
+    if(/^(?:help|what can you do|show capabilities|list actions)[?.! ]*$/i.test(message))return res.json({answer:capabilities.length?'You can ask for changes permitted by your account: '+[...new Set(capabilities.map(x=>({master_create:'Create master records',master_edit:'Edit master records',master_archive:'Archive master records',nbl_invoice:'NBL consolidated billing',shunter_invoice:'Shunter billing',receipt_assign:'Reassign slips',trip:'Create trips',quote:'Quotations',invoice:'Invoices',payment:'Record received payments',payroll_profile:'Payroll profiles and salaries',payroll:'Generate payroll drafts',overhead:'Record overheads',settings:'Operational settings',pod:'Attach PODs',diesel:'Capture diesel',expense:'Capture purchases',maintenance:'Workshop work orders',edit:'Edit records',delete:'Delete records'})[x.operation]||x.operation))].join(', ')+'. Also loans/tasks/assignments, grouped jobs, daily brief, truck profit comparisons (YYYY-MM), tender document review, voice dictation, action history and undo. Attach slips/PODs or use numbered lines to map batch files. Review every change before saving. Also ask about driver trip counts, payroll exclusions, missing kilometres, diesel receipts per driver, truck positions, employment tenure, loans, outstanding invoices, missing PODs, unassigned trips, duplicate diesel slips, unbilled loads, and fleet data quality.':'You can ask questions about pages available to your account and dictate instructions. Business changes require the responsible staff role.',source:'capabilities',capabilities});
     const recordState=await readOpsState();
     const directPlan=AssistantRecordQuery.parse(message);
     if(directPlan)return res.json(await assistantReadRecords(directPlan,message,recordState,req.user));
