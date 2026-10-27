@@ -2,6 +2,7 @@
 // Read-only, permission-aware answers grounded in the live operations state.
 // No AI guesses, no changes, and no exposure of payroll to dispatch/driver roles.
 const Cycle=require('./payroll-cycle');
+const PayrollKmDiagnostics=require('./payroll-km-diagnostics');
 const Link=require('./payroll-trip-link');
 const Metrics=require('./public/trip-metrics');
 const clean=x=>String(x||'').trim().toLowerCase().replace(/[^a-z0-9]+/g,' ');
@@ -34,6 +35,7 @@ function dateMention(q){
 }
 function result(answer,page,records=[]){return{answer,page,records:records.slice(0,6),source:'live-operations-diagnostics',aiEnabled:false};}
 function answer(question,state={},user={}){
+ if(['admin','manager','finance'].includes(user.role)&&PayrollKmDiagnostics.broadRequest(question))return PayrollKmDiagnostics.reply(question,state);
  const q=String(question||'').trim();if(!q)return null;
  const role=String(user.role||''),finance=['admin','manager','finance'].includes(role),ops=finance||role==='dispatcher';
  const employee=findEmployee(state,q),truck=truckMention(state,q),date=dateMention(q);
