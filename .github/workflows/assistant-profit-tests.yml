@@ -1,0 +1,37 @@
+name: Assistant profit reports checks
+
+on:
+  push:
+    paths:
+      - assistant-trip-profit.js
+      - public/ops-assistant.js
+      - public/styles.css
+      - test/assistant-trip-profit.test.js
+      - test/assistant-profit-advice.test.js
+      - .github/workflows/assistant-profit-tests.yml
+  pull_request:
+    paths:
+      - assistant-trip-profit.js
+      - public/ops-assistant.js
+      - public/styles.css
+      - test/assistant-trip-profit.test.js
+      - test/assistant-profit-advice.test.js
+      - .github/workflows/assistant-profit-tests.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Syntax checks
+        run: |
+          node --check assistant-trip-profit.js
+          node --check public/ops-assistant.js
+      - name: Regression tests
+        run: node --test test/assistant-trip-profit.test.js test/assistant-profit-advice.test.js
