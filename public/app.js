@@ -2360,15 +2360,36 @@ function wireShunterBonus(){
   });
 }
 
+function openEffectiveTripRatePreview(employeeId,period){
+ const host=$('ppEffectiveRatePreview');if(!host)return;
+ host.textContent='Checking saved trips, current cutoff and applied driver rates…';
+ api('/api/payroll/profiles/'+encodeURIComponent(employeeId)+'/rate-preview?period='+encodeURIComponent(period)).then(data=>{
+  const node=$('ppEffectiveRatePreview');if(!node)return;
+  if(data.kind!=='transport'){node.textContent=data.message||'No kilometre rate applies';return}
+  const lines=(data.rows||[]).map(t=>'<tr><td>'+esc(t.number||'')+'</td><td>'+
+    num(t.km).toLocaleString()+' km'+(t.partial?' <b>(partial)</b>':'')+
+    '<br><small>'+esc(t.distanceSource||'')+'</small></td><td>'+money(t.rate)+'/km'+
+    '<br><small>'+esc(t.source)+'</small></td><td>'+money(t.pay)+'</td></tr>').join('');
+  node.innerHTML='<div class="notice"><b>Actual trip rate check · '+esc(data.periodStart)+' to '+esc(data.periodEnd)+'</b>'+
+   '<p>'+esc(data.rateDescription)+'</p>'+
+   '<p><b>'+num(data.tripCount)+' eligible trip(s) · '+num(data.tripKm).toLocaleString()+' km · '+money(data.tripPay)+' calculated trip pay</b></p>'+
+   (data.warning?'<p><b>Needs attention:</b> '+esc(data.warning)+'</p>':'')+
+   (data.savedStatus&&Math.abs(num(data.savedTripPay)-num(data.tripPay))>.01?
+     '<p><b>Saved '+esc(data.savedStatus)+' payslip:</b> '+money(data.savedTripPay)+' trip pay. This preview differs from saved records; Drafts can be refreshed, but Approved/Paid cannot be changed automatically.</p>':'')+
+   '<small>'+esc(data.explanation)+'</small></div>'+
+   (lines?'<div class="table-wrap"><table><thead><tr><th>Trip</th><th>Payable km</th><th>Actual rate/km</th><th>Calculated pay</th></tr></thead><tbody>'+lines+'</tbody></table></div>':'');
+ }).catch(err=>{const node=$('ppEffectiveRatePreview');if(node)node.textContent='Rate preview unavailable: '+err.message});
+}
 function openPayrollProfile(driverId){
   const d=employeeRecord(driverId),p=clientPayProfile(driverId),kmEligible=employeeGetsKmPay(d);
   $('modalTitle').textContent='Payroll setup · '+d.name;
   $('entryForm').innerHTML='<div class="notice"><b>Driver trip pay = payable kilometres × rate.</b> When the field below is 0, no fixed rate is configured, so the app currently falls back to legacy automatic tiers (N$0.30/0.40/0.50 local based on km/L; N$0.60 SA). These are not a configured route rate. The old fuel bonus is not added separately. Effective trip rates appear below.</div>'
     +'<div class="form-grid"><div class="field"><label>Basic monthly salary</label><input id="ppBase" type="number" step="0.01" value="'+num(p.baseSalary)+'"></div>'
-    +'<div class="field"><label>Fixed trip pay / km (0 = legacy auto tier)</label><input id="ppTripRate" type="number" step="0.01" value="'+(kmEligible?num(p.tripRatePerKm):0)+'" '+(kmEligible?'':'disabled')+'><small>'+(kmEligible?'':'Not applicable — kilometre pay is for drivers only')+'</small></div>'
+    +'<div class="field"><label>Fixed trip pay / km (0 = legacy auto tier)</label><input id="ppTripRate" type="number" step="0.01" value="'+(kmEligible?num(p.tripRatePerKm):0)+'" '+(kmEligible?'':'disabled')+'><small>'+(kmEligible?'0 = no fixed driver rate. Existing trip payments use the legacy automatic tier; see verified rate and kilometres below.':'Not applicable — kilometre pay is for drivers only')+'</small></div>'
     +'<div class="field"><label>Driver pay basis</label><p><b>'+((db.trucks||[]).some(t=>(['trk_ang4','trk_ang5'].includes(t.id)||/^ang\s*0?[45]$/i.test(t.fleetName||''))&&[d.id,d.driverId].includes(t.defaultDriverId))?'Monthly shunter — ANG 4 / ANG 5':'Transport driver — cutoff to cutoff')+'</b></p><small>Determined from truck assignments in Fleet. A stale payroll Shunter setting cannot change a long-distance driver.</small></div>'
     +'<div class="field"><label>Transport cutoff day (1–31)</label><input id="ppCutoffDay" type="number" min="1" max="31" step="1" value="'+(p.cutoffDay??20)+'"><small>The month closes on this day (clamped to month end). A saved NBL invoice always overrides its driver payroll with its exact dates.</small></div>'
     +'<div class="field"><label>Shunter bonus pool</label><input id="ppShunterBonus" type="number" min="0" step="0.01" value="'+(p.shunterBonusAmount??8000)+'"></div><div class="field"><label>Shunter working-day divisor</label><input id="ppShunterDays" type="number" min="1" value="'+(p.shunterWorkingDays??20)+'"><small>Daily bonus = pool ÷ divisor, paid once per recorded driving day.</small></div>'
+    +'<div class="full" id="ppEffectiveRatePreview" aria-live="polite"></div>'
     +'<div class="field"><label>Tax number</label><input id="ppTax" value="'+esc(p.taxNumber||'')+'"></div>'
     +'<div class="field"><label>PAYE starts above</label><input id="ppPayeThreshold" type="number" step="0.01" value="'+(num(p.payeThreshold)||8000)+'"></div>'
     +'<div class="field"><label>PAYE default / month</label><input id="ppPaye" type="number" step="0.01" value="'+num(p.payeDefault)+'"></div>'
@@ -2379,6 +2400,7 @@ function openPayrollProfile(driverId){
     +'<div class="field"><label>Auto-generate month end</label><select id="ppAuto"><option value="true" '+(p.autoGenerate!==false?'selected':'')+'>Yes</option><option value="false" '+(p.autoGenerate===false?'selected':'')+'>No</option></select></div>'
     +'<div class="form-actions full"><button type="button" class="ghost" id="cancelForm">Cancel</button><button class="primary">Save payroll setup</button></div></div>';
   $('modal').classList.remove('hidden');$('cancelForm').onclick=()=>$('modal').classList.add('hidden');
+  if(kmEligible)openEffectiveTripRatePreview(driverId,payrollPeriodFilter||today().slice(0,7));
   $('entryForm').onsubmit=async e=>{e.preventDefault();try{await api('/api/payroll/profiles/'+encodeURIComponent(driverId),{method:'PATCH',body:{cutoffDay:Number($('ppCutoffDay').value),shunterBonusAmount:num($('ppShunterBonus').value),shunterWorkingDays:num($('ppShunterDays').value),baseSalary:num($('ppBase').value),tripRatePerKm:kmEligible?num($('ppTripRate').value):0,taxNumber:$('ppTax').value.trim(),payeThreshold:num($('ppPayeThreshold').value)||8000,payeDefault:num($('ppPaye').value),sscDefault:num($('ppSsc').value),overtimeRate:num($('ppOtRate').value),standardDays:num($('ppDays').value)||22,otherDeductionDefault:num($('ppDeduction').value),autoGenerate:$('ppAuto').value==='true'}});$('modal').classList.add('hidden');await refreshCentralState(false);notify('Payroll setup saved for '+d.name)}catch(err){notify(err.message)}};
 }
 function openEmployeeLoan(id=''){
@@ -2471,7 +2493,7 @@ function openPayslip(id){
   const payeThreshold=num(p.payeThreshold||profile.payeThreshold)||8000,belowPayeThreshold=payslipGross(p)<=payeThreshold;
   $('entryForm').innerHTML='<div class="payslip-summary"><div><span>Gross earnings</span><b>'+money(payslipGross(p))+'</b></div><div><span>Trip pay</span><b>'+money(p.tripPay)+'</b></div><div><span>Net pay</span><b class="positive">'+money(payslipNet(p))+'</b></div></div>'
     +'<div class="form-grid"><div class="field"><label>Days worked</label><input id="psDays" type="number" value="'+num(p.days)+'"></div><div class="field"><label>Basic salary</label><input id="psBase" type="number" step="0.01" value="'+num(p.base)+'"></div>'
-    +'<div class="field"><label>Trip kilometres</label><input type="number" value="'+num(p.tripKm)+'" disabled></div><div class="field"><label>Trip rate / km</label><input id="psTripRate" type="number" step="0.01" value="'+(kmEligible?num(p.tripRatePerKm||profile.tripRatePerKm):0)+'" '+(kmEligible?'':'disabled')+'></div>'
+    +'<div class="field"><label>Trip kilometres</label><input type="number" value="'+num(p.tripKm)+'" disabled></div><div class="field"><label>Payslip fixed rate / km (0 = employee or legacy rate)</label><input id="psTripRate" type="number" step="0.01" value="'+(kmEligible?num(p.tripRatePerKm||profile.tripRatePerKm):0)+'" '+(kmEligible?'':'disabled')+'></div>'
     +'<div class="field"><label>Overtime hours</label><input id="psOtHours" type="number" step="0.25" value="'+num(p.overtimeHours||p.overtime)+'"></div><div class="field"><label>Overtime rate</label><input id="psOtRate" type="number" step="0.01" value="'+num(p.overtimeRate||profile.overtimeRate)+'"></div>'
     +'<div class="field"><label>PAYE</label><input id="psPaye" type="number" step="0.01" value="'+(belowPayeThreshold?0:num(p.paye))+'" '+(belowPayeThreshold?'disabled':'')+'><small>'+(belowPayeThreshold?'No PAYE: gross is at/below '+money(payeThreshold):'PAYE applies above '+money(payeThreshold))+'</small></div><div class="field"><label>SSC</label><input id="psSsc" type="number" step="0.01" value="'+num(p.ssc)+'"></div>'
     +'<div class="field"><label>Other deductions</label><input id="psDeduct" type="number" step="0.01" value="'+num(p.deductions)+'"></div><div class="field"><label>Status</label><select id="psStatus">'+['Draft','Approved','Paid'].map(x=>'<option '+(x===p.status?'selected':'')+'>'+x+'</option>').join('')+'</select></div></div>'
