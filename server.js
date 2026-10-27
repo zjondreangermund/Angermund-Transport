@@ -30,6 +30,7 @@ const PayrollCycle=require('./payroll-cycle');
 const PayrollManualTrips=require('./payroll-manual-trips');
 const AssistantOperationsAnswers=require('./assistant-operations-answers');
 const AssistantRecordQuery=require('./assistant-record-query');
+const BusinessAudit=require('./assistant-business-audit');
 const AssistantIntelligence=require('./assistant-intelligence');
 const TripPayrollDiagnostics=require('./trip-payroll-diagnostics');
 const {allowed:canManageRecord,deleteRecord,editRecord}=require('./record-management');
@@ -1466,6 +1467,20 @@ app.patch('/api/admin/trips/:tripId/closing-odometer',auth,roles('admin','manage
   });
   res.json(changed.result);
  }catch(e){res.status(e.status||500).json({error:e.message})}
+});
+app.get('/api/admin/payroll-investigation',auth,roles('admin','manager','finance'),async(req,res)=>{
+ try{
+  const state=await readOpsState(),id=String(req.query.employeeId||''),period=String(req.query.period||monthPeriod(new Date()));
+  periodBounds(period);
+  const employee=workforceEmployee(state,id);
+  if(!employee)return res.status(404).json({error:'Employee not found in saved payroll records'});
+  const report=BusinessAudit.driverReport(state,employee,period);
+  const answer=BusinessAudit.formatReport(report,'driver_earnings_audit');
+  res.json({employee:employee.name,period,answer,tripCount:report.eligibleCount,
+   expectedKm:report.expectedKm,savedKm:report.savedKm,savedPay:report.savedPay,
+   payslipStatus:report.payslip?.status||null,trips:report.candidates.slice(0,50),
+   notice:'Read-only. Invoicing is not required for driver trip pay. Only verified edits and Draft payroll refresh can change amounts.'});
+ }catch(e){res.status(e.status||400).json({error:e.message})}
 });
 app.get('/api/admin/trip-payroll-diagnostics',auth,roles('admin','manager','finance'),async(req,res)=>{
  try{const state=await readOpsState();res.json(TripPayrollDiagnostics.inspect(state,String(req.query.period||monthPeriod(new Date()))))}
