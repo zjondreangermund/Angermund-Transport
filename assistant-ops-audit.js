@@ -58,9 +58,17 @@ function resolve(q,state,focus=null){
   if(!candidates.length)return{error:'No saved trip found for '+(truck.fleetName||'ANG truck')+(date?' on '+date:'')+'. Check import history and active dashboard filters.'};
   if(date&&candidates.length===1)return{trips:candidates,scope:'truck and date'};
   if(/\b(?:last|latest|most recent)\b/i.test(q)){
-   const sorted=candidates.slice().sort((a,b)=>iso(b.date).localeCompare(iso(a.date))||String(b.id).localeCompare(String(a.id)));
-   if(sorted.length>1&&iso(sorted[0].date)===iso(sorted[1].date))return{error:'Multiple trips share the latest date for '+truck.fleetName+'. Give a trip number.',suggestions:sorted.slice(0,5)};
-   return{trips:sorted.slice(0,1),scope:'latest truck trip'};
+   const available=candidates.filter(t=>!/cancelled|canceled|deleted/i.test(String(t.status||'')));
+   const completed=available.filter(t=>Number(t.stage||0)>=4||/delivered|completed|closed|invoiced/i.test(String(t.status||'')));
+   const underway=available.filter(t=>Number(t.stage||0)>=2||/depart|loading|transit|en route/i.test(String(t.status||'')));
+   const chosen=/\bplanned|booked|scheduled\b/i.test(q)?available.filter(t=>/planned|booked|scheduled/i.test(String(t.status||''))):
+     /\bactive|ongoing|current|in transit\b/i.test(q)?underway:
+     completed.length?completed:underway.length?underway:available;
+   if(!chosen.length)return{error:'No matching non-cancelled trip was saved for '+truck.fleetName+'. Check active filters or the import preview.'};
+   const recordedDate=t=>iso(t.deliveredDate||t.completedDate||t.closedDate||t.date);
+   const sorted=chosen.slice().sort((a,b)=>recordedDate(b).localeCompare(recordedDate(a))||String(b.id).localeCompare(String(a.id)));
+   if(sorted.length>1&&recordedDate(sorted[0])===recordedDate(sorted[1]))return{error:'Multiple trips share the latest date for '+truck.fleetName+'. Give a trip number.',suggestions:sorted.slice(0,5)};
+   return{trips:sorted.slice(0,1),scope:completed.length?'latest completed truck trip':underway.length?'latest active truck trip':'latest saved truck trip'};
   }
   if(date&&candidates.length>1)return{error:'Multiple trips for '+truck.fleetName+' on '+date+'. Please choose the exact trip.',suggestions:candidates.slice(0,5)};
   return{error:'There are '+candidates.length+' trips for '+truck.fleetName+'. Specify a trip number, date, or ask for its latest trip.',suggestions:candidates.slice(0,5)};
