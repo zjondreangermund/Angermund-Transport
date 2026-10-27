@@ -17,7 +17,7 @@ function namesInQuestion(q,name){
 }
 function isAuditRequest(q){
  const text=String(q||'');
- return (/\b(audit|investigate|diagnos(?:e|is|tic)|reconcil(?:e|iation)|trace|cross.?check|review (?:all )?issues|check (?:everything|the whole trip))\b/i.test(text)
+ return (/\b(?:last|latest|most recent)\b/i.test(text)&&/\b(?:trips?|loads?)\b/i.test(text)&&!/^\s*(?:create|delete|remove|edit|change|set|assign|move|attach|capture)\b/i.test(text))||(/\b(audit|investigate|diagnos(?:e|is|tic)|reconcil(?:e|iation)|trace|cross.?check|review (?:all )?issues|check (?:everything|the whole trip))\b/i.test(text)
   && /\b(trip|fleet|truck|ang\s*0?\d+|diesel|fuel|payroll|payslip|invoice|pod|slip|driver|billing)\b/i.test(text))
   ||(/\bwhy\b/i.test(text)&&/\b(?:diesel|fuel|payroll|payslip|invoice)\b/i.test(text)
      &&(/\bang[\s-]*\d+\b/i.test(text)||/\b(?:trip|order)\s*(?:#|no\.?|number)?\s*[A-Z0-9]*\d+[A-Z0-9-]*\b/i.test(text)));
@@ -64,6 +64,9 @@ function resolve(q,state,focus=null){
   }
   if(date&&candidates.length>1)return{error:'Multiple trips for '+truck.fleetName+' on '+date+'. Please choose the exact trip.',suggestions:candidates.slice(0,5)};
   return{error:'There are '+candidates.length+' trips for '+truck.fleetName+'. Specify a trip number, date, or ask for its latest trip.',suggestions:candidates.slice(0,5)};
+ }
+ if(/\b(?:last|latest|most recent)\b/i.test(q)&&/\b(?:trips?|loads?)\b/i.test(q)&&!truck){
+  return{error:'Which ANG truck do you want me to check? Reply ANG10, ANG12, or the saved trip reference. I will find its latest recorded trip and check diesel, POD, invoices and payroll without needing a date.'};
  }
  if(/\b(?:all|fleet|every)\b/i.test(q)&&/\b(?:trips?|fleet)\b/i.test(q)){
   const active=trips.filter(t=>!/\b(?:cancelled|deleted)\b/i.test(t.status||''));
