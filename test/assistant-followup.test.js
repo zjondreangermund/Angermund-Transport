@@ -40,6 +40,17 @@ test('direct latest trip in ordinary language resolves without a date or payroll
  assert.equal(report.targets[0].number,'AT-104');
  assert.equal(Audit.isAuditRequest('What is the latest trip for ANG10?'),true);
 });
+test('repeating ANG10 after the existing unhelpful bot reply still resolves original question',()=>{
+ const session={turns:[
+  {role:'user',content:'Can you check ang last trip. What is needed'},
+  {role:'assistant',content:'Please send the trip number or truck.'},
+  {role:'user',content:'ANG10'},
+  {role:'assistant',content:'I cannot identify the last trip; send approximate date.'}
+ ]};
+ const q=Followup.resolve('ANG10',session,[]);
+ assert.match(q,/Investigate ANG 10 latest trip/);
+ assert.equal(Audit.run(q,state(),{role:'manager'}).targets[0].number,'AT-104');
+});
 test('no false context carryover after unrelated user message',()=>{
  const session={turns:[{role:'user',content:'Can you check ang last trip. What is needed'},
  {role:'assistant',content:'Which ANG truck?'},
