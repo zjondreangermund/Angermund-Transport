@@ -24,11 +24,14 @@ test('invoice dates have priority and recurring drafts reflect cutoff changes',(
  assert.equal(Cycle.bounds('2026-10',{id:'d'},true,null,{cutoffDay:15}).periodEnd,'2026-10-31');
 });
 test('assistant gives grounded cutoff and shunter explanations only to permitted roles',()=>{
- const s=state();
+ const s=state();s.trucks[0].id='trk_ang10';s.trucks[0].fleetName='ANG 10';
  let r=Assistant.answer('What is Josef cutoff date?',s,{role:'finance'});
  assert.match(r.answer,/cutoff day 15/);assert.equal(r.page,'payroll');
  assert.equal(Assistant.answer('What is Josef salary?',s,{role:'driver'}),null);
  s.payProfiles[0].payBasis='shunter';
+ // Old profile flags must not change a transport driver into a shunter.
+ assert.match(Assistant.answer('What is Josef shunter bonus?',s,{role:'finance'}).answer,/not currently set to the shunter pay basis|no linked shunter/i);
+ s.trucks[0].id='trk_ang4';s.trucks[0].fleetName='ANG 4';
  r=Assistant.answer('What is Josef shunter bonus?',s,{role:'finance'});
  assert.match(r.answer,/N\$ 300\.00/);assert.equal(r.page,'shunterBonus');
  assert.equal(Assistant.answer('What is Josef shunter bonus?',s,{role:'dispatcher'}),null);
