@@ -47,6 +47,8 @@ on:
       - 'assistant-record-query.js'
       - 'assistant-business-audit.js'
       - 'test/assistant-business-audit.test.js'
+      - 'diesel-duplicates.js'
+      - 'test/diesel-duplicates.test.js'
       - 'test/assistant-record-query.test.js'
       - 'test/payroll-cycle.test.js'
       - 'test/shunter-cutoff-assistant.test.js'
@@ -99,6 +101,8 @@ on:
       - 'assistant-record-query.js'
       - 'assistant-business-audit.js'
       - 'test/assistant-business-audit.test.js'
+      - 'diesel-duplicates.js'
+      - 'test/diesel-duplicates.test.js'
       - 'test/assistant-record-query.test.js'
       - 'test/payroll-cycle.test.js'
       - 'test/shunter-cutoff-assistant.test.js'
@@ -127,6 +131,8 @@ jobs:
         run: node --test test/assistant-ops-audit.test.js
       - name: Verify selective AI model routing, cost controls and private live evidence
         run: node --test test/assistant-intelligence.test.js
+      - name: Verify diesel receipt uniqueness and duplicate review
+        run: node --test test/diesel-duplicates.test.js
       - name: Verify linked Victon payroll, slip and universal business investigation questions
         run: node --test test/assistant-business-audit.test.js
       - name: Verify real staff/trip/loan/GPS questions from chat screenshots
