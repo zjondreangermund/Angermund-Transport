@@ -44,6 +44,10 @@ test('finalized payslip must be reviewed instead of rewritten and shunters are e
  const s=fixture();s.trips[0].startKm=1926800;s.trips[0].endKm=1928000;s.payroll[0].status='Paid';
  assert.match(Doctor.diagnose(s).rows[0].issues.join(' '),/finalized/);
  s.payProfiles[0].payBasis='shunter';
+ // A stale shunter profile alone cannot exclude an ANG10 driver's payroll.
+ assert.equal(Doctor.diagnose(s).rows.length,1);
+ s.trucks[0].id='trk_ang4';s.trucks[0].fleetName='ANG 4';s.trucks[0].defaultDriverId='d';
+ s.trips[0].truckId='trk_ang4';
  assert.equal(Doctor.diagnose(s).rows.length,0);
 });
 function refreshContext(){

@@ -1,8 +1,18 @@
 'use strict';
 const Link=require('./payroll-trip-link');
 const dayAfter=d=>new Date(Date.parse(d+'T00:00:00Z')+86400000).toISOString().slice(0,10);
-function isShunter(state,t){const truck=(state.trucks||[]).find(x=>x.id===t.truckId)||{};return t.shunter===true||t.tripType==='Shunter'||['trk_ang4','trk_ang5'].includes(t.truckId)||/^ang\s*0?[45]$/i.test(truck.fleetName||'');}
-function shunterDriver(state,driver,profile={}){if(!driver)return false;if(profile.payBasis)return profile.payBasis==='shunter';return(state.trucks||[]).some(t=>isShunter(state,{truckId:t.id})&&t.defaultDriverId===driver.id);}
+function isShunter(state,t){
+ // Truck assignment is authoritative. Old shunter flags and payroll profile
+ // choices must never convert a long-distance trip into shunter work.
+ const truck=(state.trucks||[]).find(x=>String(x.id)===String(t.truckId))||{};
+ return ['trk_ang4','trk_ang5'].includes(String(t.truckId||''))||/^ang\s*0?[45]$/i.test(String(truck.fleetName||''));
+}
+function shunterDriver(state,driver,profile={}){
+ if(!driver)return false;
+ // Only designated ANG 4/ANG 5 drivers receive monthly shunter payroll.
+ // In particular, payBasis='shunter' on an unrelated driver is stale data.
+ return(state.trucks||[]).some(t=>isShunter(state,{truckId:t.id})&&String(t.defaultDriverId||'')===String(driver.id));
+}
 function cutoffDate(year,month,day){
  const last=new Date(Date.UTC(year,month,0)).getUTCDate();
  return new Date(Date.UTC(year,month-1,Math.min(day,last))).toISOString().slice(0,10);

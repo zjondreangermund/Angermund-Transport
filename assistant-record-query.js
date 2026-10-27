@@ -2,12 +2,13 @@
 // Read-only, explicitly scoped business queries. The AI may select an intent,
 // but NEVER supplies record facts, database fields, permissions, or SQL.
 const Link=require('./payroll-trip-link');
+const Cycle=require('./payroll-cycle');
 const Metrics=require('./public/trip-metrics');
 const normalize=v=>String(v||'').toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g,'').replace(/\bang[\s-]*0*(\d+)\b/g,'ang$1').replace(/[^a-z0-9]+/g,' ').trim();
 const iso=v=>String(v||'').slice(0,10), cash=n=>'N$ '+Number(n||0).toFixed(2);
 const office=new Set(['admin','manager','dispatcher','finance']),finance=new Set(['admin','manager','finance']);
 const roster=new Set(['admin','manager','finance']);
-const modeNames=new Set(['driver_trips','employee_tenure','worker_loans','vehicle_location','unpaid_invoices','missing_pod','pending_diesel','truck_status','record_totals','driver_payroll','aggregate']);
+const modeNames=new Set(['driver_trips','employee_tenure','worker_loans','vehicle_location','unpaid_invoices','missing_pod','pending_diesel','truck_status','record_totals','driver_payroll','payroll_period','aggregate']);
 const writeAction=/^\s*(?:add|create|delete|remove|edit|change|set|assign|move|approve|pay|mark|update|capture|upload|generate|cancel|start|stop|finish)\b/i;
 function dayLocal(now=new Date()){
  return new Intl.DateTimeFormat('en-CA',{timeZone:'Africa/Windhoek',year:'numeric',month:'2-digit',day:'2-digit'}).format(now);
@@ -71,6 +72,7 @@ function parse(q){
  // Direct routing is free and independent of a model. Unknown read questions
  // can be classified by the inexpensive planner and resolved by this same tool.
  if(/\b(where|location|position|locate|gps)\b/i.test(x)&&(/\bang[\s-]*\d+/i.test(x)||/\btruck\b/i.test(x)))return{mode:'vehicle_location'};
+ if(/\b(?:payslip|payroll|driver salaries|shunter salary)\b/i.test(x)&&/\b(?:cut.?off|pay period|covered|dates?|include|september|october|month|calendar)\b/i.test(x))return{mode:'payroll_period'};
  if(/\b(how many|number of|count|total)\b/i.test(x)&&/\b(trips?|loads?|journeys?)\b/i.test(x)&&/\b(?:drove|driven|drive|did|made|completed|handled|by|for)\b/i.test(x))return{mode:'driver_trips'};
  if(/\b(how long|how many years|how many months|since when|when did)\b/i.test(x)&&/\b(work|working|employ|joined|started|with us|been here|service)\b/i.test(x))return{mode:'employee_tenure'};
  if(/\b(loans?|borrowed|borrowing|outstanding advances?)\b/i.test(x)&&/\b(who|which|how many|balance|this month|current|active|outstanding|has|have)\b/i.test(x))return{mode:'worker_loans'};
@@ -85,6 +87,7 @@ function parse(q){
 function allowed(mode,role){
  if(!modeNames.has(mode))return false;
  if(mode==='aggregate')return office.has(role);
+ if(mode==='payroll_period')return finance.has(role);
  if(['vehicle_location','truck_status','driver_trips','missing_pod','pending_diesel','record_totals'].includes(mode))return office.has(role);
  return finance.has(role);
 }
@@ -162,6 +165,31 @@ function run(plan,q,s={},user={},extra={}){
  if(!allowed(mode,role))return result('You do not have permission to view these business records.',null);
  if(mode==='aggregate')return aggregate(plan,q,s,role,extra);
  const dates=parseDates(q,extra.now||new Date());
+ if(mode==='payroll_period'){
+  const word=/\b(jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)\s*(20\d{2})\b/i.exec(q);
+  const specified=/\b(20\d{2})[-/](0?[1-9]|1[0-2])\b/.exec(q);
+  const period=specified?specified[1]+'-'+specified[2].padStart(2,'0'):word?word[2]+'-'+String(monthNames.indexOf(word[1].toLowerCase().slice(0,3))+1).padStart(2,'0'):dayLocal(extra.now||new Date()).slice(0,7);
+  const named=resolvePerson(q,s,{target:plan?.person});
+  if(named.ambiguous)return result('Several driver records match. Specify the exact employee name.','payroll');
+  const records=named.match?[named.match.person]:[];
+  if(!records.length){
+    const sampleDriver={id:'reference'},transport=Cycle.bounds(period,sampleDriver,false,null,{cutoffDay:20}),monthly=Cycle.bounds(period,sampleDriver,true,null,{});
+    const saved=(s.payroll||[]).filter(p=>p.period===period);
+    const listed=saved.slice(0,8).map(p=>((s.employees||[]).find(e=>e.id===p.employeeId)?.name||p.employeeId)+': '+p.periodStart+' to '+p.periodEnd+' ('+p.status+')');
+    return result('Payroll label '+period+' does not imply only that calendar month.'+
+      '\nTransport default: '+transport.start+' to '+transport.periodEnd+' (21st to 20th, including the final days of the previous month).'+
+      '\nANG 4/5 shunter: '+monthly.start+' to '+monthly.periodEnd+' (full calendar month).'+
+      '\nCustom driver cutoff dates and saved NBL invoice dates take priority.'+
+      (listed.length?'\nSaved '+period+' individual pay periods:\n'+listed.join('\n'):'\nNo individual '+period+' payslip was found. Generate Draft payroll to store exact periods.'),'payroll');
+  }
+  const employee=records[0],driver=Link.resolveDriver(s,employee),profile=(s.payProfiles||[]).find(p=>p.employeeId===employee.id)||{};
+  const shunter=Cycle.shunterDriver(s,driver,profile),existing=(s.payroll||[]).find(p=>p.employeeId===employee.id&&p.period===period);
+  const cycle=Cycle.bounds(period,driver,shunter,existing,profile);
+  return result(employee.name+' · '+period+' ('+(shunter?'ANG 4/5 monthly shunter':'transport cutoff-to-cutoff')+'):\n'+cycle.start+' to '+cycle.periodEnd+
+   (existing?' · saved payslip '+existing.status+' (exact saved dates).':' · expected dates before payslip creation.')+
+   (shunter?'\nShunter monthly base and daily driving bonus apply to ANG 4/ANG 5 assignments.':'\nNBL invoice dates override any default/custom transport cutoff.')+
+   '\nThe month displayed in the payslip picker is a label; check the exact dates for that driver.','payroll');
+ }
  if(mode==='driver_trips'||mode==='employee_tenure'||mode==='driver_payroll'){
   const{ x,answer:error}=personError(q,s,plan?.person);
   if(!x.match)return result(error,'driverAccounts');

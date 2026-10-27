@@ -22,3 +22,25 @@ test('invoice auto-creates exact driver period, includes end date, excludes next
 test('default transport cycle includes 21st of previous month and 20th, excludes 21st of current month',()=>{
  const s=state();s.trucks=[];s.trips=['2026-09-20','2026-09-21','2026-10-20','2026-10-21'].map((date,i)=>({id:String(i),date,driverId:'d',stage:4,distance:100}));const p=context().calculatePayrollRecord(s,s.employees[0],'2026-10');a.equal(p.tripCount,2);a.equal(p.tripPay,100);
 });
+
+
+test('Anton is a transport driver even if a stale Shunter payroll profile is present',()=>{
+ const s=state(),employee=s.employees[0];employee.name='Anton';s.drivers[0].name='Anton';
+ s.trucks=[{id:'trk_ang10',fleetName:'ANG 10',defaultDriverId:'d'}];
+ s.payProfiles=[{employeeId:'e',payBasis:'shunter',cutoffDay:20,shunterBonusAmount:8000}];
+ s.trips=[{id:'run',truckId:'trk_ang10',driverId:'d',date:'2026-10-07',stage:4,status:'Delivered',distance:200,shunter:true,tripType:'Shunter'}];
+ a.equal(C.isShunter(s,s.trips[0]),false,'A stale trip flag must not reclassify an ANG10 journey');
+ a.equal(C.shunterDriver(s,s.drivers[0],s.payProfiles[0]),false,'Only ANG4 and ANG5 default drivers are shunters');
+ const p=context().calculatePayrollRecord(s,employee,'2026-10');
+ a.equal(p.periodStart,'2026-09-21');a.equal(p.periodEnd,'2026-10-20');
+ a.equal(p.tripKm,200);a.equal(p.tripPay,100);a.equal(p.shunterBonus,0);
+});
+test('only drivers assigned to ANG4 or ANG5 receive monthly shunter pay plus worked-day bonus',()=>{
+ const s=state(),employee=s.employees[0];s.payProfiles=[{employeeId:'e',payBasis:'transport',shunterBonusAmount:8000,shunterWorkingDays:20}];
+ s.trips=[{id:'sh',truckId:'trk_ang4',driverId:'d',date:'2026-10-11',stage:4,status:'Delivered',distance:35}];
+ a.equal(C.shunterDriver(s,s.drivers[0],s.payProfiles[0]),true);
+ const p=context().calculatePayrollRecord(s,employee,'2026-10');
+ a.equal(p.periodStart,'2026-10-01');a.equal(p.periodEnd,'2026-10-31');
+ a.equal(p.tripKm,0);a.equal(p.tripPay,0);
+ a.equal(p.shunterDays,1);a.equal(p.shunterBonus,400);
+});

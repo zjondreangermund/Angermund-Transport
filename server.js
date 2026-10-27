@@ -1603,7 +1603,7 @@ function calculatePayrollRecord(state,employee,period,existing=null){
   const tripKm=trips.reduce((a,t)=>a+serverTripLegSummary(state,t).distance,0),tripRatePerKm=driver?num(existing?.tripRatePerKm??p.tripRatePerKm):0;
   const tripPay=trips.reduce((a,t)=>a+serverTripLegSummary(state,t).distance*serverTripRate(state,t,tripRatePerKm),0);
   const tripBreakdown=trips.map(t=>{const evidence=TripMetrics.distance(t,(state.diesel||[]).filter(x=>x.tripId===t.id)),distance=evidence.distance,rate=serverTripRate(state,t,tripRatePerKm),legs=t.legs?.length?t.legs:[t];return{tripId:t.id,number:t.number||t.id,date:t.date,truck:(state.trucks||[]).find(x=>x.id===t.truckId)?.fleetName||t.truckId||'',route:legs.map(l=>(state.routes||[]).find(x=>x.id===l.routeId)?.name||'').filter(Boolean).join(' → '),load:legs.map(l=>l.load||'').filter(Boolean).join(' / '),distance,distanceSource:evidence.distanceSource,partial:Boolean(evidence.partial),manualEarlyPay:Boolean(existing?.manualTripIds?.includes(t.id)),rate,pay:Number((distance*rate).toFixed(2))}});
-  const shunterBonus=PayrollCycle.bonus(state,driver,start,end,p);
+  const shunterBonus=shunter?PayrollCycle.bonus(state,driver,start,end,p):{amount:0,rate:0,days:[],count:0};
   const incentive=0;
   const reimbursements=driver?(state.expenses||[]).filter(x=>x.driverId===driver.id&&inPeriod(x.date)&&x.reimbursable!==false&&x.status==='Approved').reduce((a,x)=>a+num(x.amount),0):0;
   const advances=driver?(state.advances||[]).filter(x=>x.driverId===driver.id&&inPeriod(x.date)&&x.status!=='Reconciled').reduce((a,x)=>a+num(x.amount),0):0;
@@ -2753,7 +2753,13 @@ app.patch('/api/payroll/profiles/:driverId',auth,roles('admin','manager','financ
       for(const key of ['baseSalary','tripRatePerKm','payeDefault','sscDefault','overtimeRate','standardDays','otherDeductionDefault'])if(body[key]!==undefined)p[key]=num(body[key]);
       if(body.cutoffDay!==undefined){const day=Number(body.cutoffDay);if(!Number.isInteger(day)||day<1||day>31)throw Object.assign(Error('Cutoff day must be between 1 and 31'),{status:400});p.cutoffDay=day;}
       for(const key of ['shunterBonusAmount','shunterWorkingDays'])if(body[key]!==undefined){const v=Number(body[key]);if(!Number.isFinite(v)||v<0||(key==='shunterWorkingDays'&&v<=0))throw Error('Enter a valid shunter bonus and working-day divisor');p[key]=v;}
-      if(body.payBasis!==undefined){if(!['auto','shunter','transport'].includes(body.payBasis))throw Error('Invalid pay basis');if(body.payBasis==='auto')delete p.payBasis;else p.payBasis=body.payBasis;}
+      if(body.payBasis!==undefined){
+        if(!['auto','shunter','transport'].includes(body.payBasis))throw Error('Invalid pay basis');
+        const actualShunter=PayrollCycle.shunterDriver(state,workforceDriver(state,employee),p);
+        if(body.payBasis==='shunter'&&!actualShunter)throw Object.assign(Error('Only ANG 4 or ANG 5 assigned drivers can be shunters. Update the Fleet truck assignment first.'),{status:409});
+        if(body.payBasis==='transport'&&actualShunter)throw Object.assign(Error('The driver is assigned to ANG 4 or ANG 5. Update Fleet before changing their payroll category.'),{status:409});
+        if(body.payBasis==='auto')delete p.payBasis;else p.payBasis=body.payBasis;
+      }
       if(!PayrollEligibility.isDriver(employee,state.drivers||[]))p.tripRatePerKm=0;
       if(body.taxNumber!==undefined)p.taxNumber=String(body.taxNumber||'');
       if(body.autoGenerate!==undefined)p.autoGenerate=Boolean(body.autoGenerate);
