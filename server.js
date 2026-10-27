@@ -29,6 +29,7 @@ const PayrollTripLink=require('./payroll-trip-link');
 const PayrollCycle=require('./payroll-cycle');
 const PayrollManualTrips=require('./payroll-manual-trips');
 const AssistantOperationsAnswers=require('./assistant-operations-answers');
+const AssistantRecordQuery=require('./assistant-record-query');
 const AssistantIntelligence=require('./assistant-intelligence');
 const TripPayrollDiagnostics=require('./trip-payroll-diagnostics');
 const {allowed:canManageRecord,deleteRecord,editRecord}=require('./record-management');
@@ -4129,6 +4130,45 @@ app.post('/api/assistant/cancel/:draftId',auth,(req,res)=>{
  if(d.inProgress)return res.status(409).json({error:'Approval already in progress'});
  assistantDrafts.delete(d.id);res.json({cancelled:true});
 });
+
+// Authorized read-only tool engine. GPS is separate from ERP state.
+async function assistantReadRecords(plan,message,state,user){
+ if(!AssistantRecordQuery.allowed(plan?.mode,user.role))
+  return{answer:'You do not have permission to view those records.',source:'record-permission'};
+ let gps=[];
+ if(['vehicle_location','truck_status'].includes(plan?.mode)){
+  const truck=AssistantRecordQuery.resolveTruck(message,state,plan.truck);
+  if(truck){
+   if(pool)gps=await q("SELECT vehicle_id AS \"vehicleId\",latitude,longitude,speed,accuracy,source,recorded_at AS \"recordedAt\" FROM gps_positions WHERE vehicle_id=$1 AND source IN ('telematics','truck-device','tracker','vehicle-tracker','android-background') ORDER BY recorded_at DESC,id DESC LIMIT 1",[truck.id]);
+   else gps=(memory.gps||[]).filter(p=>p.vehicleId===truck.id&&['telematics','truck-device','tracker','vehicle-tracker','android-background'].includes(p.source))
+     .sort((a,b)=>Date.parse(b.recordedAt)-Date.parse(a.recordedAt)).slice(0,1);
+  }
+ }
+ return AssistantRecordQuery.run(plan,message,state,user,{now:new Date(),gps});
+}
+async function planAssistantReadQuestion(message){
+ if(!OPENAI_API_KEY)return null;
+ if(!/^\s*(?:who|whose|what|where|when|which|how|show|list|find|tell|check|compare|count|calculate|summarise|summarize)\b/i.test(message))return null;
+ if(/^\s*(?:add|create|delete|remove|edit|change|set|assign|move|approve|pay|update|capture|upload|generate)\b/i.test(message))return null;
+ if(!/\b(?:trip|load|truck|ang\s*\d|driver|employee|staff|worker|loan|salary|payroll|payslip|invoice|diesel|fuel|slip|expense|maintenance|GPS|POD|tasks?)\b/i.test(message))return null;
+ try{
+  const model=AssistantIntelligence.chooseModel('classification');
+  const intentGuide='Return one JSON object selecting an OPTIONAL read-only application tool. Modes: driver_trips, employee_tenure, worker_loans, vehicle_location, unpaid_invoices, missing_pod, pending_diesel, truck_status, record_totals, driver_payroll, aggregate, none. For aggregate: collection among trips,diesel,expenses,invoices,loans,payroll,maintenance,trucks,drivers,employees,tasks; metric count,sum,list; field ONLY for sum, valid among distance,income,tons,litres,printedTotal,total,odometer,amount,balance,paidAmount,monthlyDeduction,tripKm,tripPay,gross,net,shunterBonus,cost. Optional filters person,truck,status,from,to. Do not invent identifiers. If the question cannot be answered using these tools return mode none. NEVER select a mutation or infer business facts. Return JSON only.';
+  const response=await fetch('https://api.openai.com/v1/responses',{method:'POST',signal:AbortSignal.timeout(12000),headers:{Authorization:'Bearer '+OPENAI_API_KEY,'Content-Type':'application/json'},
+   body:JSON.stringify({model,store:false,max_output_tokens:320,input:[{role:'system',content:[{type:'input_text',text:intentGuide}]},{role:'user',content:[{type:'input_text',text:message.slice(0,1200)}]}]})});
+  if(!response.ok)return null;
+  const json=await response.json();
+  AssistantIntelligence.usageTracker.record(model,json.usage,'read-tool-selection');
+  const output=(json.output||[]).flatMap(x=>x.content||[]).find(x=>x.type==='output_text')?.text||json.output_text||'';
+  const obj=JSON.parse(output.trim());
+  if(!AssistantRecordQuery.modeNames.has(obj?.mode))return null;
+  const plan={mode:obj.mode};
+  for(const k of ['collection','metric','field','person','truck','status','from','to'])
+   if(typeof obj[k]==='string'&&obj[k].length<=100)plan[k]=obj[k];
+  return plan;
+ }catch{return null}
+}
+
 app.get('/api/assistant/usage',auth,roles('admin','manager','finance'),(req,res)=>res.json(AssistantIntelligence.usageTracker.report()));
 app.post('/api/assistant/ask',auth,upload.array('document',20),async(req,res)=>{
   try{
@@ -4148,10 +4188,16 @@ app.post('/api/assistant/ask',auth,upload.array('document',20),async(req,res)=>{
     const capabilities=[...AssistantPlatform.catalog(req.user.role),...AssistantBusiness.catalog(req.user.role)];
     if(/^(?:help|what can you do|show capabilities|list actions)[?.! ]*$/i.test(message))return res.json({answer:capabilities.length?'You can ask for changes permitted by your account: '+[...new Set(capabilities.map(x=>({master_create:'Create master records',master_edit:'Edit master records',master_archive:'Archive master records',nbl_invoice:'NBL consolidated billing',shunter_invoice:'Shunter billing',receipt_assign:'Reassign slips',trip:'Create trips',quote:'Quotations',invoice:'Invoices',payment:'Record received payments',payroll_profile:'Payroll profiles and salaries',payroll:'Generate payroll drafts',overhead:'Record overheads',settings:'Operational settings',pod:'Attach PODs',diesel:'Capture diesel',expense:'Capture purchases',maintenance:'Workshop work orders',edit:'Edit records',delete:'Delete records'})[x.operation]||x.operation))].join(', ')+'. Also loans/tasks/assignments, grouped jobs, daily brief, truck profit comparisons (YYYY-MM), tender document review, voice dictation, action history and undo. Attach slips/PODs or use numbered lines to map batch files. Review every change before saving.':'You can ask questions about pages available to your account and dictate instructions. Business changes require the responsible staff role.',source:'capabilities',capabilities});
     const recordState=await readOpsState();
+    const directPlan=AssistantRecordQuery.parse(message);
+    if(directPlan)return res.json(await assistantReadRecords(directPlan,message,recordState,req.user));
     const operationsReply=AssistantOperationsAnswers.answer(message,recordState,req.user);
     if(operationsReply)return res.json(operationsReply);
     const recordReply=AssistantPlatform.read(message,recordState,req.user.role);
     if(recordReply)return res.json(recordReply);
+    if(!req.file){
+      const readPlan=await planAssistantReadQuestion(message);
+      if(readPlan)return res.json(await assistantReadRecords(readPlan,message,recordState,req.user));
+    }
     let platformRequest=AssistantPlatform.parse(message);
     const wantsPlatform=/\b(delete|remove|edit|change|update|set|create|generate|make|bought|purchased|record|capture|add|assign|move|link|attach|upload|filled)\b/i.test(message)&&/\b(invoice|quotation|quote|tender|part|parts|repair|repairs|expense|diesel|disel|fuel|POD|slip|receipt|overhead|maintenance|tyre|inspection|incident|payment|payroll|trip|workshop)\b/i.test(message);
     const unfinished=assistantPending.get(req.user.sub);
