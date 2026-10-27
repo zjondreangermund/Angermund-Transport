@@ -54,3 +54,20 @@ test('read engine never changes the original operations records',()=>{
  run('How many trips did victon drive',s);run('Who has loans this month',s);
  a.equal(JSON.stringify(s),snapshot);a.equal(Q.parse('Create trip for ANG10'),null);
 });
+
+test('October payroll is cutoff-to-cutoff for transport and calendar month for ANG4 shunters',()=>{
+ const s=state(),transport=run('Does October 2026 payslip include September?',s);
+ a.match(transport.answer,/2026-09-21 to 2026-10-20/);
+ a.match(transport.answer,/ANG 4\/5 shunter: 2026-10-01 to 2026-10-31/);
+ const victon=run('What dates does Victon October 2026 payslip cover?',s);
+ a.match(victon.answer,/2026-09-21 to 2026-10-20/);
+ s.trucks[0].id='trk_ang4';s.trucks[0].fleetName='ANG 4';s.trucks[0].defaultDriverId='dv';
+ s.payroll=[];const shunter=run('What dates does Victon October 2026 payslip cover?',s);
+ a.match(shunter.answer,/2026-10-01 to 2026-10-31/);
+});
+test('unrecognized data fields never become arbitrary collection reads',()=>{
+ const s=state();
+ const bad=Q.run({mode:'aggregate',collection:'employees',metric:'sum',field:'bankAccount'},'Bank accounts',s,{role:'manager'},{now});
+ a.match(bad.answer,/cannot be safely calculated/);
+ a.equal(Q.allowed('export_passwords','admin'),false);
+});
