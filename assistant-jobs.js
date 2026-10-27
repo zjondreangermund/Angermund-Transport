@@ -2,6 +2,7 @@
 const crypto=require('node:crypto'),P=require('./assistant-platform'),B=require('./assistant-business'),O=require('./assistant-operations'),X=require('./assistant-extra-actions'),T=require('./assistant-trip-actions');
 const Audit=require('./assistant-ops-audit');
 const BusinessAudit=require('./assistant-business-audit');
+const RecordQuery=require('./assistant-record-query');
 const Followup=require('./assistant-followup');
 
 const DOMAIN=['trips','trucks','drivers','employees','clients','routes','trailers','diesel','expenses','invoices','payments','quotes','payroll','payProfiles','loans','tasks','permits','maintenance','tyres','inspections','incidents','advances','tripIssues','shunterRecons','monthlyCosts','settings','company','deletedPayrollPeriods','recordHistory','recordDeletionVersion','assistantDocumentHashes'];
@@ -112,6 +113,7 @@ function install(app,h){
    if(dt&&memory.pending.requests.length===1&&!memory.pending.requests[0].command){const r=structuredClone(memory.pending.requests[0]);r.values={...r.values,date:dt};if(r.needsDocument){if(!req.files?.[0])fail('Attach the document again to complete this request.');r.document=req.files[0];delete r.needsDocument;}await stage(req,res,[r],'Complete unfinished request');return true;}
   }
   if(/^(?:clear|forget|reset) (?:our |my |the )?(?:conversation|chat|memory)[.! ]*$/i.test(q)){await h.mutate(s=>{if(s.assistantSessions)delete s.assistantSessions[req.user.sub]});res.json=res.json;res.json({answer:'Conversation cleared. Saved business records are unchanged.',source:'memory-cleared'});return true;}
+  if(RecordQuery.parse(q)?.mode==='trip_profit'){res.json(RecordQuery.run({mode:'trip_profit'},q,state,req.user));return true;}
   const businessMode=BusinessAudit.detect(q);
   if(businessMode){
    const answer=BusinessAudit.run(businessMode,q,state,req.user);
