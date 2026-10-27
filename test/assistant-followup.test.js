@@ -59,6 +59,12 @@ test('no false context carryover after unrelated user message',()=>{
  assert.equal(Followup.resolve('ANG10',null,[]),'ANG10');
  assert.equal(Audit.isAuditRequest('Create invoice for last trip'),false);
 });
+test('last actual trip is not replaced by a future planned dispatch',()=>{
+ const s=state();s.trips.push({id:'future',number:'AT-FUTURE',truckId:'trk_ang10',date:'2026-10-30',status:'Planned',stage:1,pod:false});
+ const r=Audit.run('Can you check ANG10 last trip?',s,{role:'manager'});
+ assert.equal(r.targets[0].number,'AT-104');
+ assert.equal(Audit.run('Investigate ANG10 latest planned trip',s,{role:'manager'}).targets[0].number,'AT-FUTURE');
+});
 test('no guessing when latest date is shared by multiple trips',()=>{
  const s=state();s.trips.push({...s.trips[1],id:'t4',number:'AT-105'});
  const report=Audit.run('Investigate ANG10 latest trip',s,{role:'manager'});
